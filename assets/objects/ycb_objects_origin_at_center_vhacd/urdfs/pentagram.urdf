@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<robot name="object">
+  <link name="object">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/pentagram/pentagram.obj" scale="1. 1. 1."/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.5 0.2 1.0 0.1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/pentagram/pentagram.obj" scale="1. 1. 1."/>
+      </geometry>
+    </collision>
+    <inertial>
+      <density value="567.0"/>
+    </inertial>
+  </link>
+</robot>
+
+
+
