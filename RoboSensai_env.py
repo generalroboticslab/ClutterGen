@@ -15,6 +15,7 @@ import torch
 from Robot import Franka
 from domain_randomizer import DomainRandomizer
 from llm_query import GPT
+from post_corrector import PostCorrector
 
 try:
     from pynput import keyboard
@@ -101,6 +102,8 @@ class HandemEnv:
         self.d_randomizer = DomainRandomizer(device=self.device)
         # Create GPT 
         self.gpt = GPT()
+        # Create post corrector
+        self.post_corrector = PostCorrector(self, device=self.device)
         # Create environments and allocate buffers
         self.create_envs()
         
@@ -453,12 +456,11 @@ class HandemEnv:
         queried_scene_dict = {"prefixed":{}, # prefix is fix_base_link obj
                               "movable": {},
                               "unused": {}}
-        # Assume scene gives me a bunch of object name
-        this_setup_obj = np.random.choice(list(self.movable_obj_name.keys()), size=(np.random.randint(1, len(self.movable_obj_name)), ), replace=False)
+
         # Choose from this_setup_obj
         prefixed_objs = ["table"]
-        gptChosen_objs = self.gpt.query_scene_objects(self.object_name)
-        # gptChosen_objs = self.object_name
+        # gptChosen_objs = self.gpt.query_scene_objects(self.object_name)
+        gptChosen_objs = self.object_name
         movable_objs = []
         unused_objs = self.object_name.copy()
         for obj_name in gptChosen_objs:
@@ -487,7 +489,7 @@ class HandemEnv:
             self.prev_scene_dict = [deepcopy(self.default_scene_dict) for _ in range(self.num_envs)]
 
         # Query from LLM model to get self.cur_scene_dict
-        body_ids = []; positions=[]; orientations=[]; linvels=[]; angvels=[]; scalings=[]
+        env_ids = []; body_ids = []; body_names = []; positions=[]; orientations=[]; linvels=[]; angvels=[]; scalings=[]
         # queried_scene_dict = self.questioner(give_input, reset_ids, self.prev_scene_dict, prev_diagnose)
         queried_scene_dict = self.query_scene()
         queried_scene_dicts = self.d_randomizer.fill_obj_poses([deepcopy(queried_scene_dict) for _ in range(self.num_envs)])
@@ -498,18 +500,28 @@ class HandemEnv:
             iterate_scene_dict = {**self.cur_scene_dict[env_id]["prefixed"], **self.cur_scene_dict[env_id]["movable"], **self.cur_scene_dict[env_id]["unused"]}
 
             for obj_name, obj_status in iterate_scene_dict.items():
+                env_ids.append(env_id)
                 body_ids.append(self.all_ids[obj_name][env_id])
-                # obj_status: [obj_bbox, [obj_pos, obj_ori, obj_scaling]]
-                obj_pose_info = obj_status[1]
-                # print(obj_pose_info)
+                body_names.append(obj_name)
+                obj_pose_info = obj_status[1] # obj_status: [obj_bbox, [obj_pos, obj_ori, obj_scaling]]
                 positions.append(obj_pose_info[0])
                 orientations.append(obj_pose_info[1])
                 scalings.append(obj_pose_info[2])
                 linvels.append([0., 0., 0.])
                 angvels.append([0., 0., 0.])
+
+        env_ids = self.to_torch(env_ids, dtype=torch.long)
+        body_ids = self.to_torch(body_ids, dtype=torch.long)
+        body_names = np.array(body_names)
+        positions = self.to_torch(positions)
+        orientations = self.to_torch(orientations)
+        linvels = self.to_torch(linvels)
+        angvels = self.to_torch(angvels)
         
-        set_pose(gym, self.sim, self.root_tensor, self.to_torch(body_ids, dtype=torch.long), self.to_torch(positions), \
-                 self.to_torch(orientations), self.to_torch(linvels), self.to_torch(angvels))
+        set_pose(gym, self.sim, self.root_tensor, body_ids, positions, orientations, linvels, angvels)
+        
+        self.stepsimulation()
+        failed_env_ids = self.post_corrector.handed_check_realiablity([env_ids, body_ids, body_names, positions, orientations, linvels, angvels], self.cur_scene_dict)
 
 
     # def reset(self, reset_ids=None):
@@ -1395,7 +1407,7 @@ if __name__ == '__main__':
     args.use_lstm = False
     args.use_transformer = True
     args.sequence_len = 5
-    args.num_envs = 2
+    args.num_envs = 1
     args.draw_contact = True
     args.filter_contact = True
     args.include_target_obs = False
