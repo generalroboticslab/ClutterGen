@@ -4,16 +4,17 @@
     <visual>
       <origin xyz="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/cube/cube.obj" scale="1. 1. 1."/>
+        <mesh filename="meshes/cube/collision.obj" scale="1. 1. 1."/>
       </geometry>
     </visual>
     <collision>
       <origin xyz="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/cube/cube.obj" scale="1. 1. 1."/>
+        <mesh filename="meshes/cube/textured.obj" scale="1. 1. 1."/>
       </geometry>
     </collision>
     <inertial>
+      <mass value=".1"/>
       <density value="567.0"/>
     </inertial>
   </link>

@@ -4,7 +4,7 @@
     <visual>
       <origin xyz="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/pentagram/pentagram.obj" scale="1. 1. 1."/>
+        <mesh filename="meshes/pentagram/collision.obj" scale="1. 1. 1."/>
       </geometry>
       <material name="black">
         <color rgba="0.5 0.2 1.0 0.1"/>
@@ -13,10 +13,11 @@
     <collision>
       <origin xyz="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/pentagram/pentagram.obj" scale="1. 1. 1."/>
+        <mesh filename="meshes/pentagram/textured.obj" scale="1. 1. 1."/>
       </geometry>
     </collision>
     <inertial>
+      <mass value=".1"/>
       <density value="567.0"/>
     </inertial>
   </link>

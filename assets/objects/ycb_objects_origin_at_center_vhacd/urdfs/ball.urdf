@@ -10,7 +10,7 @@
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <!-- <sphere radius=".03"/> -->
-        <mesh filename="meshes/ball/ball.obj"/>
+        <mesh filename="meshes/ball/textured.obj"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.65 0.65 0.65 1"/>
@@ -20,7 +20,7 @@
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <!-- <sphere radius=".03"/> -->
-        <mesh filename="meshes/ball/ball.obj"/>
+        <mesh filename="meshes/ball/collision.obj"/>
       </geometry>
     </collision>
   </link>

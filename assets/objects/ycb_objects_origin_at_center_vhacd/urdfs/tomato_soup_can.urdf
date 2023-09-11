@@ -14,7 +14,7 @@
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="../meshes/tomato_soup_can/tomato_soup_can.obj"/>
+        <mesh filename="../meshes/tomato_soup_can/textured.obj"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.65 0.65 0.65 1"/>
@@ -23,7 +23,7 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="../meshes/tomato_soup_can/tomato_soup_can.obj"/>
+        <mesh filename="../meshes/tomato_soup_can/collision.obj"/>
       </geometry>
     </collision>
   </link>

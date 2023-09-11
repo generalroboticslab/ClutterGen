@@ -2,7 +2,6 @@ import openai
 import os
 from collections import deque
 
-openai.api_key = "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"
 """
 Prompt Rules
 API key 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
@@ -24,7 +23,8 @@ Finally, the two boxes should be on the table and no objects collide with each o
 """
 
 class GPT:
-    def __init__(self, prompt_head=None) -> None:
+    def __init__(self, prompt_head=None, api_key="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") -> None:
+        openai.api_key = api_key
         self.prompt_head = prompt_head if prompt_head is not None \
         else """I will give you a task description and a description of what I am seeing. 
         I will also ask your question, you can only answer the question by choosing objects in Available_objects. 

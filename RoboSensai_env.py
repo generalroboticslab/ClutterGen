@@ -70,7 +70,7 @@ class HandemEnv:
         self.asset_root = "assets"
         self.urdf_folder = "objects/ycb_objects_origin_at_center_vhacd/urdfs"
         self.mesh_folder = "objects/ycb_objects_origin_at_center_vhacd/meshes"
-        self.object_name = ['cube_arrow', 'cuboid', 'bowl']
+        self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")]
         self.object_name_index = {}
         for i, name in enumerate(self.object_name):
             self.object_name_index[name] = i
@@ -79,6 +79,8 @@ class HandemEnv:
         self.add_sides_shelf = self.args.add_sides_shelf if hasattr(self.args, "add_sides_shelf") else False
         self.num_gms = self.args.num_gms if hasattr(self.args, "num_gms") else 1000
         
+        # Mics
+        self.use_gpt = self.args.use_gpt if hasattr(self.args, "use_gpt") else False
 
         # Visualization Configs
 
@@ -187,11 +189,18 @@ class HandemEnv:
 
         self.obj_assets = self.object_name_index.copy()
         self.obj_bbox = self.object_name_index.copy()
+        self.obj_urdf = self.object_name_index.copy()
+        self.obj_default_scaling = self.object_name_index.copy()
         for name in self.obj_assets:
-            obj_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, name)+".urdf")
+            obj_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, name)+".urdf", convex_dec=True)
             obj_pose = deepcopy(table_pose)
             self.scene_asset[name] = [obj_asset, obj_pose]
-            self.obj_bbox[name] = getMeshBbox(os.path.join(self.asset_root, self.mesh_folder, name, 'collision')+'.obj')
+
+            urdfstate = getUrdfStates(os.path.join(self.asset_root, self.urdf_folder, name)+".urdf")
+            org_scale = deepcopy(urdfstate[0][1].scale) if hasattr(urdfstate[0][1], "scale") else [1., 1., 1.]
+            self.obj_bbox[name] = getMeshBbox(os.path.join(self.asset_root, self.mesh_folder, name, 'collision')+'.obj', scale=org_scale)
+            self.obj_urdf[name] = urdfstate
+            self.obj_default_scaling[name] = org_scale
 
         # Manual Update here, later will need to merge in the main loop
         self.scene_asset.update(
@@ -459,11 +468,10 @@ class HandemEnv:
 
         # Choose from this_setup_obj
         prefixed_objs = ["table"]
-        # gptChosen_objs = self.gpt.query_scene_objects(self.object_name)
-        gptChosen_objs = self.object_name
+        Chosen_objs = self.gpt.query_scene_objects(self.object_name) if self.use_gpt else self.object_name
         movable_objs = []
         unused_objs = self.object_name.copy()
-        for obj_name in gptChosen_objs:
+        for obj_name in Chosen_objs:
             if obj_name not in self.object_name:
                 print(f"This obj: {obj_name} is not in the available objects")
             else:
@@ -1360,13 +1368,16 @@ class HandemEnv:
         return torch.cat(lines_box, dim=0)
 
 
-    def create_target_asset(self, target_asset_file, fix_base_link=False, disable_gravity=False, density=None, use_default_cube=False, target_dim=[0.05]*3):
+    def create_target_asset(self, target_asset_file, fix_base_link=False, disable_gravity=False, density=None, use_default_cube=False, convex_dec=False, target_dim=[0.05]*3):
         if use_default_cube:
             return self.create_box_asset(dimension=target_dim, fix_base_link=fix_base_link, disable_gravity=disable_gravity, density=density)
         asset_options = gymapi.AssetOptions()
         asset_options.fix_base_link = fix_base_link
         asset_options.disable_gravity = disable_gravity
         if density is not None: asset_options.density = density
+        if convex_dec: 
+            asset_options.convex_decomposition_from_submeshes = True
+            asset_options.vhacd_enabled = True
         return gym.load_asset(self.sim, self.asset_root, target_asset_file, asset_options)
 
 
@@ -1423,6 +1434,9 @@ if __name__ == '__main__':
     args.ori_weight = 0.
     args.act_weight = 0.
     args.real = False
+
+
+    args.use_gpt = False
 
     env = HandemEnv(args)
     env.step_manual()

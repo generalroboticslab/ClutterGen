@@ -3,6 +3,8 @@ from isaacgym import gymtorch
 from isaacgym.torch_utils import *
 import torch
 import trimesh
+import urdf_parser_py.urdf as urdf
+from copy import deepcopy
 
 DT = 1 / 60
 gym = gymapi.acquire_gym()
@@ -183,10 +185,25 @@ def multiply_transform(translation1, rot1, translation2, rot2):
     return torch.cat([new_rot, new_translation], dim=1)
 
 
-def getMeshBbox(mesh_path, oriented_bbox=False):
+def getMeshBbox(mesh_path, oriented_bbox=False, scale=None):
     mesh = trimesh.load_mesh(mesh_path)
-    if oriented_bbox: return mesh.bounding_box_oriented.primitive.extents
-    else: return mesh.bounding_box.primitive.extents
+    if scale is None:
+        if oriented_bbox: return mesh.bounding_box_oriented.primitive.extents
+        else: return mesh.bounding_box.primitive.extents
+    else:
+        if oriented_bbox: return [extend*scale[i] for i, extend in enumerate(mesh.bounding_box_oriented.primitive.extents)]
+        else: return [extend*scale[i] for i, extend in enumerate(mesh.bounding_box.primitive.extents)]
+
+
+def getUrdfStates(urdf_path):
+    robot = urdf.Robot.from_xml_file(urdf_path)
+    link_states = []
+    # Iterate through links or joints to access attributes
+    for link_name, link in robot.link_map.items():
+        # Get scaling of the link
+        link_geometry = deepcopy(link.collision.geometry) if link.collision is not None else print(f"Link {link_name} has no collision geometry")
+        link_states.append((f"{link_name}", link_geometry)) 
+    return link_states
 
 
 def quat_from_euler(euler):

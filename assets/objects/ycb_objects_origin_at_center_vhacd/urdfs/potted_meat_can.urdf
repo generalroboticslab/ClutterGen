@@ -14,7 +14,7 @@
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="../meshes/potted_meat_can/potted_meat_can.obj"/>
+        <mesh filename="../meshes/potted_meat_can/textured.obj"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.65 0.65 0.65 1"/>
@@ -23,7 +23,7 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="../meshes/potted_meat_can/potted_meat_can.obj"/>
+        <mesh filename="../meshes/potted_meat_can/collision.obj"/>
       </geometry>
     </collision>
   </link>

@@ -10,7 +10,7 @@
     <collision>
       <origin xyz="0.0 0.0 0.0"/>
       <geometry>
-        <mesh filename="../meshes/mug/mug_collision.obj" scale="0.01 0.01 0.01"/>
+        <mesh filename="../meshes/mug/collision.obj" scale="0.01 0.01 0.01"/>
       </geometry>
     </collision>
     <inertial>

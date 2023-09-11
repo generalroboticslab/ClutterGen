@@ -28,3 +28,4 @@ SpeechRecognition
 pyaudio # sudo apt-get install portaudio19-dev Require portaudio.h as well! See the installation instructions here: https://stackoverflow.com/questions/35708238/installing-pyaudio-with-pip-in-a-virtualenv
 sounddevice
 openai
+urdf-parser-py

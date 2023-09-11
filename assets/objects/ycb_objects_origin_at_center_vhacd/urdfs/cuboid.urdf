@@ -19,6 +19,7 @@
       </geometry>
     </collision>
     <inertial>
+      <mass value=".1"/>
       <density value="567.0"/>
     </inertial>
   </link>
