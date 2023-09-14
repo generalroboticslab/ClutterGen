@@ -14,7 +14,6 @@ class DomainRandomizer:
 
             table_bbox, table_miscs = prefixed_objs["table"]
             table_position, table_orientation, table_scaling = table_miscs
-            table_position, table_orientation = self.to_torch(table_position), self.to_torch(table_orientation)
             # Table height needs to be adjust later, RandomAreaScale needs to be adjust
             table_height, RandomAreaScale = table_position[2] + table_bbox[2]/2, 0.8
             obj_pos_min = tf_apply(table_orientation, table_position, -self.to_torch(table_bbox)/2 * RandomAreaScale)
@@ -40,7 +39,7 @@ class DomainRandomizer:
             for i, name in enumerate(movable_objs):
                 # We need to fix the obj height on the table!
                 obj_bbox = scene_dict["movable"][name][0]
-                obj_pos[i, 2] = table_height + obj_bbox[2]/2 + 1e-4
+                obj_pos[i, 2] = table_height + obj_bbox[2]/2 + 1e-3
                 scene_dict["movable"][name][1] = [obj_pos[i], obj_ori[i], scaling]
 
         # print(scene_dicts)

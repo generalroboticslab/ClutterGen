@@ -40,10 +40,10 @@ Min_eef_angle, Max_eef_angle = 0, 2*np.pi - DeltaR # [0, 345] degree
 
 # set random seed
 np.random.seed(42)
-torch.set_printoptions(precision=8, sci_mode=False)
+torch.set_printoptions(precision=2, sci_mode=False)
 
 
-class HandemEnv:    
+class RoboSensaiEnv:    
     def __init__(self, args) -> None:
         # random generator
         self.rng = np.random.default_rng(234)
@@ -105,7 +105,7 @@ class HandemEnv:
         # Create GPT 
         self.gpt = GPT()
         # Create post corrector
-        self.post_corrector = PostCorrector(self, device=self.device)
+        self.post_corrector = PostCorrector(self, gen_readable_table=False, device=self.device)
         # Create environments and allocate buffers
         self.create_envs()
         
@@ -157,8 +157,11 @@ class HandemEnv:
 
     def _configure_viewer(self):
         self.viewer = gym.create_viewer(self.sim, gymapi.CameraProperties())
+        
         if self.viewer is None:
             raise Exception("Failed to create viewer")
+        
+        self._configure_camera()
     
 
     def _configure_camera(self):
@@ -170,6 +173,29 @@ class HandemEnv:
         cam_target = gymapi.Vec3(x-1, y, -0.5)
         middle_env = self.all_ids['envs'][self.num_envs // 2 + self.num_per_row // 2]
         gym.viewer_camera_look_at(self.viewer, middle_env, cam_pos, cam_target)
+                # Create camera
+
+        camera_properties = gymapi.CameraProperties()
+        camera_properties.width = 1920
+        camera_properties.height = 1080
+        # camera_properties.enable_tensors = True
+        self.camera_handle = gym.create_camera_sensor(self.all_ids['envs'][0], camera_properties)
+        gym.set_camera_location(self.camera_handle, self.all_ids['envs'][0], cam_pos, cam_target)
+
+        # self.camera_handles = None
+        # for i in range(self.num_envs):
+        #     self.camera_handles.append([])
+        #     camera_properties = gymapi.CameraProperties()
+        #     camera_properties.width = 1920
+        #     camera_properties.height = 1080
+
+        #     # Set a fixed position and look-target for the first camera
+        #     # position and target location are in the coordinate frame of the environment
+        #     h1 = gym.create_camera_sensor(self.envs[i], camera_properties)
+        #     # camera_position = gymapi.Vec3(1.5, 1, 1.5)
+        #     # camera_target = gymapi.Vec3(0, 0, 0)
+        #     self.gym.set_camera_location(h1, self.envs[i], cam_pos, cam_target)
+        #     self.camera_handles[i] = h1
     
 
     def _configure_ground(self):
@@ -236,10 +262,9 @@ class HandemEnv:
 
         # prepare area
         self.prepare_area = gymapi.Transform()
-        self.prepare_area.p.x = 0.
-        self.prepare_area.p.y = 100.
-        self.prepare_area.p.z = 0.2
+        self.prepare_area.p = gymapi.Vec3(0., 1000., 0.5)
         self.prepare_area = transform2list(self.prepare_area)
+        self.prepare_area = [self.to_torch(self.prepare_area[0]), self.to_torch(self.prepare_area[1])]
 
         # object position dict
         self.default_scene_dict = {}
@@ -277,8 +302,8 @@ class HandemEnv:
         for obj_name in self.scene_asset.keys():
             obj_asset, obj_pose = self.scene_asset[obj_name]
             scaling = 1 if obj_name not in ['robot', 'gripper'] else None
-            self.default_scene_dict[obj_name] = [*transform2list(obj_pose), 1]
-
+            obj_pos, obj_ori = transform2list(obj_pose)
+            self.default_scene_dict[obj_name] = [self.to_torch(obj_pos), self.to_torch(obj_ori), 1]
 
         self.movable_obj_name = {}
         for obj_name, obj_ids in self.all_ids.items():
@@ -290,7 +315,6 @@ class HandemEnv:
         # Configure camera point
         if self.rendering:
             self._configure_viewer()
-            self._configure_camera()
         # ==== prepare tensors =====
         # from now on, we will use the tensor API that can run on CPU or GPU
         gym.prepare_sim(self.sim)
@@ -380,6 +404,7 @@ class HandemEnv:
         gym.step_graphics(self.sim)
         gym.draw_viewer(self.viewer, self.sim, False)
         gym.sync_frame_time(self.sim)
+        gym.render_all_camera_sensors(self.sim)
 
 
     def stepsimulation(self): # TODO: not fetch results at each time
@@ -467,11 +492,14 @@ class HandemEnv:
                               "unused": {}}
 
         # Choose from this_setup_obj
+        if self.use_gpt: initial_chosen_objs = self.gpt.query_scene_objects(self.object_name)
+        elif hasattr(self, "selected_obj_name"): initial_chosen_objs = self.selected_obj_name.copy()
+        else: initial_chosen_objs = self.object_name
+
         prefixed_objs = ["table"]
-        Chosen_objs = self.gpt.query_scene_objects(self.object_name) if self.use_gpt else self.object_name
         movable_objs = []
         unused_objs = self.object_name.copy()
-        for obj_name in Chosen_objs:
+        for obj_name in initial_chosen_objs:
             if obj_name not in self.object_name:
                 print(f"This obj: {obj_name} is not in the available objects")
             else:
@@ -490,14 +518,15 @@ class HandemEnv:
         return queried_scene_dict
 
 
-    def reset(self, reset_ids=None):
+    def reset(self, reset_ids=None, post_correct=True, correct_Flags=[True, True]):
         if reset_ids is None:
             reset_ids = torch.arange(self.num_envs, device=self.device)
             self.cur_scene_dict = [deepcopy(self.default_scene_dict) for _ in range(self.num_envs)]
             self.prev_scene_dict = [deepcopy(self.default_scene_dict) for _ in range(self.num_envs)]
 
         # Query from LLM model to get self.cur_scene_dict
-        env_ids = []; body_ids = []; body_names = []; positions=[]; orientations=[]; linvels=[]; angvels=[]; scalings=[]
+        body_ids = []; positions=[]; orientations=[]; linvels=[]; angvels=[]; scalings=[]
+        body_env_ids = []; move_body_ids = []; move_body_names = []; move_body_poss=[]; move_body_oris=[]; move_body_linvels=[]; move_body_angvels=[]
         # queried_scene_dict = self.questioner(give_input, reset_ids, self.prev_scene_dict, prev_diagnose)
         queried_scene_dict = self.query_scene()
         queried_scene_dicts = self.d_randomizer.fill_obj_poses([deepcopy(queried_scene_dict) for _ in range(self.num_envs)])
@@ -508,9 +537,7 @@ class HandemEnv:
             iterate_scene_dict = {**self.cur_scene_dict[env_id]["prefixed"], **self.cur_scene_dict[env_id]["movable"], **self.cur_scene_dict[env_id]["unused"]}
 
             for obj_name, obj_status in iterate_scene_dict.items():
-                env_ids.append(env_id)
                 body_ids.append(self.all_ids[obj_name][env_id])
-                body_names.append(obj_name)
                 obj_pose_info = obj_status[1] # obj_status: [obj_bbox, [obj_pos, obj_ori, obj_scaling]]
                 positions.append(obj_pose_info[0])
                 orientations.append(obj_pose_info[1])
@@ -518,18 +545,37 @@ class HandemEnv:
                 linvels.append([0., 0., 0.])
                 angvels.append([0., 0., 0.])
 
-        env_ids = self.to_torch(env_ids, dtype=torch.long)
+            for move_obj_name, move_obj_status in self.cur_scene_dict[env_id]["movable"].items():
+                body_env_ids.append(env_id)
+                move_body_ids.append(self.all_ids[move_obj_name][env_id])
+                move_body_names.append(move_obj_name)
+                move_obj_pose_info = move_obj_status[1] # obj_status: [obj_bbox, [obj_pos, obj_ori, obj_scaling]]
+                move_body_poss.append(move_obj_pose_info[0])
+                move_body_oris.append(move_obj_pose_info[1])
+                move_body_linvels.append([0., 0., 0.])
+                move_body_angvels.append([0., 0., 0.])
+
         body_ids = self.to_torch(body_ids, dtype=torch.long)
-        body_names = np.array(body_names)
-        positions = self.to_torch(positions)
-        orientations = self.to_torch(orientations)
+        positions = torch.stack(positions)
+        orientations = torch.stack(orientations)
         linvels = self.to_torch(linvels)
         angvels = self.to_torch(angvels)
+
+        body_env_ids = self.to_torch(body_env_ids, dtype=torch.long)
+        move_body_ids = self.to_torch(move_body_ids, dtype=torch.long)
+        move_body_names = np.array(move_body_names)
+        move_body_poss = torch.stack(move_body_poss)
+        move_body_oris = torch.stack(move_body_oris)
+        move_body_linvels = self.to_torch(move_body_linvels)
+        move_body_angvels = self.to_torch(move_body_angvels)
         
         set_pose(gym, self.sim, self.root_tensor, body_ids, positions, orientations, linvels, angvels)
         
         self.stepsimulation()
-        failed_env_ids = self.post_corrector.handed_check_realiablity([env_ids, body_ids, body_names, positions, orientations, linvels, angvels], self.cur_scene_dict)
+
+        self.failed_env_ids, self.check_table = self.post_corrector.handed_check_realiablity([body_env_ids, move_body_ids, move_body_names, \
+                                                                                              move_body_poss, move_body_oris, move_body_linvels, move_body_angvels], \
+                                                                                              self.cur_scene_dict, force_check=correct_Flags[0], vel_check=correct_Flags[1])
 
 
     # def reset(self, reset_ids=None):
@@ -1203,10 +1249,89 @@ class HandemEnv:
                 if event is not None:
                     if isinstance(event, events.Press) and hasattr(event.key, 'char'):
                         key = event.key.char
-                if key == 'r': self.reset()
+                if key == 'r': 
+                    self.reset()
+                    # gym.start_access_image_tensors(self.sim)
+                    # #
+                    # # get camera tensor
+                    # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_COLOR)
+                    # self.rgb_tensor = gymtorch.wrap_tensor(_rgb_tensor)
+                    # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_DEPTH)
+                    # self.depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
+                    # _seg_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_SEGMENTATION)
+                    # self.seg_tensor = gymtorch.wrap_tensor(_seg_tensor)
+                    # #
+                    # gym.end_access_image_tensors(self.sim)
+
+                    color_image = gym.get_camera_image(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_SEGMENTATION)
+                
+                if len(self.failed_env_ids) > 0:
+                    key = self.freeze_sim()
+                    if key == 'f': self.failed_env_ids = []
 
                 # step the physics
                 self.stepsimulation()
+
+    
+    def freeze_sim(self):
+        if not hasattr(self, "viewer"): self._configure_viewer()
+        previous_rendering = self.rendering
+        self.rendering = True
+        with keyboard.Events() as events:
+            while not gym.query_viewer_has_closed(self.viewer):
+                key = None
+                event = events.get(0.0001)
+                if event is not None:
+                    if isinstance(event, events.Press) and hasattr(event.key, 'char'):
+                        key = event.key.char
+                if key == 'f': 
+                    self.rendering = previous_rendering
+                    return key
+                if key == 's': 
+                    self.stepsimulation()
+                else:
+                    # step the viewer
+                    if self.rendering: self.update_viewer()
+
+    
+    def post_corrector_test(self, test_range=list(range(1, 19, 2)), save_path="results/post_corrector", check_force_diff=False, rendering=False):
+        seed = 123456; iterations = 1000; total_trials = self.num_envs * iterations
+        check_books = {"Both": (True, True), "Vel_only": (False, True), "Force_only": (True, False)}
+        failure_rate_record = {}
+        for num_obj in test_range:
+            self.selected_obj_name = self.object_name[:num_obj]
+            reset_failure_iters = {check_name: [] for check_name in check_books.keys()}
+
+            for check_name, Flags in check_books.items():
+                np.random.seed(seed)
+                torch.manual_seed(seed)
+                torch.cuda.manual_seed_all(seed)
+                
+                failure_num = 0
+                for i in range(iterations):
+                    self.reset(correct_Flags=Flags)
+                    failure_num += len(self.failed_env_ids)
+                    if len(self.failed_env_ids) > 0: 
+                        reset_failure_iters[check_name].append(i)
+                        
+                    if check_force_diff and check_name == "Force_only":
+                        if len(self.failed_env_ids) > 0 and i not in reset_failure_iters["Both"]:
+                            print(f"Force checker announces failure but others not at {i}")
+                            print(self.check_table)
+                            if rendering: self.freeze_sim()
+                        elif len(self.failed_env_ids) == 0 and i in reset_failure_iters["Both"]:
+                            print(f"Force checker announces success but others not at {i}")
+                            print(self.check_table)
+                            if rendering: self.freeze_sim()
+
+                failure_rate = failure_num / total_trials
+                print(f"Failure rate for {check_name} is {failure_rate}")
+
+                if num_obj not in failure_rate_record.keys():
+                    failure_rate_record[num_obj] = {}
+                failure_rate_record[num_obj].update({check_name: failure_rate})
+            
+        torch.save(failure_rate_record, f"{save_path}/failure_rate_record.pth")
 
 
     def step_callibration(self, num_steps=20): # THIS NEEDS TO BE MODIFIED
@@ -1414,7 +1539,7 @@ if __name__ == '__main__':
     args.object_name = 'cube'
     args.task = 'P2G'
     args.use_gpu_pipeline = False
-    args.rendering = True
+    args.rendering = False
     args.use_lstm = False
     args.use_transformer = True
     args.sequence_len = 5
@@ -1438,6 +1563,7 @@ if __name__ == '__main__':
 
     args.use_gpt = False
 
-    env = HandemEnv(args)
-    env.step_manual()
+    env = RoboSensaiEnv(args)
+    env.post_corrector_test(rendering=False)
+    # env.step_manual()
     env.close()

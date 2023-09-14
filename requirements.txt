@@ -29,3 +29,5 @@ pyaudio # sudo apt-get install portaudio19-dev Require portaudio.h as well! See 
 sounddevice
 openai
 urdf-parser-py
+tabulate
+seaborn
