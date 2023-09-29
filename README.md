@@ -2,7 +2,7 @@
 RoboSensai Project
 
 ```
-python3 -m venv venv --system-site-packages
+python3.8 -m venv venv --system-site-packages
 source venv/bin/activate
 pip install -r requirements.txt
 ```
