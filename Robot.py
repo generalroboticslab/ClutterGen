@@ -38,14 +38,19 @@ class Franka:
         self.franka_num_dofs = gym.get_asset_dof_count(self.franka_asset)
         
         default_dof_pos = np.zeros(self.franka_num_dofs, dtype=np.float32)
+        default_dof_vel = np.zeros(self.franka_num_dofs, dtype=np.float32)
         default_dof_pos[:7] = franka_mids[:7]
         # grippers open
         default_dof_pos[7:] = self.franka_upper_limits[7:]
         self.default_dof_state = np.zeros(self.franka_num_dofs, gymapi.DofState.dtype)
         self.default_dof_state["pos"] = default_dof_pos
+        self.default_dof_state["vel"] = default_dof_vel
 
         # send to torch
         self.default_dof_pos_tensor = self.to_torch(default_dof_pos)
+        self.default_dof_vel_tensor = self.to_torch(default_dof_vel)
+        self.franka_lower_limits = self.to_torch(self.franka_lower_limits)
+        self.franka_upper_limits = self.to_torch(self.franka_upper_limits)
 
         # get link index of panda hand, which we will use as end effector
         self.franka_link_dict = gym.get_asset_rigid_body_dict(self.franka_asset)

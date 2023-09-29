@@ -416,8 +416,8 @@ while not gym.query_viewer_has_closed(viewer):
     pos_action[:, 7:9] = grip_acts
 
     # Deploy actions
-    # gym.set_dof_position_target_tensor(sim, gymtorch.unwrap_tensor(pos_action))
-    # gym.set_dof_actuation_force_tensor(sim, gymtorch.unwrap_tensor(effort_action))
+    gym.set_dof_position_target_tensor(sim, gymtorch.unwrap_tensor(pos_action))
+    gym.set_dof_actuation_force_tensor(sim, gymtorch.unwrap_tensor(effort_action))
 
     # update viewer
     gym.step_graphics(sim)

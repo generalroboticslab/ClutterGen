@@ -144,6 +144,17 @@ def get_num_of_actors(sim):
     return gym.get_sim_actor_count(sim)
 
 
+def get_envs_images(sim, env_handles, camera_handles, image_type):
+    images = []
+    for env_handle, camera_handle in zip(env_handles, camera_handles):
+        camera_image = gym.get_camera_image(sim, env_handle, camera_handle, image_type)
+        image_height, image_width = camera_image.shape
+        if image_type == gymapi.IMAGE_COLOR:
+            camera_image = camera_image.reshape(image_height, image_width//4, 4)
+        images.append(camera_image)
+    return np.stack(images)
+
+
 def cvtVoidXyzToList(void_array, coef=1):
     return [coef*void_array['x'], coef*void_array['y'], coef*void_array['z']]
 
@@ -171,6 +182,14 @@ def inverse_transform(poses):
     inv_position = -poses[:, :3]
     inv_orientation = quat_conjugate(poses[:, 3:])
     return inv_position, inv_orientation
+
+
+def orientation_error(desired, current=None):
+    if current is None: 
+        return desired[:, 0:3] * torch.sign(desired[:, 3]).unsqueeze(-1)
+    cc = quat_conjugate(current)
+    q_r = quat_mul(desired, cc)
+    return q_r[:, 0:3] * torch.sign(q_r[:, 3]).unsqueeze(-1)
 
 
 def homo_transform(rot, translation, point): # 3D homogeneous transform
@@ -230,6 +249,12 @@ def quat_bet_vects(v1, v2):
         rot_axis = torch.cross(v1, v2)
         w = torch.tensor([1 + dot_prod], device=rot_axis.device)
         return normalize(torch.cat([rot_axis, w]))
+
+
+def np_scale(x, lower=0, upper=255):
+    shift_x = x - np.min(x)
+    normalize_x = shift_x / (np.max(shift_x)+1e-15)
+    return (upper - lower) * normalize_x + lower
 
 
 @torch.jit.script
