@@ -128,3 +128,4 @@ gym_env.py
 # Simulator
 isaacgym/
 Gymnasium-Robotics/
+DexterousHands/

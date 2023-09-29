@@ -6,7 +6,7 @@ from isaacgym import gymapi
 from isaacgym import gymutil
 from isaacgym import gymtorch
 from isaacgym_utils import *
-from isaacgym.torch_utils import tf_inverse, tf_apply, quat_mul, quat_apply, tf_combine
+from isaacgym.torch_utils import tf_inverse, tf_apply, quat_mul, quat_apply, tf_combine, normalize
 
 import math
 import os
@@ -16,6 +16,9 @@ from Robot import Franka
 from domain_randomizer import DomainRandomizer
 from llm_query import GPT
 from post_corrector import PostCorrector
+
+import matplotlib.pyplot as plt
+import cv2
 
 try:
     from pynput import keyboard
@@ -31,7 +34,7 @@ except ImportError as e:
 DeltaP = 0.01 # 1 cm for prismatic movement
 DeltaR = 10/180 * np.pi # 15 degree for rotation movement
 JointP = 0.002
-ControlFreq = 6 # 6Hz control
+ControlFreq = 30 # 6Hz control
 IntervalSteps = int(1/DT / ControlFreq) # 10 steps for one control / # Interval steps should larger than or equal 2
 Min_delta_x, Max_delta_x = -0.25, 0. # Try not give 0 in any dimension
 Min_delta_y, Max_delta_y = -0.15, 0.15
@@ -70,7 +73,8 @@ class RoboSensaiEnv:
         self.asset_root = "assets"
         self.urdf_folder = "objects/ycb_objects_origin_at_center_vhacd/urdfs"
         self.mesh_folder = "objects/ycb_objects_origin_at_center_vhacd/meshes"
-        self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")]
+        self.xml_folder = "objects/ycb_objects_origin_at_center_vhacd/xmls"
+        self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")][1:4]
         self.object_name_index = {}
         for i, name in enumerate(self.object_name):
             self.object_name_index[name] = i
@@ -86,13 +90,24 @@ class RoboSensaiEnv:
 
         # Model Configs
 
-        # Actions & Observations
-
-        # Action dimension
-
+        #####################################################################
+        ###=========================Actions & Observations================###
+        #####################################################################
         # Observation dimension
-        
-        # Single_observation_dimension (image)
+        self.image_width, self.image_height = 1920, 1080
+        self.rgba_image_dim = (self.image_height, self.image_width, 4)
+        self.depth_image_dim = (self.image_height, self.image_width, 1)
+        self.proprioception = 7 + 6 # 7D pose + 6D velocity 
+        self.single_img_obs_dim = (self.num_envs, self.rgba_image_dim[2]+self.depth_image_dim[2], self.image_height, self.image_width)
+        self.single_proprioception_dim = (self.num_envs, self.proprioception)
+
+        self.obs_seq_len = 1 # How to deal with image sequence?
+
+        # Action dimension; How to handle the case that there is no joint action can reach a certain pose?
+        self.action_range = [0, 1, 2]
+        self.action_dim = (self.num_envs, 6 + 1) # 6D delta actions + grip action
+
+        self.act_seq_len = 1
 
         # Create Sim and Camera
         self._configure_sim()
@@ -111,10 +126,7 @@ class RoboSensaiEnv:
         
         self._link_states_tensor()
 
-        # All environments simulation 1 s to ensure the reset successfully
-        sim_sec(self.sim, 1)
-
-        # self.allocate_buffers()
+        self.allocate_buffers()
         
         # Set hand work space
 
@@ -144,10 +156,9 @@ class RoboSensaiEnv:
         self.sim_params.physx.friction_correlation_distance = 0.0005
         self.sim_params.physx.num_threads = self.args.num_threads
         self.sim_params.physx.use_gpu = self.args.use_gpu
+        # self.sim_params.physx.max_gpu_contact_pairs = self.sim_params.physx.max_gpu_contact_pairs*2
         # Must CC All substeps! Otherwise gym sometimes give 0 contact info!
         self.sim_params.physx.contact_collection = gymapi.CC_ALL_SUBSTEPS
-        # self.sim_params.physx.friction_offset_threshold = 0.001
-        # self.sim_params.physx.friction_correlation_distance = 0.0005
         
         # create sim
         self.sim = gym.create_sim(self.args.compute_device_id, self.args.graphics_device_id, gymapi.SIM_PHYSX, self.sim_params)
@@ -161,7 +172,13 @@ class RoboSensaiEnv:
         if self.viewer is None:
             raise Exception("Failed to create viewer")
         
-        self._configure_camera()
+        table_pose = self.get_asset_pose('table')
+        position = table_pose.p
+        x, y, z = position.x, position.y, position.z
+        cam_pos = gymapi.Vec3(x+0.8, y, z+1.2)
+        cam_target = gymapi.Vec3(x-1, y, -0.5)
+        middle_env = self.all_ids['envs'][self.num_envs // 2 + self.num_per_row // 2]
+        gym.viewer_camera_look_at(self.viewer, middle_env, cam_pos, cam_target)
     
 
     def _configure_camera(self):
@@ -171,31 +188,34 @@ class RoboSensaiEnv:
         x, y, z = position.x, position.y, position.z
         cam_pos = gymapi.Vec3(x+0.8, y, z+1.2)
         cam_target = gymapi.Vec3(x-1, y, -0.5)
-        middle_env = self.all_ids['envs'][self.num_envs // 2 + self.num_per_row // 2]
-        gym.viewer_camera_look_at(self.viewer, middle_env, cam_pos, cam_target)
-                # Create camera
+        # Create camera
+        self.camera_handles = []
+        self.camera_tensors = []
+        self.camera_view_matrixs = []
+        self.camera_proj_matrixs = []
 
         camera_properties = gymapi.CameraProperties()
         camera_properties.width = 1920
         camera_properties.height = 1080
-        # camera_properties.enable_tensors = True
-        self.camera_handle = gym.create_camera_sensor(self.all_ids['envs'][0], camera_properties)
-        gym.set_camera_location(self.camera_handle, self.all_ids['envs'][0], cam_pos, cam_target)
+        camera_properties.enable_tensors = False
+        for i in range(self.num_envs):
+            camera_handle = gym.create_camera_sensor(self.all_ids['envs'][i], camera_properties)                                     
+            gym.set_camera_location(camera_handle, self.all_ids['envs'][i], cam_pos, cam_target)
+            self.camera_handles.append(camera_handle)
+            cam_vinv = torch.inverse(self.to_torch(gym.get_camera_view_matrix(self.sim, self.all_ids['envs'][i], camera_handle)))
+            cam_proj = self.to_torch(gym.get_camera_proj_matrix(self.sim, self.all_ids['envs'][i], camera_handle))
 
-        # self.camera_handles = None
-        # for i in range(self.num_envs):
-        #     self.camera_handles.append([])
-        #     camera_properties = gymapi.CameraProperties()
-        #     camera_properties.width = 1920
-        #     camera_properties.height = 1080
+            # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_COLOR)
+            # self.rgb_tensor = gymtorch.wrap_tensor(_rgb_tensor)
+            # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_DEPTH)
+            # self.depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
+            # _seg_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_SEGMENTATION)
+            # self.seg_tensor = gymtorch.wrap_tensor(_seg_tensor)
+            # self.camera_tensors.append(torch_cam_tensor)
 
-        #     # Set a fixed position and look-target for the first camera
-        #     # position and target location are in the coordinate frame of the environment
-        #     h1 = gym.create_camera_sensor(self.envs[i], camera_properties)
-        #     # camera_position = gymapi.Vec3(1.5, 1, 1.5)
-        #     # camera_target = gymapi.Vec3(0, 0, 0)
-        #     self.gym.set_camera_location(h1, self.envs[i], cam_pos, cam_target)
-        #     self.camera_handles[i] = h1
+            self.camera_view_matrixs.append(cam_vinv)
+            self.camera_proj_matrixs.append(cam_proj)
+            self.camera_handles.append(camera_handle)
     
 
     def _configure_ground(self):
@@ -213,12 +233,20 @@ class RoboSensaiEnv:
         table_pose = gymapi.Transform()
         table_pose.p = gymapi.Vec3(0.5, 0.0, table_dims[2]/2)
 
+        # cabinet asset
+        bin_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, "fixed", "bin")+".urdf", 
+                                             convex_dec=False, fix_base_link=True)
+        bin_dims = [0.1, 0.1, 0.1]
+        bin_pose = gymapi.Transform()
+        bin_pose.p = gymapi.Vec3(table_pose.p.x, -0.3, table_dims[2])
+        bin_pose.r = gymapi.Quat.from_euler_zyx(0, 0, -np.pi/2)
+
         self.obj_assets = self.object_name_index.copy()
         self.obj_bbox = self.object_name_index.copy()
         self.obj_urdf = self.object_name_index.copy()
         self.obj_default_scaling = self.object_name_index.copy()
         for name in self.obj_assets:
-            obj_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, name)+".urdf", convex_dec=True)
+            obj_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, name)+".urdf", convex_dec=False)
             obj_pose = deepcopy(table_pose)
             self.scene_asset[name] = [obj_asset, obj_pose]
 
@@ -230,11 +258,13 @@ class RoboSensaiEnv:
 
         # Manual Update here, later will need to merge in the main loop
         self.scene_asset.update(
-            {"table": [table_asset, table_pose]}
+            {"table": [table_asset, table_pose],
+             "bin": [bin_asset, bin_pose]}
         )
 
         self.obj_bbox.update({
             "table": table_dims,
+            "bin":bin_dims
         })
 
         # Should follow pre-loading scene_dict to add or delete object
@@ -313,6 +343,7 @@ class RoboSensaiEnv:
                 self.movable_obj_name[obj_name] = []
 
         # Configure camera point
+        self._configure_camera()
         if self.rendering:
             self._configure_viewer()
         # ==== prepare tensors =====
@@ -336,6 +367,7 @@ class RoboSensaiEnv:
             self.dof_states = gymtorch.wrap_tensor(_dof_states)
             self.dof_pos = self.dof_states[:, 0].view(self.num_envs, self.robot.franka_num_dofs).contiguous()
             self.dof_vel = self.dof_states[:, 1].view(self.num_envs, self.robot.franka_num_dofs).contiguous()
+            self.goal_dof_pos = torch.zeros_like(self.dof_pos)
             
         # get net-force state tensor / Force direction is in the local frame! / Normal Force + Tangential Force
         # How to split them using normal direction?
@@ -346,15 +378,24 @@ class RoboSensaiEnv:
         _force_sensor_tensor = gym.acquire_force_sensor_tensor(self.sim)
         self.force_sensor_tensor = gymtorch.wrap_tensor(_force_sensor_tensor)
 
-        # action interpolation tensor, interpolation value to be the same shape as control tensor
-        step_value = torch.linspace(0, 1, steps=self.interval_steps).view(self.interval_steps, 1, 1)
-        self.steps_tensor_6D = step_value.expand(self.interval_steps, self.num_envs, 6).to(self.device)
+        # get jacobian tensor for ik control
+        # for fixed-base franka, tensor has shape (num envs, 10, 6, 9)
+        _jacobian = gym.acquire_jacobian_tensor(self.sim, "franka")
+        jacobian = gymtorch.wrap_tensor(_jacobian)
+        # jacobian entries corresponding to franka hand
+        self.j_eef = jacobian[:, self.robot.franka_hand_index - 1, :, :7]
     
 
     def allocate_buffers(self):
         # allocate buffers
-        self.observations_buf = torch.zeros(
-            self.observation_shape, device=self.device, dtype=torch.float)
+        self.single_img_obs_buf = torch.zeros(
+            self.single_img_obs_dim, dtype=torch.float32, device=self.device)
+        self.single_proprioception_buf = torch.zeros(
+            self.single_proprioception_dim, dtype=torch.float32, device=self.device)
+        self.observation_dict = {
+            'image': self.single_img_obs_buf,
+            'proprioception': self.single_proprioception_buf
+        }
         self.rewards_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
         self.reset_buf = torch.ones(
@@ -363,29 +404,29 @@ class RoboSensaiEnv:
             self.num_envs, device=self.device, dtype=torch.long)
         self.success_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.long)
-        self.nocontact_buf = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.long)
-        self.hand_pose_6D_buf = self.hand_initial_pose_6D.repeat((self.num_envs, 1))
+        # self.hand_pose_6D_buf = self.hand_initial_pose_6D.repeat((self.num_envs, 1))
         
         # computation buffers (intermidiate variable no need to reset)
-        self.last_observation = torch.zeros((self.num_envs, self.single_observation_dims), dtype=torch.float32, device=self.device)
         self.delta_actions_6D = torch.zeros((self.num_envs, 6), dtype=torch.float32, device=self.device)
-        self.step_actions = torch.zeros((self.interval_steps, self.num_envs, 7), dtype=torch.float32, device=self.device)
-        self.lift_num_steps = int(self.lift_height / DeltaP * 10)
-        self.lift_action_step = self.lift_height / self.lift_num_steps
+        self.step_info = {}
+        # self.last_observation = torch.zeros((self.num_envs, self.single_observation_dims), dtype=torch.float32, device=self.device)
+        # self.step_actions = torch.zeros((self.interval_steps, self.num_envs, 7), dtype=torch.float32, device=self.device)
+        # self.lift_num_steps = int(self.lift_height / DeltaP * 10)
+        # self.lift_action_step = self.lift_height / self.lift_num_steps
 
     
     def reset_buffers(self, reset_ids):
         # reset the buffer
-        self.observations_buf[reset_ids] = 0. # Automatically expand to change the whole row to be zero
+        self.observation_dict['image'][reset_ids] = 0.
+        self.observation_dict['proprioception'][reset_ids] = 0.
         self.rewards_buf[reset_ids] = 0.
         self.steps_buf[reset_ids] = 0
         self.reset_buf[reset_ids] = 0
         self.success_buf[reset_ids] = 0
-        self.nocontact_buf[reset_ids] = 0
-        self.close_gripper_force_checker[reset_ids] = 0
-        self.env_stages[reset_ids] = 0
-        self.hand_pose_6D_buf[reset_ids] = self.hand_initial_pose_6D
+        # self.nocontact_buf[reset_ids] = 0
+        # self.close_gripper_force_checker[reset_ids] = 0
+        # self.env_stages[reset_ids] = 0
+        # self.hand_pose_6D_buf[reset_ids] = self.hand_initial_pose_6D
 
 
     def refresh_request_tensors(self):
@@ -394,9 +435,9 @@ class RoboSensaiEnv:
         gym.refresh_rigid_body_state_tensor(self.sim)
         gym.refresh_dof_state_tensor(self.sim)
         gym.refresh_net_contact_force_tensor(self.sim)
+        gym.refresh_jacobian_tensors(self.sim)
+        gym.refresh_mass_matrix_tensors(self.sim)
         # gym.refresh_force_sensor_tensor(self.sim)
-        # gym.refresh_jacobian_tensors(sim)
-        # gym.refresh_mass_matrix_tensors(sim)
     
 
     def update_viewer(self):
@@ -418,51 +459,63 @@ class RoboSensaiEnv:
         return torch.tensor(self.rng.choice(self.action_range, self.action_shape), dtype=torch.float32, device=self.device)
 
 
+    def control_ik(self, dpose):
+        damping = 0.05
+        # solve damped least squares
+        j_eef_T = torch.transpose(self.j_eef, 1, 2)
+        lmbda = torch.eye(6, device=self.device) * (damping ** 2)
+        u = (j_eef_T @ torch.inverse(self.j_eef @ j_eef_T + lmbda) @ dpose).view(self.num_envs, 7)
+        return u
+
+
     def convert_actions(self, index_actions): # convert int relative actions to real absolute positions
         # Convert model actions (0, 1, 2) to real action
         delta_actions = index_actions[:, :6] - 1 # from (0, 1, 2) to (-1, 0, 1)
         # convert to real actions in the environment
         self.delta_actions_6D[:, :3] = delta_actions[:, :3] * DeltaP
-        self.delta_actions_6D[:, 5] = delta_actions[:, 5] * DeltaR
+        self.delta_actions_6D[:, 3:] = delta_actions[:, 3:] * DeltaR
 
-        # self.delta_actions_6D[:, :3] = delta_actions * DeltaP
-        # self.delta_actions_6D[:, 3:] = delta_actions * DeltaR
+        gripper_pose, _ = get_pose(self.rb_states, self.all_ids['gripper'])
+        self.gripper_goal_pos = gripper_pose[:, :3] + self.delta_actions_6D[:, :3]
+        self.gripper_goal_quat = quat_mul(gripper_pose[:, 3:], quat_from_euler(self.delta_actions_6D[:, 3:]))
+        self.gripper_act_Flag = index_actions[:, 6]
 
-        hand_cur_poses, _ = get_pose(self.root_tensor, self.hand_idxs)
-        if self.real: hand_cur_poses[self.real_env_id, :] = self.robot.get_pose_gripper() # hand base pose is same as finger pose in the simulation
-        hand_cur_positions, hand_cur_quats = hand_cur_poses[:, :3], hand_cur_poses[:, 3:7]
+        # # Check moving action is within the moving space; TODO: Orientation check is not correct for 3D rotation (We need query IK to see whether it is a valid move?) 
+        # hand_goal_pose_6D_buf = self.hand_pose_6D_buf.clone()
+        # hand_goal_pose_6D_buf[:, :3] = self.hand_pose_6D_buf[:, :3] + self.delta_actions_6D[:, :3] if self.use_world_frame_obs \
+        #                                else tf_apply(hand_cur_poses[:, 3:], hand_cur_poses[:, :3], self.delta_actions_6D[:, :3])
+        # hand_goal_pose_6D_buf[:, 3:] += self.delta_actions_6D[:, 3:]
+        # hand_goal_pose_6D_buf = hand_goal_pose_6D_buf.round(decimals=3) # Pytorch weird problem? Why tf_apply affects the other dimension 
+        # goal_out_bound_idxs = ((hand_goal_pose_6D_buf > self.hand_move_bound_high) + (hand_goal_pose_6D_buf < self.hand_move_bound_low)).any(dim=1)
+        # # reject out bound movement / mark reject actions to be -1 (maybe we do not need that)
+        # self.delta_actions_6D[goal_out_bound_idxs, :] = 0.; self.raw_actions[goal_out_bound_idxs, :6] = -1.
+        # # update hand_pose_6D_buf
+        # self.hand_pose_6D_buf[:, :3] = self.hand_pose_6D_buf[:, :3] + self.delta_actions_6D[:, :3] if self.use_world_frame_obs \
+        #                                else tf_apply(hand_cur_poses[:, 3:], hand_cur_poses[:, :3], self.delta_actions_6D[:, :3])
+        # self.hand_pose_6D_buf[:, 3:] += self.delta_actions_6D[:, 3:]
 
-        # Check moving action is within the moving space; TODO: Orientation check is not correct for 3D rotation (We need query IK to see whether it is a valid move?) 
-        hand_goal_pose_6D_buf = self.hand_pose_6D_buf.clone()
-        hand_goal_pose_6D_buf[:, :3] = self.hand_pose_6D_buf[:, :3] + self.delta_actions_6D[:, :3] if self.use_world_frame_obs \
-                                       else tf_apply(hand_cur_poses[:, 3:], hand_cur_poses[:, :3], self.delta_actions_6D[:, :3])
-        hand_goal_pose_6D_buf[:, 3:] += self.delta_actions_6D[:, 3:]
-        hand_goal_pose_6D_buf = hand_goal_pose_6D_buf.round(decimals=3) # Pytorch weird problem? Why tf_apply affects the other dimension 
-        goal_out_bound_idxs = ((hand_goal_pose_6D_buf > self.hand_move_bound_high) + (hand_goal_pose_6D_buf < self.hand_move_bound_low)).any(dim=1)
-        # reject out bound movement / mark reject actions to be -1 (maybe we do not need that)
-        self.delta_actions_6D[goal_out_bound_idxs, :] = 0.; self.raw_actions[goal_out_bound_idxs, :6] = -1.
-        # update hand_pose_6D_buf
-        self.hand_pose_6D_buf[:, :3] = self.hand_pose_6D_buf[:, :3] + self.delta_actions_6D[:, :3] if self.use_world_frame_obs \
-                                       else tf_apply(hand_cur_poses[:, 3:], hand_cur_poses[:, :3], self.delta_actions_6D[:, :3])
-        self.hand_pose_6D_buf[:, 3:] += self.delta_actions_6D[:, 3:]
+        # steps_delta_actions = self.steps_tensor_6D * self.delta_actions_6D
+        # steps_delta_pos, steps_delta_quat = \
+        #     steps_delta_actions[:, :, 0:3], quat_from_euler(steps_delta_actions[:, :, 3:6])
 
-        steps_delta_actions = self.steps_tensor_6D * self.delta_actions_6D
-        steps_delta_pos, steps_delta_quat = \
-            steps_delta_actions[:, :, 0:3], quat_from_euler(steps_delta_actions[:, :, 3:6])
-        
-        steps_hand_cur_pos = hand_cur_positions.expand_as(steps_delta_pos)
-        steps_hand_cur_quat = hand_cur_quats.expand_as(steps_delta_quat)
-        
-        if self.use_world_frame_obs:
-            steps_hand_goal_pos = steps_delta_pos + steps_hand_cur_pos
-            steps_hand_goal_quat = quat_mul(steps_delta_quat, steps_hand_cur_quat)
-        else:
-            steps_hand_goal_pos = tf_apply(steps_hand_cur_quat, steps_hand_cur_pos, steps_delta_pos)
-            steps_hand_goal_quat = quat_mul(steps_hand_cur_quat, steps_delta_quat)
-        # print(steps_hand_goal_pos[-1, :])
-        # Quaternion multiplication is reverse order as rotation matrix multiplication! R1*R2 -> q2*q1???? 
-        # It seems that this quat_mul in torch_utils has fixed this rotation prob where R1*R2 -> q1*q2
-        self.step_actions[:, :, :3] = steps_hand_goal_pos; self.step_actions[:, :, 3:] = steps_hand_goal_quat
+
+    def update_franka_goal_dof(self):
+        # compute gripper current position and orientation error
+        gripper_cur_pose, _ = get_pose(self.rb_states, self.all_ids['gripper'])
+        pos_error = self.gripper_goal_pos - gripper_cur_pose[:, :3]
+        ori_error = orientation_error(gripper_cur_pose[:, 3:], self.gripper_goal_quat)
+        dpose = torch.cat([pos_error, ori_error], dim=1).unsqueeze(-1)
+
+        # Deploy control based on type
+        self.goal_dof_pos[:, :7] = self.dof_pos.squeeze(-1)[:, :7] + self.control_ik(dpose)
+
+        # Gripper actions depend on distance between hand and box
+        close_gripper = self.gripper_act_Flag == 2
+        release_gripper = self.gripper_act_Flag == 0
+        self.goal_dof_pos[close_gripper, 7:9] = self.to_torch([0.04, 0.04])
+        self.goal_dof_pos[release_gripper, 7:9] = self.to_torch([0., 0.])
+
+        set_dof(gym, self.sim, self.dof_pos, self.dof_vel, torch.arange(self.num_envs, device=self.device), self.goal_dof_pos)
         
         
     def pre_physics_step(self, actions):
@@ -483,7 +536,9 @@ class RoboSensaiEnv:
         # Priorly reset observation buffer for terminated environment to avoid closing the gripper at the first state
         # Why not reset envs here? Because we need done signal and all other reward information to record, we only need to reset obs for next initial action.
         reset_ids = self.reset_buf.nonzero().squeeze(-1)
-        if len(reset_ids)>0: self.observations_buf[reset_ids] = 0.
+        if len(reset_ids)>0: 
+            self.observation_dict['image'][reset_ids] = 0.
+            self.observation_dict['proprioception'][reset_ids] = 0.
 
 
     def query_scene(self):
@@ -556,469 +611,95 @@ class RoboSensaiEnv:
                 move_body_angvels.append([0., 0., 0.])
 
         body_ids = self.to_torch(body_ids, dtype=torch.long)
-        positions = torch.stack(positions)
-        orientations = torch.stack(orientations)
+        positions = torch.stack(positions).to(self.device) # positions are list of tensors
+        orientations = torch.stack(orientations).to(self.device)
         linvels = self.to_torch(linvels)
         angvels = self.to_torch(angvels)
 
         body_env_ids = self.to_torch(body_env_ids, dtype=torch.long)
         move_body_ids = self.to_torch(move_body_ids, dtype=torch.long)
         move_body_names = np.array(move_body_names)
-        move_body_poss = torch.stack(move_body_poss)
-        move_body_oris = torch.stack(move_body_oris)
+        move_body_poss = torch.stack(move_body_poss).to(self.device)
+        move_body_oris = torch.stack(move_body_oris).to(self.device)
         move_body_linvels = self.to_torch(move_body_linvels)
         move_body_angvels = self.to_torch(move_body_angvels)
         
+        # Reset all objects
         set_pose(gym, self.sim, self.root_tensor, body_ids, positions, orientations, linvels, angvels)
+
+        # Reset Robot Arm
+        set_dof(gym, self.sim, self.dof_pos, self.dof_vel, reset_ids, 
+                self.robot.default_dof_pos_tensor.repeat(len(reset_ids), 1), 
+                self.robot.default_dof_vel_tensor.repeat(len(reset_ids), 1), 
+                lower_limits=self.robot.franka_lower_limits, upper_limits=self.robot.franka_upper_limits)
+        control_dof(gym, self.sim, self.dof_pos, reset_ids, self.robot.default_dof_pos_tensor.repeat(len(reset_ids), 1),
+                    lower_limits=self.robot.franka_lower_limits, upper_limits=self.robot.franka_upper_limits)
         
         self.stepsimulation()
 
         self.failed_env_ids, self.check_table = self.post_corrector.handed_check_realiablity([body_env_ids, move_body_ids, move_body_names, \
                                                                                               move_body_poss, move_body_oris, move_body_linvels, move_body_angvels], \
                                                                                               self.cur_scene_dict, force_check=correct_Flags[0], vel_check=correct_Flags[1])
-
-
-    # def reset(self, reset_ids=None):
-        # if reset_ids is None: # reset all envs
-        #     reset_ids = torch.arange(self.num_envs, device=self.device)
-        #     # setup a full pose table for reward computation
-        #     self.target_initial_poses_full = torch.cat([self.target_initial_position, self.target_initial_orientation]).repeat(self.num_envs, 1)
-        #     self.target_world_reset_poses_full = torch.zeros((self.num_envs, 7), device=self.device, dtype=torch.float32)
-        #     self.target_world_goal_poses_full = torch.zeros((self.num_envs, 7), device=self.device, dtype=torch.float32)
-        #     self.target_relative_goal_poses_full = torch.zeros((self.num_envs, 7), device=self.device, dtype=torch.float32)
-        #     self.prev_target_goal_world_pos_dis_full = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
-        #     self.prev_target_goal_world_ori_dis_full = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
-        #     self.prev_target_hand_world_pos_dis_full = torch.zeros(self.num_envs, device=self.device, dtype=torch.float32)
-        #     self.prev_fingers_poses = torch.zeros((self.num_envs, 6), device=self.device, dtype=torch.float32)
-        #     # set an initial env_stages for step_manual; The value range is [0, 1, 2, 3] -> moving, closing gripper, lifting, end
-        #     self.env_stages = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-        #     self.close_gripper_force_checker = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-
-        # # Update target indexes buffer to randomize the kind of target
-        # if self.random_target:
-        #     objects_class = torch.randint(0, self.object_idxs_full.shape[1], size=(len(reset_ids), ))
-        #     self.target_idxs[reset_ids] = self.object_idxs_full[reset_ids, objects_class]
-        #     self.goal_target_idxs[reset_ids] = self.goal_object_idxs_full[reset_ids, objects_class]
-        #     self.object_class_idxs[reset_ids] = objects_class
-
-        # # Target Pose
-        # if self.random_target_init:
-        #     target_relative_reset_positions = torch_rand_float(*self.rand_rela_init_position, shape=(len(reset_ids), 3))
-        #     target_relative_reset_eulers = torch_rand_float(*self.rand_rela_init_rotation_angle, shape=(len(reset_ids), 3))
-        # else: 
-        #     target_relative_reset_positions = torch.zeros((len(reset_ids), 3), device=self.device, dtype=torch.float32)
-        #     target_relative_reset_eulers = torch.zeros((len(reset_ids), 3), device=self.device, dtype=torch.float32)
-        # target_relative_reset_orientations = quat_from_euler(target_relative_reset_eulers)
-        # # need to fix the object initial reset z position
-        # self.target_initial_poses_full[reset_ids, 2] = self.table_height + self.obj_height[self.object_class_idxs[reset_ids]] / 2 + 1e-4  # Fix the mesh bounding box not perfect prob
-        # target_world_init_positions, target_world_init_orientations = \
-        #     self.target_initial_poses_full[reset_ids, :3], self.target_initial_poses_full[reset_ids, 3:]
-
-        # target_world_reset_positions = target_world_init_positions + target_relative_reset_positions
-        # target_world_reset_orientations = quat_mul(target_world_init_orientations, target_relative_reset_orientations)
-        # if self.real: # Remove real environment object;
-        #     target_world_reset_positions[self.real_env_id, :] = self.prepare_area_position
-        #     target_world_reset_orientations[self.real_env_id, :] = self.prepare_area_orientation
-
-        # # Goal Pose
-        # if self.random_goal:
-        #     target_relative_goal_positions = torch_rand_float(*self.rand_rela_goal_position, shape=(len(reset_ids), 3))
-        #     target_relative_goal_eulers = torch_rand_float(*self.rand_rela_goal_rotation_angle, shape=(len(reset_ids), 3))
-        # else: 
-        #     target_relative_goal_positions = torch.zeros((len(reset_ids), 3), device=self.device, dtype=torch.float32)
-        #     target_relative_goal_eulers = torch.zeros((len(reset_ids), 3), device=self.device, dtype=torch.float32)
-        # target_relative_goal_orientations = quat_from_euler(target_relative_goal_eulers)
-        
-        # if self.task=="P":
-        #     target_world_goal_positions = target_world_reset_positions + target_relative_goal_positions
-        #     target_world_goal_orientations = quat_mul(target_world_reset_orientations, target_relative_goal_orientations)
-        #     # Keep the reset target_world_goal_positions and orientations
-        #     if self.real:
-        #         target_world_goal_positions[self.real_env_id, :] = self.target_initial_position + target_relative_goal_positions[self.real_env_id, :]
-        #         target_world_goal_orientations[self.real_env_id, :] = quat_mul(self.target_initial_orientation, target_relative_goal_orientations[self.real_env_id, :])
-        # elif self.task=='P2G':
-        #     target_world_goal_positions = self.prepare_area_position.repeat(len(reset_ids), 1)
-        #     target_world_goal_orientations = self.prepare_area_orientation.repeat(len(reset_ids), 1)
-        
-        # # Prepare Pose
-        # prepare_world_positions = self.prepare_area_position.repeat(len(reset_ids)*self.object_idxs_full.shape[1], 1)
-        # prepare_world_orientations = self.prepare_area_orientation.repeat(len(reset_ids)*self.object_idxs_full.shape[1], 1)
-
-        # # Hand Pose
-        # hand_world_positions = self.hand_initial_position.repeat(len(reset_ids), 1)
-        # hand_world_orientations = self.hand_initial_orientation.repeat(len(reset_ids), 1)
-
-        # #Reset Granular Media
-        # if self.add_gms:
-        #     gm_height = 0.03
-        #     gm_range = 0.1
-        #     gm_positions =  self.to_torch(np.random.uniform(low=[-self.shelf_dim[0]/2 * 0.9 + self.table_pose.p.x, -self.shelf_dim[1]/2 * 0.9 + self.table_pose.p.y, self.table_dim[2]+gm_height], \
-        #                                 high=[self.shelf_dim[0]/2 * 0.9 + self.table_pose.p.x, self.shelf_dim[1]/2 * 0.9 + self.table_pose.p.y, self.table_dim[2]+gm_height+gm_range], \
-        #                         size=(len(reset_ids), self.num_gms,3)))
-        #     gm_orientations = self.to_torch(np.ones((len(reset_ids), self.num_gms,4)))
-
-        # if self.add_gms:
-        #     set_pose(gym, self.sim, self.root_tensor, 
-        #          [self.object_idxs_full[reset_ids, :].flatten(), self.goal_object_idxs_full[reset_ids, :].flatten(), self.target_idxs[reset_ids], self.goal_target_idxs[reset_ids], self.hand_idxs[reset_ids],self.gm_ids],
-        #          positions=[prepare_world_positions, prepare_world_positions, target_world_reset_positions, target_world_goal_positions, hand_world_positions,gm_positions],
-        #          orientations=[prepare_world_orientations, prepare_world_orientations, target_world_reset_orientations, target_world_goal_orientations, hand_world_orientations,gm_orientations],
-        #          linvels=[torch.zeros_like(prepare_world_positions), torch.zeros_like(prepare_world_positions), torch.zeros_like(target_world_reset_positions), torch.zeros_like(target_world_goal_positions), torch.zeros_like(hand_world_positions),torch.zeros_like(gm_positions)],
-        #          angvels=[torch.zeros_like(prepare_world_positions), torch.zeros_like(prepare_world_positions), torch.zeros_like(target_world_reset_positions), torch.zeros_like(target_world_goal_positions), torch.zeros_like(hand_world_positions),torch.zeros_like(gm_positions)])
-        # else:
-        #     set_pose(gym, self.sim, self.root_tensor, 
-        #          [self.object_idxs_full[reset_ids, :].flatten(), self.goal_object_idxs_full[reset_ids, :].flatten(), self.target_idxs[reset_ids], self.goal_target_idxs[reset_ids], self.hand_idxs[reset_ids]],
-        #          positions=[prepare_world_positions, prepare_world_positions, target_world_reset_positions, target_world_goal_positions, hand_world_positions],
-        #          orientations=[prepare_world_orientations, prepare_world_orientations, target_world_reset_orientations, target_world_goal_orientations, hand_world_orientations],
-        #          linvels=[torch.zeros_like(prepare_world_positions), torch.zeros_like(prepare_world_positions), torch.zeros_like(target_world_reset_positions), torch.zeros_like(target_world_goal_positions), torch.zeros_like(hand_world_positions)],
-        #          angvels=[torch.zeros_like(prepare_world_positions), torch.zeros_like(prepare_world_positions), torch.zeros_like(target_world_reset_positions), torch.zeros_like(target_world_goal_positions), torch.zeros_like(hand_world_positions)])
-         
-        # # reset hand DOF + control DOF 
-        # set_dof(gym, self.sim, self.dof_pos, self.dof_vel, self.env_idxs[reset_ids], 
-        #         self.default_dof_pos_tensor.expand(len(reset_ids), -1), self.default_dof_vel_tensor.expand(len(reset_ids), -1), 
-        #         lower_limits=self.hand_lower_limits, upper_limits=self.hand_upper_limits)
-        # control_dof(gym, self.sim, self.dof_pos, self.env_idxs[reset_ids], self.default_dof_pos_tensor.expand(len(reset_ids), -1))
-
-        # if self.real:
-        #     self.robot.set_pose_gripper(torch.cat([hand_world_positions[self.real_env_id], hand_world_orientations[self.real_env_id]]))
-        #     self.robot.release()
-
-        # # Query the target position and green, red finger position
-        # if self.use_gpu_pipeline: self.stepsimulation() # Using gpu_pipeline requires one stepsimulation to reset and refreshtensor
-        # else: self.refresh_request_tensors()
-        # target_world_cur_poses, _ = get_pose(self.root_tensor, self.target_idxs[reset_ids])
-        # hand_poses, _ = get_pose(self.root_tensor, self.hand_idxs[reset_ids])
-        # finger_red_poses, _ = get_pose(self.rb_states, self.finger_red_idxs[reset_ids])
-        # finger_green_poses, _ = get_pose(self.rb_states, self.finger_green_idxs[reset_ids])
-        # # update the full table
-        # self.target_world_reset_poses_full[reset_ids, :3] = target_world_reset_positions
-        # self.target_world_reset_poses_full[reset_ids, 3:] = target_world_reset_orientations
-        # self.prev_fingers_poses[reset_ids, 0:3] = finger_red_poses[:, :3]
-        # self.prev_fingers_poses[reset_ids, 3:6] = finger_green_poses[:, :3]
-        # # update goal
-        # self.target_world_goal_poses_full[reset_ids, :3] = target_world_goal_positions
-        # self.target_world_goal_poses_full[reset_ids, 3:] = target_world_goal_orientations
-        # self.target_relative_goal_poses_full[reset_ids, :3] = target_relative_goal_positions
-        # self.target_relative_goal_poses_full[reset_ids, 3:] = target_relative_goal_orientations
-        # # update the initial distance table
-        # self.prev_target_goal_world_pos_dis_full[reset_ids] = torch.norm(target_world_goal_positions[:, :2] - target_world_reset_positions[:, :2], p=2, dim=1)
-        # self.prev_target_goal_world_ori_dis_full[reset_ids] = torch.norm(target_world_goal_orientations[:, 3:] - target_world_reset_orientations[:, 3:], p=2, dim=1)
-        # self.prev_target_hand_world_pos_dis_full[reset_ids] = torch.norm(target_world_reset_positions[:, :2] - hand_poses[:, :2], p=2, dim=1)
-
-        # # reset the buffer
-        # self.reset_buffers(reset_ids)
-
-        # return self.observations_buf
+        # reset the buffer
+        self.reset_buffers(reset_ids)
 
 
     def compute_observations(self):
-        if self.use_gpu_pipeline: self.compute_observations_gpu()
-        else: self.compute_observations_cpu()
+        self.compute_observations()
 
     
     def compute_reward(self):
-        if self.task=="P": return self.compute_reward_P()
-        elif self.task=="P2G": return self.compute_reward_P2G()
+        self.compute_reward_reach()
 
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
-        if self.task=="P": return self.step_P(actions)
-        elif self.task=="P2G": return self.step_P2G(actions)
+        return self.step_arrange(actions)
 
 
-    def compute_observations_cpu(self):
+    def compute_observations(self):
         # In the future, we can use a for loop to loop all fingers and compute each finger's observation then cat them together.
         # Maybe need a faster way to compute observations 
         # Fetch again to make sure the results be updated
         gym.fetch_results(self.sim, True)
         self.refresh_request_tensors()
-        
-        # Full contacts might save time but the value of return is weired (looks like meaningless numbers) and still need to pick up the contact force! 
-        # self.full_contacts = gym.get_rigid_contacts(self.sim)
 
-        target_world_poses, _ = get_pose(self.root_tensor, self.target_idxs)
-        hand_world_poses, _ = get_pose(self.root_tensor, self.hand_idxs)
-        finger_red_world_poses, _ = get_pose(self.rb_states, self.finger_red_idxs)
-        finger_green_world_poses, _ = get_pose(self.rb_states, self.finger_green_idxs)
-        finger_red_force = get_force(self.force_tensor, self.finger_red_idxs)
-        finger_green_force = get_force(self.force_tensor, self.finger_green_idxs)
-        # finger_red_sensor_force = get_force(self.force_sensor_tensor, self.finger_red_force_idxs)
-        # finger_green_sensor_force = get_force(self.force_sensor_tensor, self.finger_green_force_idxs)
-        # cube_sensor_force = get_force(self.force_sensor_tensor, self.cube_force_idxs)
+        hand_world_poses, hand_world_vel = get_pose(self.rb_states, self.all_ids['gripper'])
+        rgba_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
+        depth_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH))
         
-        # Query all contact information env by env (isaac gym's problem!)
-        contact_info_buffer = []
-        for i, env in enumerate(self.envs):
-            # contact[0] is contact position, contact[1] is normal direction
-            red_contact, green_contact = get_contact_points(env, [self.env_finger_red_idx, self.env_finger_green_idx], filter_mask=self.filter_area_start_end)
-            if red_contact is None: 
-                red_contact = [[0.] * 3, [0.] * 3]; finger_red_force[i] = 0.
-            if green_contact is None: 
-                green_contact = [[0.] * 3, [0.] * 3]; finger_green_force[i] = 0.
-            # (3D point position + net contact force) * 2 fingers
-            red_contact_info = red_contact[0] + finger_red_force[i].tolist() # 3D point position + net contact force
-            green_contact_info = green_contact[0] + finger_green_force[i].tolist() # 3D point position + normal direction
-            contact_info = sum([red_contact_info, green_contact_info], [])
-            contact_info_buffer.append(contact_info)
-        
-        contact_info_buffer = self.to_torch(contact_info_buffer, dtype=torch.float32)
-        
-        if self.real: # overwrite the real-env obs to real observation
-            finger_red_world_poses[self.real_env_id, :] = self.robot.get_pose_finger(self.red_finger)
-            finger_green_world_poses[self.real_env_id, :] = self.robot.get_pose_finger(self.green_finger)
-            rob_finger_red_force_scalar = self.robot.get_force(self.red_finger)
-            rob_finger_green_force_scalar = self.robot.get_force(self.green_finger)
-            contact_info_buffer[self.real_env_id, 0:6] = self.robot.get_contact_points_single(self.red_finger)
-            contact_info_buffer[self.real_env_id, 6:12] = self.robot.get_contact_points_single(self.green_finger)
-            # Convert real contact force info to simulation frame (world) to match the isaac gym contact info query format
-            contact_info_buffer[self.real_env_id, 3:6] = quat_apply(finger_red_world_poses[self.real_env_id, 3:], contact_info_buffer[self.real_env_id, 3:6]*rob_finger_red_force_scalar)
-            contact_info_buffer[self.real_env_id, 9:12] = quat_apply(finger_green_world_poses[self.real_env_id, 3:], contact_info_buffer[self.real_env_id, 9:12]*rob_finger_green_force_scalar)
-            # print(f"Finger force: {finger_green_force}")
-
-        if self.use_2D_contact: # Zero out Z dimension component and normalize again
-            contact_info_buffer[:, [2, 5, 8, 11]] = 0.
-        if not self.use_contact_force: # use the normal direction
-            contact_info_buffer[:, 3:6] = normalize(contact_info_buffer[:, 3:6])
-            contact_info_buffer[:, 9:12] = normalize(contact_info_buffer[:, 9:12])
-
-        non_contact_idxs = (contact_info_buffer == 0).all(dim=1)
-        self.nocontact_buf[non_contact_idxs] += 1
-        self.nocontact_buf[~non_contact_idxs] = 0 # Has contact: reset nocontact_buffer
-        
-        if self.draw_contact: # Save world frame contact info for visualization
-            contact_info_buffer_world_frame = contact_info_buffer.clone()
-            contact_info_buffer_world_frame[:, 0:3] = tf_apply(finger_red_world_poses[:, 3:], finger_red_world_poses[:, :3], contact_info_buffer_world_frame[:, 0:3])
-            contact_info_buffer_world_frame[:, 6:9] = tf_apply(finger_green_world_poses[:, 3:], finger_green_world_poses[:, :3], contact_info_buffer_world_frame[:, 6:9])
-
-        # Transform contact points to world frame if needed / Compute observations that needed
-        if self.use_world_frame_obs:
-            world_to_red_finger_trans, world_to_red_finger_ori = finger_red_world_poses[:, :3], finger_red_world_poses[:, 3:]
-            world_to_green_finger_trans, world_to_green_finger_ori = finger_green_world_poses[:, :3], finger_green_world_poses[:, 3:]
-            contact_info_buffer[:, 0:3] = tf_apply(world_to_red_finger_ori, world_to_red_finger_trans, contact_info_buffer[:, 0:3])
-            contact_info_buffer[:, 6:9] = tf_apply(world_to_green_finger_ori, world_to_green_finger_trans, contact_info_buffer[:, 6:9])
-            if self.use_contact_torque: # cross product T = r x F (r is the distance vector from contact point to the center)
-                contact_info_buffer[:, 0:3] = torch.cross(contact_info_buffer[:, 0:3] - world_to_red_finger_trans, contact_info_buffer[:, 3:6])
-                contact_info_buffer[:, 6:9] = torch.cross(contact_info_buffer[:, 6:9] - world_to_green_finger_trans, contact_info_buffer[:, 9:12])
-        # Transform all other information to finger local frame (default) 
-        else: 
-            finger_to_world_red_ori, finger_to_world_red_trans = tf_inverse(finger_red_world_poses[:, 3:], finger_red_world_poses[:, :3])
-            finger_to_world_green_ori, finger_to_world_green_trans = tf_inverse(finger_green_world_poses[:, 3:], finger_green_world_poses[:, :3])
-            # Net force direction to the finger frame; these are vector not point, the translation will be canceled out!
-            # We need to give the world frame goal pose rather than relative pose (it will be considered as world pose)
-            contact_info_buffer[:, 3:6] = quat_apply(finger_to_world_red_ori, contact_info_buffer[:, 3:6])
-            contact_info_buffer[:, 9:12] = quat_apply(finger_to_world_green_ori, contact_info_buffer[:, 9:12])
-            if self.use_contact_torque:
-                contact_info_buffer[:, 0:3] = torch.cross(contact_info_buffer[:, 0:3], contact_info_buffer[:, 3:6])
-                contact_info_buffer[:, 6:9] = torch.cross(contact_info_buffer[:, 6:9], contact_info_buffer[:, 9:12])
-            if self.include_target_obs:
-                finger_red_to_target_poses = \
-                    torch.cat(tf_combine(finger_to_world_red_ori, finger_to_world_red_trans, target_world_poses[:, 3:], target_world_poses[:, :3]), dim=1)
-                finger_green_to_target_poses = \
-                    torch.cat(tf_combine(finger_to_world_green_ori, finger_to_world_green_trans, target_world_poses[:, 3:], target_world_poses[:, :3]), dim=1)
-
-        if self.include_finger_vel:
-            red_finger_vel = self.prev_fingers_poses[:, :3] - finger_red_world_poses[:, :3]
-            green_finger_vel = self.prev_fingers_poses[:, 3:6] - finger_green_world_poses[:, :3]
-            self.prev_fingers_poses[:, :3], self.prev_fingers_poses[:, 3:6] = finger_red_world_poses[:, :3], finger_green_world_poses[:, :3]
-            if not self.use_world_frame_obs:
-                red_finger_vel = quat_apply(finger_to_world_red_ori, red_finger_vel)
-                green_finger_vel = quat_apply(finger_to_world_green_ori, green_finger_vel)
-        
-        if self.use_relative_goal:
-            goal_poses_in_hand_frame_full = self.target_relative_goal_poses_full.clone()
-        else:
-            hand_to_world_ori, hand_to_world_trans = tf_inverse(hand_world_poses[:, 3:], hand_world_poses[:, :3])
-            goal_poses_in_hand_frame_full \
-                = torch.cat(tf_combine(hand_to_world_ori, hand_to_world_trans, self.target_world_goal_poses_full[:, 3:], self.target_world_goal_poses_full[:, :3]), dim=1)
-
-        if self.add_random_noise:
+        if False and self.add_random_noise:
             pos_random_noise = torch_rand_float(*self.to_torch([-self.contact_noise_v, self.contact_noise_v]), shape=(self.num_envs, 3))
             force_random_noise = torch_rand_float(*self.to_torch([-self.force_noise_v, self.force_noise_v]), shape=(self.num_envs, 3))
-            contact_info_buffer[:, 0:3] += pos_random_noise
-            contact_info_buffer[:, 6:9] += pos_random_noise
-            contact_info_buffer[:, 3:6] += force_random_noise if self.use_contact_force else normalize(force_random_noise)
-            contact_info_buffer[:, 9:12] += force_random_noise if self.use_contact_force else normalize(force_random_noise)
+            hand_world_poses[:, 0:3] += pos_random_noise
+            rgba_images[:, :, :, 0:3] += pos_random_noise.unsqueeze(1).unsqueeze(1)
             
         # Start to concatenate all observations
-        self.last_observation = torch.cat((contact_info_buffer, self.raw_actions), dim=1) # minimum observation
-        if self.task=="P":
-            self.last_observation = torch.cat((self.last_observation, goal_poses_in_hand_frame_full), dim=1)
-
-        if self.use_world_frame_obs:
-            self.last_observation = torch.cat((self.last_observation, finger_red_world_poses, finger_green_world_poses), dim=1)
-        
-        if self.include_target_obs:
-            if self.use_world_frame_obs:
-                self.last_observation = torch.cat((self.last_observation, target_world_poses), dim=1)
-            else:
-                self.last_observation = torch.cat((self.last_observation, finger_green_to_target_poses), dim=1) 
-        if self.include_finger_vel:
-            self.last_observation = torch.cat((self.last_observation, green_finger_vel), dim=1)
+        image_tensor = torch.cat([rgba_images, depth_images.unsqueeze(-1)], dim=3)
+        self.single_img_obs_buf[:, :, :, :] = image_tensor.permute(0, 3, 1, 2) # (N, C, H, W)
+        self.single_proprioception_buf[:, :7] = hand_world_poses
+        self.single_proprioception_buf[:, 7:] = hand_world_vel
 
         # Update observation buffer | Use LSTM+Linear or only use Linear (default Linear)
-        if self.use_lstm or self.use_transformer:
-            self.observations_buf[:, :-1, :] = self.observations_buf[:, 1:, :].detach().clone() if self.num_envs==1 \
-                                               else self.observations_buf[:, 1:, :] # faster popleft
-            self.observations_buf[:, -1, :] = self.last_observation
-        else:
-            self.observations_buf[:, :-self.single_observation_dims] = self.observations_buf[:, self.single_observation_dims:].detach().clone() if self.num_envs==1 \
-                                                                       else self.observations_buf[:, self.single_observation_dims:] # popleft one observation
-            self.observations_buf[:, -self.single_observation_dims:] = self.last_observation
+        # if self.use_lstm or self.use_transformer:
+        #     self.observations_buf[:, :-1, :] = self.observations_buf[:, 1:, :].detach().clone() if self.num_envs==1 \
+        #                                        else self.observations_buf[:, 1:, :] # faster popleft
+        #     self.observations_buf[:, -1, :] = self.last_observation
+
+        self.observation_dict.update({
+            "image": self.single_img_obs_buf,
+            "proprioception": self.single_proprioception_buf,
+        })
 
         # Visualization
-        if self.rendering:
-            gym.clear_lines(self.viewer)
-            if self.draw_contact: self.visualize_contact_force(contact_info_buffer_world_frame, refresh=False)
-            
-            if self.filter_contact: self.visualize_filter_area(refresh=False)
-            self.visualize_hand_axis(refresh=False)
-            self.update_viewer()
-
-    
-    def compute_observations_gpu(self):
-        # Maybe need a faster way to compute observations 
-        # Fetch again to make sure the results be updated
-        gym.fetch_results(self.sim, True)
-        self.refresh_request_tensors()
-
-        target_world_poses, _ = get_pose(self.root_tensor, self.target_idxs)
-        finger_green_world_poses, _ = get_pose(self.rb_states, self.finger_green_idxs)
-        finger_green_force = get_force(self.force_tensor, self.finger_green_idxs)
-        contact_info_buffer = finger_green_force
-        
-        if self.real: # overwrite the real-env obs to real observation
-            finger_green_world_poses[self.real_env_id, :] = self.robot.get_pose_finger(self.green_finger)
-            rob_finger_green_force_scalar = self.robot.get_force(self.green_finger)
-            contact_info_buffer[self.real_env_id, 0:3] = self.robot.get_contact_points_single(self.green_finger)[3:6] * rob_finger_green_force_scalar
-            # Convert real contact force info to simulation frame (world) to match the isaac gym contact info query format
-            contact_info_buffer[self.real_env_id, 0:3] = quat_apply(finger_green_world_poses[self.real_env_id, 3:], contact_info_buffer[self.real_env_id, 0:3])
-            finger_green_force[self.real_env_id, :] = contact_info_buffer[self.real_env_id, 0:3]
-            # print(f"Finger force: {finger_green_force}")
-
-        if self.use_2D_contact: # Zero out Z dimension component and normalize again
-            contact_info_buffer[:, 2], finger_green_force[:, 2] = 0., 0.
-        if not self.use_contact_force: # use the normal direction
-            contact_info_buffer[:, 0:3] = normalize(contact_info_buffer[:, 0:3])
-
-        non_contact_idxs = (contact_info_buffer == 0).all(dim=1)
-        self.nocontact_buf[non_contact_idxs] += 1
-        self.nocontact_buf[~non_contact_idxs] = 0 # Has contact: reset nocontact_buffer
-        
-        if not self.use_world_frame_obs:
-            # Transform all other information to finger local frame (default) 
-            finger_to_world_green_ori, finger_to_world_green_trans = tf_inverse(finger_green_world_poses[:, 3:], finger_green_world_poses[:, :3])
-            contact_info_buffer[:, 0:3] = quat_apply(finger_to_world_green_ori, contact_info_buffer[:, 0:3])
-            if self.include_target_obs:
-                finger_green_to_target_poses = target_world_poses.clone()
-                finger_green_to_target_poses[:, :3], finger_green_to_target_poses[:, 3:] = \
-                    tf_combine(finger_to_world_green_ori, finger_to_world_green_trans, target_world_poses[:, 3:], target_world_poses[:, :3])
-
-        if self.use_abstract_contact_obs:
-            green_finger_get_contact = (~torch.isclose(contact_info_buffer[:, 3:6], torch.zeros_like(contact_info_buffer[:, 3:6]))).any(dim=1)
-            green_finger_contact_angle = torch.arctan2(contact_info_buffer[:, 4], contact_info_buffer[:, 3])
-            contact_info_buffer = torch.stack((green_finger_get_contact, green_finger_contact_angle), dim=1)
-
-        if self.include_finger_vel:
-            green_finger_vel = self.prev_fingers_poses[:, 3:6] - finger_green_world_poses[:, :3]
-            self.prev_fingers_poses[:, 3:6] = finger_green_world_poses[:, :3]
-            if not self.use_world_frame_obs:
-                green_finger_vel = quat_apply(finger_to_world_green_ori, green_finger_vel)
-        
-        if self.use_relative_goal:
-            goal_poses_in_hand_frame_full = self.target_relative_goal_poses_full.clone()
-        else:
-            goal_poses_in_hand_frame_full = torch.zeros_like(finger_green_world_poses)
-            goal_poses_in_hand_frame_full[:, :3], goal_poses_in_hand_frame_full[:, 3:] \
-                = tf_combine(finger_to_world_green_ori, finger_to_world_green_trans, self.target_world_goal_poses_full[:, 3:], self.target_world_goal_poses_full[:, :3])
-
-        if self.add_random_noise:
-            force_random_noise = torch_rand_float(*self.to_torch([-self.force_noise_v, self.force_noise_v]), shape=(self.num_envs, 3))
-            contact_info_buffer[:, :3] += force_random_noise if self.use_contact_force else normalize(force_random_noise)
-
-        # Start to concatenate observations
-        self.last_observation = torch.cat((contact_info_buffer, self.raw_actions, goal_poses_in_hand_frame_full), dim=1) # minimum observation
-        if self.use_world_frame_obs:
-            self.last_observation = torch.cat((self.last_observation, finger_green_world_poses), dim=1)
-        
-        if self.include_target_obs:
-            if self.use_world_frame_obs:
-                self.last_observation = torch.cat((self.last_observation, target_world_poses), dim=1)
-            else:
-                self.last_observation = torch.cat((self.last_observation, finger_green_to_target_poses), dim=1)
-        
-        if self.include_finger_vel:
-            self.last_observation = torch.cat((self.last_observation, green_finger_vel), dim=1)
-
-        # Update observation buffer | Use LSTM+Linear or only use Linear (default Linear)
-        if self.use_lstm or self.use_transformer:
-            self.observations_buf[:, :-1, :] = self.observations_buf[:, 1:, :].detach().clone() if self.num_envs==1 \
-                                               else self.observations_buf[:, 1:, :] # faster popleft
-            self.observations_buf[:, -1, :] = self.last_observation
-        else:
-            self.observations_buf[:, :-self.single_observation_dims] = self.observations_buf[:, self.single_observation_dims:].detach().clone() if self.num_envs==1 \
-                                                                       else self.observations_buf[:, self.single_observation_dims:] # popleft one observation
-            self.observations_buf[:, -self.single_observation_dims:] = self.last_observation
 
 
-    def compute_reward_P(self):
-        target_world_cur_poses, _ = get_pose(self.root_tensor, self.target_idxs)
+    def compute_reward_reach(self):
+        return
 
-        # compute l2 distance for [x, y] poses (need to scale them for better performancfe?) 
-        # We need to use euler angle to compute orientation otherwise it is super unstable -> No, quaternion convert to euler might be very numerical unstable? 
-        delta_pos_norm_full = torch.norm(self.target_world_goal_poses_full[:, :2] - target_world_cur_poses[:, :2], p=2, dim=1)
-        delta_ori_norm_full = torch.norm((self.target_world_goal_poses_full[:, 3:] - target_world_cur_poses[:, 3:]), p=2, dim=1)
-        # delta_ori_norm_full = torch.norm(quat_mul(target_world_cur_poses[:, 3:], quat_conjugate(self.target_world_reset_poses_full[:, 3:]))[:, :3], p=2, dim=1)
-        # delta_ori_norm_full = torch.asin(torch.clamp(delta_ori_norm_full, max=1))
+        target_world_cur_poses, _ = get_pose(self.root_tensor, self.all_ids["target"])
+        cabinet_poses, _ = get_pose(self.root_tensor, self.all_ids["cabinet"])
 
-        # We need a second order difference reward for this because we do not have cube pose state!
-        pos_eps = 0.1; ori_eps = 0.1;
-        pos_reward = self.pos_w * (1.0 / (delta_pos_norm_full + pos_eps) - 1.0 / (self.prev_target_goal_world_pos_dis_full + pos_eps))
-        ori_reward = self.ori_w * (1.0 / (delta_ori_norm_full + ori_eps) - 1.0 / (self.prev_target_goal_world_ori_dis_full + ori_eps))
-
-        self.prev_target_goal_world_pos_dis_full[:] = delta_pos_norm_full.detach().clone() 
-        self.prev_target_goal_world_ori_dis_full[:] = delta_ori_norm_full.detach().clone()
-
-        action_penalty = self.act_w * torch.sum(self.raw_actions[:, :3].abs(), dim=1)
-        
-        rewards = pos_reward + ori_reward + action_penalty
-        self.step_info.update({'pos_reward': pos_reward, 'act_penalty': action_penalty, 'step_env_idx': self.env_stages==0})
-
-        # --- Compute reset indexes --- #
-        penalty_r = 0.; success_r = 40.
-        # terminated episodes that reached the max steps
-        out_of_time_index = self.steps_buf >= self.maximum_steps
-        # terminated episodes that reached the max no-contact steps
-        lose_track_index = self.nocontact_buf >= self.maximum_no_contact
-        # terminated episodes that the Target falls down to the ground
-        target_fall_idxs = (target_world_cur_poses[:, 2] - self.target_world_reset_poses_full[:, 2]) < self.obj_fall_threshold
-        if torch.any(target_fall_idxs): print("Target is knocked down!")
-        # terminated episodes that insert into the table
-        hand_insertion_idxs = torch.any(self.last_observation.abs() >= self.maximum_detect_force, dim=-1).squeeze(dim=-1)
-        if torch.any(hand_insertion_idxs): print("Hand insertion!")
-        # Success
-        success_idxs = delta_pos_norm_full < self.pose_diff_threshold[0]
-        if self.ori_w > 0: success_idxs *= delta_ori_norm_full < self.pose_diff_threshold[1]
-        
-        self.success_buf[success_idxs] = 1
-        rewards[out_of_time_index] -= penalty_r
-        rewards[lose_track_index] -= penalty_r
-        rewards[target_fall_idxs] -= penalty_r
-        rewards[hand_insertion_idxs] -= penalty_r
-        rewards[success_idxs] += success_r
-
-        if self.auto_reset:
-            self.reset_buf[hand_insertion_idxs] = 1
-            self.reset_buf[target_fall_idxs] = 1
-            self.reset_buf[lose_track_index] = 1
-            self.reset_buf[out_of_time_index] = 1
-            self.reset_buf[success_idxs] = 1
-
-        # Update rewards
-        self.rewards_buf[:] = rewards
-
-
-    def compute_reward_P2G(self):
-        target_world_cur_poses, _ = get_pose(self.root_tensor, self.target_idxs)
-        hand_world_cur_poses, _ = get_pose(self.root_tensor, self.hand_idxs)
+        # TODO: check all targets are in the cabinet
 
         # compute l2 distance for [x, y] poses (need to scale them for better performancfe?) 
         # We need to use euler angle to compute orientation otherwise it is super unstable -> No, quaternion convert to euler might be very numerical unstable? 
@@ -1075,7 +756,7 @@ class RoboSensaiEnv:
         self.rewards_buf[:] = rewards
 
 
-    def step_P(self, actions: torch.Tensor):
+    def step_arrange(self, actions: torch.Tensor):
         """Step the physics of the environment.
         Args:
             actions: actions to apply
@@ -1086,137 +767,130 @@ class RoboSensaiEnv:
         # apply actions
         self.pre_physics_step(actions)
 
-        # step physics and render each frame
+        # step physics and render each frame; right now we step all robot arms at the same time
         for i in range(self.interval_steps):
-            if self.real:
-                self.robot.set_pose_gripper(self.step_actions[i][self.real_env_id, :])
-                robot_gripper_pose = self.robot.get_pose_gripper()
-                self.step_actions[i][self.real_env_id, :] = robot_gripper_pose
-            
-            set_pose(gym, self.sim, self.root_tensor, self.hand_idxs, \
-                     self.step_actions[i][:, :3], self.step_actions[i][:, 3:])
-
+            self.update_franka_goal_dof()
             self.stepsimulation()
 
         # compute observations, rewards, resets, ...
         self.post_physics_step()
 
-        return self.observations_buf, self.rewards_buf, self.reset_buf, self.step_info
+        return self.observation_dict, self.rewards_buf, self.reset_buf, self.step_info
 
 
-    def step_P2G(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]]:
-        """Step the physics of the environment.
-        Args:
-            actions: actions to apply
-        Returns:
-            Observations, rewards, resets, info
-            Observations are dict of observations (currently only one member called 'obs')
-        """
+    # def step_P2G(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    #     """Step the physics of the environment.
+    #     Args:
+    #         actions: actions to apply
+    #     Returns:
+    #         Observations, rewards, resets, info
+    #         Observations are dict of observations (currently only one member called 'obs')
+    #     """
 
-        # apply actions
-        self.pre_physics_step(actions)
+    #     # apply actions
+    #     self.pre_physics_step(actions)
 
-        # Act the terminal action episode
-        # Terminal actions Question: we need to move this heuristic control outside the training loop
-        moving_env_ids = (self.env_stages == 0).nonzero(as_tuple=False).squeeze(dim=-1)
-        start_closing_env_ids = (self.raw_actions[:, -1] == 2).nonzero(as_tuple=False).squeeze(dim=-1)
-        lifting_env_ids = (self.env_stages == 2).nonzero(as_tuple=False).squeeze(dim=-1)
-        self.env_stages[start_closing_env_ids] = 1
-        # Lifting envs should keep their stages as 2 (overwrite the previous start_closing_env_ids)
-        self.env_stages[lifting_env_ids] = 2
+    #     # Act the terminal action episode
+    #     # Terminal actions Question: we need to move this heuristic control outside the training loop
+    #     moving_env_ids = (self.env_stages == 0).nonzero(as_tuple=False).squeeze(dim=-1)
+    #     start_closing_env_ids = (self.raw_actions[:, -1] == 2).nonzero(as_tuple=False).squeeze(dim=-1)
+    #     lifting_env_ids = (self.env_stages == 2).nonzero(as_tuple=False).squeeze(dim=-1)
+    #     self.env_stages[start_closing_env_ids] = 1
+    #     # Lifting envs should keep their stages as 2 (overwrite the previous start_closing_env_ids)
+    #     self.env_stages[lifting_env_ids] = 2
 
-        # step physics and render each frame
-        for i in range(self.interval_steps):
-            set_actor_ids = []
-            set_actor_positions = []
-            set_actor_orientations = []
+    #     # step physics and render each frame
+    #     for i in range(self.interval_steps):
+    #         set_actor_ids = []
+    #         set_actor_positions = []
+    #         set_actor_orientations = []
             
-            # Finger movement control (It is not necessary to write len(..._env_ids)>0 but just to improve readability)
-            if len(moving_env_ids) > 0 and self.step_actions is not None:
-                set_actor_ids.append(self.hand_idxs[moving_env_ids])
-                set_actor_positions.append(self.step_actions[i][moving_env_ids, :3])
-                set_actor_orientations.append(self.step_actions[i][moving_env_ids, 3:])
+    #         # Finger movement control (It is not necessary to write len(..._env_ids)>0 but just to improve readability)
+    #         if len(moving_env_ids) > 0 and self.step_actions is not None:
+    #             set_actor_ids.append(self.hand_idxs[moving_env_ids])
+    #             set_actor_positions.append(self.step_actions[i][moving_env_ids, :3])
+    #             set_actor_orientations.append(self.step_actions[i][moving_env_ids, 3:])
             
-            closing_gripper_env_ids = (self.env_stages == 1).nonzero(as_tuple=False).squeeze(dim=-1)
-            # Close gripper check
-            if len(closing_gripper_env_ids) > 0:
-                finger_red_force = get_force(self.force_tensor, self.finger_red_idxs[closing_gripper_env_ids]).norm(dim=1)
-                finger_green_force = get_force(self.force_tensor, self.finger_green_idxs[closing_gripper_env_ids]).norm(dim=1)
-                if self.real and self.real_env_id in closing_gripper_env_ids:
-                    real_env_closing_idx = (closing_gripper_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
-                    finger_red_force[real_env_closing_idx] = self.robot.get_force(self.red_finger)
-                    finger_green_force[real_env_closing_idx] = self.robot.get_force(self.green_finger)
+    #         closing_gripper_env_ids = (self.env_stages == 1).nonzero(as_tuple=False).squeeze(dim=-1)
+    #         # Close gripper check
+    #         if len(closing_gripper_env_ids) > 0:
+    #             finger_red_force = get_force(self.force_tensor, self.finger_red_idxs[closing_gripper_env_ids]).norm(dim=1)
+    #             finger_green_force = get_force(self.force_tensor, self.finger_green_idxs[closing_gripper_env_ids]).norm(dim=1)
+    #             if self.real and self.real_env_id in closing_gripper_env_ids:
+    #                 real_env_closing_idx = (closing_gripper_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
+    #                 finger_red_force[real_env_closing_idx] = self.robot.get_force(self.red_finger)
+    #                 finger_green_force[real_env_closing_idx] = self.robot.get_force(self.green_finger)
 
-                force_satisfy_idxs = (finger_red_force > self.force_threshold) * \
-                                     (finger_green_force > self.force_threshold)
-                self.close_gripper_force_checker[closing_gripper_env_ids[force_satisfy_idxs]] += 1
-                done_close_gripper_idxs = self.close_gripper_force_checker >= self.force_check_nums
-                self.env_stages[done_close_gripper_idxs] = 2
+    #             force_satisfy_idxs = (finger_red_force > self.force_threshold) * \
+    #                                  (finger_green_force > self.force_threshold)
+    #             self.close_gripper_force_checker[closing_gripper_env_ids[force_satisfy_idxs]] += 1
+    #             done_close_gripper_idxs = self.close_gripper_force_checker >= self.force_check_nums
+    #             self.env_stages[done_close_gripper_idxs] = 2
 
-                force_failure_idxs = ~force_satisfy_idxs
-                claw_actions = torch.ones((len(closing_gripper_env_ids), self.hand_num_dofs), dtype=torch.float32, device=self.device) * JointP
-                # Mask out actor that is already statisfied with the force check, stop continuing to close gripper
-                claw_actions[force_satisfy_idxs, :] = 0.
-                claw_target_pos = self.dof_pos[closing_gripper_env_ids, :] + claw_actions
+    #             force_failure_idxs = ~force_satisfy_idxs
+    #             claw_actions = torch.ones((len(closing_gripper_env_ids), self.hand_num_dofs), dtype=torch.float32, device=self.device) * JointP
+    #             # Mask out actor that is already statisfied with the force check, stop continuing to close gripper
+    #             claw_actions[force_satisfy_idxs, :] = 0.
+    #             claw_target_pos = self.dof_pos[closing_gripper_env_ids, :] + claw_actions
 
-                if False: # Close gripper but find not pass the force check
-                    fail_grasp_obj_idxs = closing_gripper_env_ids[self.close_gripper_force_checker[closing_gripper_env_ids[force_failure_idxs]] > 0]
-                    self.env_stages[fail_grasp_obj_idxs] = 0; self.close_gripper_force_checker[fail_grasp_obj_idxs] = 0
-                    control_dof(gym, self.sim, self.dof_pos, fail_grasp_obj_idxs, self.default_dof_pos_tensor.expand(len(fail_grasp_obj_idxs), -1))
+    #             if False: # Close gripper but find not pass the force check
+    #                 fail_grasp_obj_idxs = closing_gripper_env_ids[self.close_gripper_force_checker[closing_gripper_env_ids[force_failure_idxs]] > 0]
+    #                 self.env_stages[fail_grasp_obj_idxs] = 0; self.close_gripper_force_checker[fail_grasp_obj_idxs] = 0
+    #                 control_dof(gym, self.sim, self.dof_pos, fail_grasp_obj_idxs, self.default_dof_pos_tensor.expand(len(fail_grasp_obj_idxs), -1))
 
-            # Lift action
-            lifting_env_ids = (self.env_stages == 2).nonzero(as_tuple=False).squeeze(dim=-1)
-            if len(lifting_env_ids) > 0:
-                lifting_hand_idxs = self.hand_idxs[lifting_env_ids]
-                hand_poses, _ = get_pose(self.root_tensor, lifting_hand_idxs)
-                hand_pos, hand_ori = hand_poses[:, :3], hand_poses[:, 3:]
-                hand_pos[:, 2] = hand_pos[:, 2] + self.lift_action_step
-                set_actor_ids.append(lifting_hand_idxs); set_actor_positions.append(hand_pos); set_actor_orientations.append(hand_ori)
+    #         # Lift action
+    #         lifting_env_ids = (self.env_stages == 2).nonzero(as_tuple=False).squeeze(dim=-1)
+    #         if len(lifting_env_ids) > 0:
+    #             lifting_hand_idxs = self.hand_idxs[lifting_env_ids]
+    #             hand_poses, _ = get_pose(self.root_tensor, lifting_hand_idxs)
+    #             hand_pos, hand_ori = hand_poses[:, :3], hand_poses[:, 3:]
+    #             hand_pos[:, 2] = hand_pos[:, 2] + self.lift_action_step
+    #             set_actor_ids.append(lifting_hand_idxs); set_actor_positions.append(hand_pos); set_actor_orientations.append(hand_ori)
 
-            # Set actor together here (Otherwise GPU pipeline will only consider the last set_pose function)
-            if len(set_actor_ids) > 0:
-                if self.real:
-                    if self.real_env_id in moving_env_ids:
-                        real_env_moving_idx = (moving_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
-                        self.robot.set_pose_gripper(self.step_actions[i][self.real_env_id])
-                    elif self.real_env_id in lifting_env_ids:
-                        real_env_lifting_idx = (lifting_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
-                        self.robot.set_pose_gripper(torch.cat([hand_pos[real_env_lifting_idx, :], hand_ori[real_env_lifting_idx, :]]))
+    #         # Set actor together here (Otherwise GPU pipeline will only consider the last set_pose function)
+    #         if len(set_actor_ids) > 0:
+    #             if self.real:
+    #                 if self.real_env_id in moving_env_ids:
+    #                     real_env_moving_idx = (moving_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
+    #                     self.robot.set_pose_gripper(self.step_actions[i][self.real_env_id])
+    #                 elif self.real_env_id in lifting_env_ids:
+    #                     real_env_lifting_idx = (lifting_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
+    #                     self.robot.set_pose_gripper(torch.cat([hand_pos[real_env_lifting_idx, :], hand_ori[real_env_lifting_idx, :]]))
                     
-                    gripper_pose = self.robot.get_pose_gripper().squeeze(dim=0)
-                    set_actor_ids.append(self.hand_idxs[self.real_env_id].unsqueeze(dim=0)); set_actor_positions.append(gripper_pose[:3]); set_actor_orientations.append(gripper_pose[3:])
-                set_pose(gym, self.sim, self.root_tensor, set_actor_ids, set_actor_positions, set_actor_orientations)
+    #                 gripper_pose = self.robot.get_pose_gripper().squeeze(dim=0)
+    #                 set_actor_ids.append(self.hand_idxs[self.real_env_id].unsqueeze(dim=0)); set_actor_positions.append(gripper_pose[:3]); set_actor_orientations.append(gripper_pose[3:])
+    #             set_pose(gym, self.sim, self.root_tensor, set_actor_ids, set_actor_positions, set_actor_orientations)
             
-            # Control actor DOF here together
-            if len(closing_gripper_env_ids) > 0:
-                if self.real:
-                    if self.real_env_id in closing_gripper_env_ids:
-                        real_env_closing_idx = (closing_gripper_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
-                        self.robot.move_fin_pos(claw_target_pos[real_env_closing_idx, :])
-                    claw_pos = self.robot.get_fin_pos()
-                    claw_target_pos[real_env_closing_idx, :] = claw_pos
-                control_dof(gym, self.sim, self.dof_pos, closing_gripper_env_ids, claw_target_pos, 
-                    lower_limits=self.hand_lower_limits, upper_limits=self.hand_upper_limits)
+    #         # Control actor DOF here together
+    #         if len(closing_gripper_env_ids) > 0:
+    #             if self.real:
+    #                 if self.real_env_id in closing_gripper_env_ids:
+    #                     real_env_closing_idx = (closing_gripper_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
+    #                     self.robot.move_fin_pos(claw_target_pos[real_env_closing_idx, :])
+    #                 claw_pos = self.robot.get_fin_pos()
+    #                 claw_target_pos[real_env_closing_idx, :] = claw_pos
+    #             control_dof(gym, self.sim, self.dof_pos, closing_gripper_env_ids, claw_target_pos, 
+    #                 lower_limits=self.hand_lower_limits, upper_limits=self.hand_upper_limits)
 
-            self.stepsimulation()
+    #         self.stepsimulation()
 
-            # Check if lifting is done
-            if len(lifting_env_ids) > 0:
-                lifting_hand_idxs = self.hand_idxs[lifting_env_ids]
-                hand_poses, _ = get_pose(self.root_tensor, lifting_hand_idxs)
-                if self.real:
-                    if self.real_env_id in lifting_env_ids:
-                        real_env_lifting_idx = (lifting_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
-                        hand_poses[real_env_lifting_idx, :] = self.robot.get_pose_gripper()
+    #         # Check if lifting is done
+    #         if len(lifting_env_ids) > 0:
+    #             lifting_hand_idxs = self.hand_idxs[lifting_env_ids]
+    #             hand_poses, _ = get_pose(self.root_tensor, lifting_hand_idxs)
+    #             if self.real:
+    #                 if self.real_env_id in lifting_env_ids:
+    #                     real_env_lifting_idx = (lifting_env_ids==self.real_env_id).nonzero(as_tuple=False).squeeze(dim=-1)
+    #                     hand_poses[real_env_lifting_idx, :] = self.robot.get_pose_gripper()
 
-                hand_pos, hand_ori = hand_poses[:, :3], hand_poses[:, 3:]
-                lifting_end_env_ids = lifting_env_ids[hand_pos[:, 2] - self.hand_initial_position[2] >= self.lift_height]
-                self.env_stages[lifting_end_env_ids] = 3
+    #             hand_pos, hand_ori = hand_poses[:, :3], hand_poses[:, 3:]
+    #             lifting_end_env_ids = lifting_env_ids[hand_pos[:, 2] - self.hand_initial_position[2] >= self.lift_height]
+    #             self.env_stages[lifting_end_env_ids] = 3
 
-        # compute observations, rewards, resets, ...
-        self.post_physics_step()
+    #     # compute observations, rewards, resets, ...
+    #     self.post_physics_step()
 
-        return self.observations_buf, self.rewards_buf, self.reset_buf, self.step_info
+    #     return self.observations_buf, self.rewards_buf, self.reset_buf, self.step_info
     
 
     def get_real_robot_states(self): # THIS NEEDS TO BE MODIFIED
@@ -1251,26 +925,26 @@ class RoboSensaiEnv:
                         key = event.key.char
                 if key == 'r': 
                     self.reset()
-                    # gym.start_access_image_tensors(self.sim)
-                    # #
-                    # # get camera tensor
-                    # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_COLOR)
-                    # self.rgb_tensor = gymtorch.wrap_tensor(_rgb_tensor)
-                    # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_DEPTH)
-                    # self.depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
-                    # _seg_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_SEGMENTATION)
-                    # self.seg_tensor = gymtorch.wrap_tensor(_seg_tensor)
-                    # #
-                    # gym.end_access_image_tensors(self.sim)
+                    if len(self.failed_env_ids) > 0:
+                        key = self.freeze_sim()
+                        if key == 'f': self.failed_env_ids = []
 
-                    color_image = gym.get_camera_image(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_SEGMENTATION)
-                
-                if len(self.failed_env_ids) > 0:
-                    key = self.freeze_sim()
-                    if key == 'f': self.failed_env_ids = []
+                self.actions_tensor = torch.ones(self.action_dim, dtype=torch.float32, device=self.device)
+                if key == 'q': self.actions_tensor[:, 0] += 1
+                if key == 'w': self.actions_tensor[:, 0] -= 1
+                if key == 'a': self.actions_tensor[:, 1] += 1
+                if key == 's': self.actions_tensor[:, 1] -= 1
+                if key == 'z': self.actions_tensor[:, 2] += 1
+                if key == 'x': self.actions_tensor[:, 2] -= 1
+                if key == 'u': self.actions_tensor[:, 3] += 1
+                if key == 'i': self.actions_tensor[:, 3] -= 1
+                if key == 'j': self.actions_tensor[:, 5] += 1
+                if key == 'k': self.actions_tensor[:, 5] -= 1
+                if key == 'm': self.actions_tensor[:, 6] += 1
+                if key == ',': self.actions_tensor[:, 6] -= 1
 
-                # step the physics
-                self.stepsimulation()
+                self.step(self.actions_tensor)
+
 
     
     def freeze_sim(self):
@@ -1291,7 +965,27 @@ class RoboSensaiEnv:
                     self.stepsimulation()
                 else:
                     # step the viewer
-                    if self.rendering: self.update_viewer()
+                    if self.rendering: 
+                        self.update_viewer()
+                
+                # gym.start_access_image_tensors(self.sim)
+                # print(self.rgb_tensor.to('cuda:0'))
+                # gym.end_access_image_tensors(self.sim)
+
+                self.color_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR)
+                self.depth_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH)
+
+                self.visualize_image_observation()
+    
+
+    def visualize_image_observation(self, env_id=0):
+        color_image = self.color_images[env_id]
+        depth_image = self.depth_images[env_id]
+        cv2_color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+        cv2_depth_image = np_scale(depth_image, 0, 255).astype(np.uint8)
+        cv2.imshow('RGBA', cv2.resize(cv2_color_image, (800, 400)))
+        cv2.imshow('Alpha', cv2.resize(cv2_depth_image, (800, 400)))
+        cv2.waitKey(1)
 
     
     def post_corrector_test(self, test_range=list(range(1, 19, 2)), save_path="results/post_corrector", check_force_diff=False, rendering=False):
@@ -1538,8 +1232,8 @@ if __name__ == '__main__':
     args.graphics_device_id = 1 # might need to change in different computer
     args.object_name = 'cube'
     args.task = 'P2G'
-    args.use_gpu_pipeline = False
-    args.rendering = False
+    args.use_gpu_pipeline = True
+    args.rendering = True
     args.use_lstm = False
     args.use_transformer = True
     args.sequence_len = 5
@@ -1564,6 +1258,6 @@ if __name__ == '__main__':
     args.use_gpt = False
 
     env = RoboSensaiEnv(args)
-    env.post_corrector_test(rendering=False)
-    # env.step_manual()
+    # env.post_corrector_test(rendering=False)
+    env.step_manual()
     env.close()

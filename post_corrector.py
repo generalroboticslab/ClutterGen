@@ -26,14 +26,14 @@ class PostCorrector:
         force_fail_force = object_force[obj_force_fail_index]
         force_fail_env_ids = env_ids[obj_force_fail_index]
         force_fail_obj_ids = body_ids[obj_force_fail_index]
-        force_fail_obj_names = body_names[obj_force_fail_index.nonzero().squeeze()]
+        force_fail_obj_names = body_names[obj_force_fail_index.nonzero().squeeze().cpu()]
         # Check object velocity (To see if everything is stable)
         object_pose, object_vel = get_pose(self.handem_env.rb_states, body_ids)
         obj_vel_fail_index = ((object_vel[:, :3].abs()>self.vel_threshold[0]).any(dim=1) + (object_vel[:, 3:].abs()>self.vel_threshold[1]).any(dim=1))
         vel_fail_vel = object_vel[obj_vel_fail_index]
         vel_fail_env_ids = env_ids[obj_vel_fail_index]
         vel_fail_obj_ids = body_ids[obj_vel_fail_index]
-        vel_fail_obj_names = body_names[obj_vel_fail_index.nonzero().squeeze()]
+        vel_fail_obj_names = body_names[obj_vel_fail_index.nonzero().squeeze().cpu()]
 
         # Define your data as a list of lists
         check_table = None
