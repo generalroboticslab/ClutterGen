@@ -151,8 +151,24 @@ def get_envs_images(sim, env_handles, camera_handles, image_type):
         image_height, image_width = camera_image.shape
         if image_type == gymapi.IMAGE_COLOR:
             camera_image = camera_image.reshape(image_height, image_width//4, 4)
+            camera_image = camera_image[:, :, :3] # remove alpha channel
         images.append(camera_image)
     return np.stack(images)
+
+
+def get_envs_images_tensor(sim, camera_tensors):
+    gym.start_access_image_tensors(sim)
+    rgbd_tensors = []
+    for rgba_tensor, depth_tensor in camera_tensors:
+        image_height, image_width = rgba_tensor.shape
+        rgba_tensor = rgba_tensor.reshape(image_height, image_width//4, 4)
+        rgb_tensor = rgba_tensor[:, :, :3]
+        rgbd_tensor = torch.cat([rgb_tensor, depth_tensor.unsqueeze(-1)], dim=-1)
+        rgbd_tensors.append(rgbd_tensor)
+
+    rgbd_tensors = torch.stack(rgbd_tensors)
+    gym.end_access_image_tensors(sim)
+    return rgbd_tensors
 
 
 def cvtVoidXyzToList(void_array, coef=1):

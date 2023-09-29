@@ -95,10 +95,10 @@ class RoboSensaiEnv:
         #####################################################################
         # Observation dimension
         self.image_width, self.image_height = 1920, 1080
-        self.rgba_image_dim = (self.image_height, self.image_width, 4)
+        self.rgb_image_dim = (self.image_height, self.image_width, 3)
         self.depth_image_dim = (self.image_height, self.image_width, 1)
         self.proprioception = 7 + 6 # 7D pose + 6D velocity 
-        self.single_img_obs_dim = (self.num_envs, self.rgba_image_dim[2]+self.depth_image_dim[2], self.image_height, self.image_width)
+        self.single_img_obs_dim = (self.num_envs, self.rgb_image_dim[2]+self.depth_image_dim[2], self.image_height, self.image_width)
         self.single_proprioception_dim = (self.num_envs, self.proprioception)
 
         self.obs_seq_len = 1 # How to deal with image sequence?
@@ -201,23 +201,19 @@ class RoboSensaiEnv:
         for i in range(self.num_envs):
             camera_handle = gym.create_camera_sensor(self.all_ids['envs'][i], camera_properties)                                     
             gym.set_camera_location(camera_handle, self.all_ids['envs'][i], cam_pos, cam_target)
-            self.camera_handles.append(camera_handle)
             cam_vinv = torch.inverse(self.to_torch(gym.get_camera_view_matrix(self.sim, self.all_ids['envs'][i], camera_handle)))
             cam_proj = self.to_torch(gym.get_camera_proj_matrix(self.sim, self.all_ids['envs'][i], camera_handle))
-
-            # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_COLOR)
-            # self.rgb_tensor = gymtorch.wrap_tensor(_rgb_tensor)
-            # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_DEPTH)
-            # self.depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
-            # _seg_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][0], self.camera_handle, gymapi.IMAGE_SEGMENTATION)
-            # self.seg_tensor = gymtorch.wrap_tensor(_seg_tensor)
-            # self.camera_tensors.append(torch_cam_tensor)
-
+            self.camera_handles.append(camera_handle)
             self.camera_view_matrixs.append(cam_vinv)
             self.camera_proj_matrixs.append(cam_proj)
-            self.camera_handles.append(camera_handle)
-    
 
+            # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][i], camera_handle, gymapi.IMAGE_COLOR)
+            # env_rgb_tensor = gymtorch.wrap_tensor(_rgb_tensor)
+            # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][i], camera_handle, gymapi.IMAGE_DEPTH)
+            # env_depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
+            # self.camera_tensors.append((env_rgb_tensor, env_depth_tensor))
+
+    
     def _configure_ground(self):
         # add ground plane
         plane_params = gymapi.PlaneParams()
@@ -645,7 +641,7 @@ class RoboSensaiEnv:
 
 
     def compute_observations(self):
-        self.compute_observations()
+        self.compute_observations_gpu()
 
     
     def compute_reward(self):
@@ -656,7 +652,7 @@ class RoboSensaiEnv:
         return self.step_arrange(actions)
 
 
-    def compute_observations(self):
+    def compute_observations_gpu(self):
         # In the future, we can use a for loop to loop all fingers and compute each finger's observation then cat them together.
         # Maybe need a faster way to compute observations 
         # Fetch again to make sure the results be updated
@@ -968,22 +964,24 @@ class RoboSensaiEnv:
                     if self.rendering: 
                         self.update_viewer()
                 
-                # gym.start_access_image_tensors(self.sim)
-                # print(self.rgb_tensor.to('cuda:0'))
-                # gym.end_access_image_tensors(self.sim)
-
-                self.color_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR)
+                self.rgb_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR)
                 self.depth_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH)
+                self.rgbd_images = np.concatenate([self.rgb_images, np.expand_dims(self.depth_images, axis=-1)], axis=-1)
+
+                # self.rgbd_images = get_envs_images_tensor(self.sim, self.camera_tensors)
 
                 self.visualize_image_observation()
     
 
     def visualize_image_observation(self, env_id=0):
-        color_image = self.color_images[env_id]
+        rgb_image = self.rgb_images[env_id]
         depth_image = self.depth_images[env_id]
-        cv2_color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+        if hasattr(rgb_image, 'device') and rgb_image.device != torch.device('cpu'):
+            rgb_image = rgb_image.cpu().numpy()
+            depth_image = depth_image.cpu().numpy()
+        cv2_rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
         cv2_depth_image = np_scale(depth_image, 0, 255).astype(np.uint8)
-        cv2.imshow('RGBA', cv2.resize(cv2_color_image, (800, 400)))
+        cv2.imshow('RGBA', cv2.resize(cv2_rgb_image, (800, 400)))
         cv2.imshow('Alpha', cv2.resize(cv2_depth_image, (800, 400)))
         cv2.waitKey(1)
 
@@ -1229,7 +1227,7 @@ class RoboSensaiEnv:
 
 if __name__ == '__main__':
     args = gymutil.parse_arguments(description="Isaac Gym for Sandem")
-    args.graphics_device_id = 1 # might need to change in different computer
+    args.graphics_device_id = 0 # might need to change in different computer
     args.object_name = 'cube'
     args.task = 'P2G'
     args.use_gpu_pipeline = True
