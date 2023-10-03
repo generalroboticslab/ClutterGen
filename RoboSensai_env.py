@@ -85,29 +85,16 @@ class RoboSensaiEnv:
         
         # Mics
         self.use_gpt = self.args.use_gpt if hasattr(self.args, "use_gpt") else False
+        self.auto_reset = True
+        self.maximum_steps = 100
+        self.maximum_detect_force = 100
+        self.reach_success_thred = 0.02
+        self.reach_success_steps = 5
+        self.obj_fall_threshold = -0.15
+        self.pos_w = self.args.pos_w if hasattr(self.args, "pos_w") else 1.
+        self.act_w = self.args.act_w if hasattr(self.args, "act_w") else 0.
 
         # Visualization Configs
-
-        # Model Configs
-
-        #####################################################################
-        ###=========================Actions & Observations================###
-        #####################################################################
-        # Observation dimension
-        self.image_width, self.image_height = 1920, 1080
-        self.rgb_image_dim = (self.image_height, self.image_width, 3)
-        self.depth_image_dim = (self.image_height, self.image_width, 1)
-        self.proprioception = 7 + 6 # 7D pose + 6D velocity 
-        self.single_img_obs_dim = (self.num_envs, self.rgb_image_dim[2]+self.depth_image_dim[2], self.image_height, self.image_width)
-        self.single_proprioception_dim = (self.num_envs, self.proprioception)
-
-        self.obs_seq_len = 1 # How to deal with image sequence?
-
-        # Action dimension; How to handle the case that there is no joint action can reach a certain pose?
-        self.action_range = [0, 1, 2]
-        self.action_dim = (self.num_envs, 6 + 1) # 6D delta actions + grip action
-
-        self.act_seq_len = 1
 
         # Create Sim and Camera
         self._configure_sim()
@@ -121,6 +108,31 @@ class RoboSensaiEnv:
         self.gpt = GPT()
         # Create post corrector
         self.post_corrector = PostCorrector(self, gen_readable_table=False, device=self.device)
+        
+        # Model Configs
+        self.hidden_size = self.args.hidden_size if hasattr(self.args, "hidden_size") else 256
+        self.num_hidden_layers = self.args.num_hidden_layers if hasattr(self.args, "num_hidden_layers") else 5
+        self.time_seq_obs = self.args.time_seq_obs if hasattr(self.args, "time_seq_obs") else 1
+
+        #####################################################################
+        ###=========================Actions & Observations================###
+        #####################################################################
+        # Observation dimension
+        self.image_width, self.image_height = 640, 360
+        self.rgb_image_dim = (self.image_height, self.image_width, 3)
+        self.depth_image_dim = (self.image_height, self.image_width, 1)
+        self.proprioception = self.robot.franka_num_dofs + 7 + 6 # 7D eef pose + 6D eef velocity 
+        self.single_img_obs_dim = (self.num_envs, self.rgb_image_dim[2]+self.depth_image_dim[2], self.image_height, self.image_width)
+        self.single_proprioception_dim = (self.num_envs, self.proprioception)
+
+        self.obs_seq_len = 1 # How to deal with image sequence?
+
+        # Action dimension; How to handle the case that there is no joint action can reach a certain pose?
+        self.action_range = [0, 1, 2]
+        self.action_dim = (self.num_envs, 6 + 1) # 6D delta actions + grip action
+
+        self.act_seq_len = 1
+
         # Create environments and allocate buffers
         self.create_envs()
         
@@ -195,8 +207,8 @@ class RoboSensaiEnv:
         self.camera_proj_matrixs = []
 
         camera_properties = gymapi.CameraProperties()
-        camera_properties.width = 1920
-        camera_properties.height = 1080
+        camera_properties.width = self.image_width
+        camera_properties.height = self.image_height
         camera_properties.enable_tensors = False
         for i in range(self.num_envs):
             camera_handle = gym.create_camera_sensor(self.all_ids['envs'][i], camera_properties)                                     
@@ -270,7 +282,7 @@ class RoboSensaiEnv:
 
 
     def _configure_robot(self, robot_name="franka"):
-        self.robot = Franka(sim=self.sim, asset_root=self.asset_root)
+        self.robot = Franka(sim=self.sim, asset_root=self.asset_root, device=self.device)
         self.scene_asset.update({"robot": [self.robot.franka_asset, self.robot.franka_pose]})
 
 
@@ -361,8 +373,8 @@ class RoboSensaiEnv:
             self.num_dofs_sim = gym.get_sim_dof_count(self.sim)
             _dof_states = gym.acquire_dof_state_tensor(self.sim)
             self.dof_states = gymtorch.wrap_tensor(_dof_states)
-            self.dof_pos = self.dof_states[:, 0].view(self.num_envs, self.robot.franka_num_dofs).contiguous()
-            self.dof_vel = self.dof_states[:, 1].view(self.num_envs, self.robot.franka_num_dofs).contiguous()
+            self.dof_pos = self.dof_states[:, 0].view(self.num_envs, -1)[:, :self.robot.franka_num_dofs].contiguous()
+            self.dof_vel = self.dof_states[:, 1].view(self.num_envs, -1)[:, :self.robot.franka_num_dofs].contiguous()
             self.goal_dof_pos = torch.zeros_like(self.dof_pos)
             
         # get net-force state tensor / Force direction is in the local frame! / Normal Force + Tangential Force
@@ -405,6 +417,11 @@ class RoboSensaiEnv:
         # computation buffers (intermidiate variable no need to reset)
         self.delta_actions_6D = torch.zeros((self.num_envs, 6), dtype=torch.float32, device=self.device)
         self.step_info = {}
+        self.reach_success_checker = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.target_world_reset_poses_full = torch.zeros((self.num_envs, 7), dtype=torch.float32, device=self.device)
+        self.move_obj_world_reset_poses_full = torch.zeros((self.num_envs, 7), dtype=torch.float32, device=self.device)
+        self.prev_target_hand_world_pos_dis_full = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+
         # self.last_observation = torch.zeros((self.num_envs, self.single_observation_dims), dtype=torch.float32, device=self.device)
         # self.step_actions = torch.zeros((self.interval_steps, self.num_envs, 7), dtype=torch.float32, device=self.device)
         # self.lift_num_steps = int(self.lift_height / DeltaP * 10)
@@ -419,8 +436,16 @@ class RoboSensaiEnv:
         self.steps_buf[reset_ids] = 0
         self.reset_buf[reset_ids] = 0
         self.success_buf[reset_ids] = 0
+        self.reach_success_checker[reset_ids] = 0
+
+        # Update initial observation buffer
+        hand_world_poses, _ = get_pose(self.rb_states, self.all_ids['gripper'][reset_ids])
+        target_world_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]][reset_ids])
+        move_obj_world_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]][reset_ids])
+        self.prev_target_hand_world_pos_dis_full[reset_ids] = torch.norm(hand_world_poses[reset_ids, :3] - target_world_poses[reset_ids, :3], p=2, dim=1)
+        self.target_world_reset_poses_full[reset_ids] = target_world_poses.clone()
+        self.move_obj_world_reset_poses_full[reset_ids] = move_obj_world_poses.clone()
         # self.nocontact_buf[reset_ids] = 0
-        # self.close_gripper_force_checker[reset_ids] = 0
         # self.env_stages[reset_ids] = 0
         # self.hand_pose_6D_buf[reset_ids] = self.hand_initial_pose_6D
 
@@ -619,6 +644,8 @@ class RoboSensaiEnv:
         move_body_oris = torch.stack(move_body_oris).to(self.device)
         move_body_linvels = self.to_torch(move_body_linvels)
         move_body_angvels = self.to_torch(move_body_angvels)
+
+        self.move_env_body_ids = torch.stack([body_env_ids, move_body_ids], dim=1)
         
         # Reset all objects
         set_pose(gym, self.sim, self.root_tensor, body_ids, positions, orientations, linvels, angvels)
@@ -638,6 +665,9 @@ class RoboSensaiEnv:
                                                                                               self.cur_scene_dict, force_check=correct_Flags[0], vel_check=correct_Flags[1])
         # reset the buffer
         self.reset_buffers(reset_ids)
+
+        return self.observation_dict
+
 
 
     def compute_observations(self):
@@ -662,6 +692,7 @@ class RoboSensaiEnv:
         hand_world_poses, hand_world_vel = get_pose(self.rb_states, self.all_ids['gripper'])
         rgba_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
         depth_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH))
+        depth_images = torch.clamp(depth_images, min=-10.0, max=10.0)
         
         if False and self.add_random_noise:
             pos_random_noise = torch_rand_float(*self.to_torch([-self.contact_noise_v, self.contact_noise_v]), shape=(self.num_envs, 3))
@@ -672,11 +703,12 @@ class RoboSensaiEnv:
         # Start to concatenate all observations
         image_tensor = torch.cat([rgba_images, depth_images.unsqueeze(-1)], dim=3)
         self.single_img_obs_buf[:, :, :, :] = image_tensor.permute(0, 3, 1, 2) # (N, C, H, W)
-        self.single_proprioception_buf[:, :7] = hand_world_poses
-        self.single_proprioception_buf[:, 7:] = hand_world_vel
+        self.single_proprioception_buf[:, :self.robot.franka_num_dofs] = self.dof_pos
+        self.single_proprioception_buf[:, self.robot.franka_num_dofs:self.robot.franka_num_dofs+7] = hand_world_poses
+        self.single_proprioception_buf[:, self.robot.franka_num_dofs+7:] = hand_world_vel
 
         # Update observation buffer | Use LSTM+Linear or only use Linear (default Linear)
-        # if self.use_lstm or self.use_transformer:
+        # if self.time_seq_obs or self.use_transformer:
         #     self.observations_buf[:, :-1, :] = self.observations_buf[:, 1:, :].detach().clone() if self.num_envs==1 \
         #                                        else self.observations_buf[:, 1:, :] # faster popleft
         #     self.observations_buf[:, -1, :] = self.last_observation
@@ -690,19 +722,20 @@ class RoboSensaiEnv:
 
 
     def compute_reward_reach(self):
-        return
 
-        target_world_cur_poses, _ = get_pose(self.root_tensor, self.all_ids["target"])
-        cabinet_poses, _ = get_pose(self.root_tensor, self.all_ids["cabinet"])
+        target_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]])
+        hand_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids["gripper"])
+        all_moveable_obj_poses, _ = get_pose(self.rb_states, self.move_env_body_ids[:, 1])
+        robot_contact_force = get_force(self.force_tensor, self.all_ids["robot"])
 
         # TODO: check all targets are in the cabinet
 
         # compute l2 distance for [x, y] poses (need to scale them for better performancfe?) 
         # We need to use euler angle to compute orientation otherwise it is super unstable -> No, quaternion convert to euler might be very numerical unstable? 
-        delta_pos_norm_full = torch.norm(hand_world_cur_poses[:, :2] - target_world_cur_poses[:, :2], p=2, dim=1)
+        delta_pos_norm_full = torch.norm(hand_world_cur_poses[:, :3] - target_world_cur_poses[:, :3], p=2, dim=1)
 
         # We need a second order difference reward for this because we do not have cube pose state!
-        pos_eps = 0.1; ori_eps = 0.1;
+        pos_eps = 0.1
         pos_reward = self.pos_w * (1.0 / (delta_pos_norm_full + pos_eps) - 1.0 / (self.prev_target_hand_world_pos_dis_full + pos_eps))
 
         self.prev_target_hand_world_pos_dis_full[:] = delta_pos_norm_full.detach().clone() 
@@ -710,42 +743,34 @@ class RoboSensaiEnv:
         action_penalty = self.act_w * torch.sum(self.raw_actions[:, :3].abs(), dim=1)
         
         rewards = pos_reward + action_penalty
-        self.step_info.update({'pos_reward': pos_reward, 'act_penalty': action_penalty, 'step_env_idx': (self.env_stages==0)+(self.env_stages==3)})
+        self.step_info.update({'pos_reward': pos_reward, 'act_penalty': action_penalty})
 
         # --- Compute reset indexes --- #
         penalty_r = 0.; success_r = 800.
         # terminated episodes that reached the max steps
         out_of_time_index = self.steps_buf >= self.maximum_steps
         # if torch.any(out_of_time_index): print("Out of time")
-        # terminated episodes that reached the max no-contact steps
-        lose_track_index = self.nocontact_buf >= self.maximum_no_contact
-        # if torch.any(lose_track_index): print("Lose track")
         # terminated episodes that the Target falls down to the ground
-        target_fall_idxs = (target_world_cur_poses[:, 2] < self.target_world_reset_poses_full[:, 2]) < self.obj_fall_threshold
+        target_fall_idxs = (target_world_cur_poses[:, 2] - self.target_world_reset_poses_full[:, 2]) < self.obj_fall_threshold
         # if torch.any(target_fall_idxs): print("Target Fall")
         # terminated episodes that insert into the table
-        hand_insertion_idxs = torch.any(self.last_observation.abs() >= self.maximum_detect_force, dim=-1).squeeze(dim=-1)
+        hand_insertion_idxs = torch.any(robot_contact_force >= self.maximum_detect_force, dim=-1).squeeze(dim=-1)
         # if torch.any(hand_insertion_idxs): print("Hand insertion")
         # Success
-        terminated_idxs = (self.env_stages == 3).nonzero().squeeze(dim=-1)
-        success_idxs = terminated_idxs[(target_world_cur_poses[terminated_idxs, 2] - self.target_world_reset_poses_full[terminated_idxs, 2]) > self.lift_success_thre]
-        # Close gripper but fail
-        close_fail_idxs = terminated_idxs[(target_world_cur_poses[terminated_idxs, 2] - self.target_world_reset_poses_full[terminated_idxs, 2]) <= self.lift_success_thre]
+        reach_succ = delta_pos_norm_full < self.reach_success_thred
+        self.reach_success_checker[reach_succ] += 1
+        success_idxs = self.reach_success_checker >= self.reach_success_steps
 
         self.success_buf[success_idxs] = 1
         rewards[out_of_time_index] -= penalty_r
-        rewards[lose_track_index] -= penalty_r
         rewards[target_fall_idxs] -= penalty_r
         rewards[hand_insertion_idxs] -= penalty_r
-        rewards[close_fail_idxs] -= penalty_r
         rewards[success_idxs] += success_r
 
         if self.auto_reset:
             self.reset_buf[hand_insertion_idxs] = 1
             self.reset_buf[target_fall_idxs] = 1
-            self.reset_buf[lose_track_index] = 1
             self.reset_buf[out_of_time_index] = 1
-            self.reset_buf[close_fail_idxs] = 1
             self.reset_buf[success_idxs] = 1
 
         # Update rewards
@@ -970,7 +995,7 @@ class RoboSensaiEnv:
 
                 # self.rgbd_images = get_envs_images_tensor(self.sim, self.camera_tensors)
 
-                self.visualize_image_observation()
+                self.visualize_image_observation(env_id=2)
     
 
     def visualize_image_observation(self, env_id=0):
@@ -1232,10 +1257,10 @@ if __name__ == '__main__':
     args.task = 'P2G'
     args.use_gpu_pipeline = True
     args.rendering = True
-    args.use_lstm = False
+    args.time_seq_obs = False
     args.use_transformer = True
     args.sequence_len = 5
-    args.num_envs = 1
+    args.num_envs = 50
     args.draw_contact = True
     args.filter_contact = True
     args.include_target_obs = False

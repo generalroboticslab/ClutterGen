@@ -84,6 +84,10 @@ def get_pose(state_tensor, body_idxs, decimals=4):
     return poses, velocity
 
 
+def get_dof(dof_tensor, body_idxs):
+    return dof_tensor[body_idxs, :]
+
+
 def get_force(force_tensor, body_idxs):
     return force_tensor[body_idxs, :]
 
