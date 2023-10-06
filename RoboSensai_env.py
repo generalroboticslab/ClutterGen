@@ -74,8 +74,9 @@ class RoboSensaiEnv:
         self.urdf_folder = "objects/ycb_objects_origin_at_center_vhacd/urdfs"
         self.mesh_folder = "objects/ycb_objects_origin_at_center_vhacd/meshes"
         self.xml_folder = "objects/ycb_objects_origin_at_center_vhacd/xmls"
-        # self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")]
-        self.object_name = ["cube"]
+        self.envs = []
+        self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")]
+        # self.object_name = ["cube"]
         self.object_name_index = {}
         for i, name in enumerate(self.object_name):
             self.object_name_index[name] = i
@@ -190,7 +191,7 @@ class RoboSensaiEnv:
         x, y, z = position.x, position.y, position.z
         cam_pos = gymapi.Vec3(x+0.8, y, z+1.2)
         cam_target = gymapi.Vec3(x-1, y, -0.5)
-        middle_env = self.all_ids['envs'][self.num_envs // 2 + self.num_per_row // 2]
+        middle_env = self.envs[self.num_envs // 2 + self.num_per_row // 2]
         gym.viewer_camera_look_at(self.viewer, middle_env, cam_pos, cam_target)
     
 
@@ -212,17 +213,17 @@ class RoboSensaiEnv:
         camera_properties.height = self.image_height
         camera_properties.enable_tensors = False
         for i in range(self.num_envs):
-            camera_handle = gym.create_camera_sensor(self.all_ids['envs'][i], camera_properties)                                     
-            gym.set_camera_location(camera_handle, self.all_ids['envs'][i], cam_pos, cam_target)
-            cam_vinv = torch.inverse(self.to_torch(gym.get_camera_view_matrix(self.sim, self.all_ids['envs'][i], camera_handle)))
-            cam_proj = self.to_torch(gym.get_camera_proj_matrix(self.sim, self.all_ids['envs'][i], camera_handle))
+            camera_handle = gym.create_camera_sensor(self.envs[i], camera_properties)                                     
+            gym.set_camera_location(camera_handle, self.envs[i], cam_pos, cam_target)
+            cam_vinv = torch.inverse(self.to_torch(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle)))
+            cam_proj = self.to_torch(gym.get_camera_proj_matrix(self.sim, self.envs[i], camera_handle))
             self.camera_handles.append(camera_handle)
             self.camera_view_matrixs.append(cam_vinv)
             self.camera_proj_matrixs.append(cam_proj)
 
-            # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][i], camera_handle, gymapi.IMAGE_COLOR)
+            # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_COLOR)
             # env_rgb_tensor = gymtorch.wrap_tensor(_rgb_tensor)
-            # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.all_ids['envs'][i], camera_handle, gymapi.IMAGE_DEPTH)
+            # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_DEPTH)
             # env_depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
             # self.camera_tensors.append((env_rgb_tensor, env_depth_tensor))
 
@@ -276,9 +277,19 @@ class RoboSensaiEnv:
             self.obj_default_scaling[name] = org_scale
 
         # Should follow pre-loading scene_dict to add or delete object
-        self.all_ids = {"envs": [], "robot": [], "robot_links": [], "gripper": []}
+        self.all_ids = {
+                            "root": {
+                                "envs": [], 
+                                "robot": []
+                            },
+                            "rb":{
+                                "robot_links": [], 
+                                "gripper": []
+                            }
+                        }
         for key in self.scene_asset.keys():
-            self.all_ids[key] = []
+            self.all_ids["root"][key] = []
+            self.all_ids["rb"][key] = []
 
 
     def _configure_robot(self, robot_name="franka"):
@@ -310,23 +321,25 @@ class RoboSensaiEnv:
         for i in range(self.num_envs):
             # create env
             env = gym.create_env(self.sim, env_lower, env_upper, self.num_per_row)
-            self.all_ids["envs"].append(env)
+            self.envs.append(env)
 
             for obj_name in self.scene_asset.keys():
-                if obj_name in ['robot']: continue
+                if obj_name in ["robot"]: continue
                 obj_asset, obj_pose = self.scene_asset[obj_name]
                 obj_handle = gym.create_actor(env, obj_asset, obj_pose, obj_name, i, 0)
-                obj_id = gym.get_actor_index(env, obj_handle, gymapi.DOMAIN_SIM)
-                self.all_ids[obj_name].append(obj_id)
+                obj_root_id = gym.get_actor_index(env, obj_handle, gymapi.DOMAIN_SIM)
+                obj_rb_id = gym.get_actor_rigid_body_index(env, obj_handle, 0, gymapi.DOMAIN_SIM)
+                self.all_ids["root"][obj_name].append(obj_root_id)
+                self.all_ids["rb"][obj_name].append(obj_rb_id)
 
             # add robot
             franka_asset, franka_pose = self.scene_asset["robot"]
             franka_handle = gym.create_actor(env, franka_asset, franka_pose, "franka", i, 2)
             franka_id = gym.get_actor_index(env, franka_handle, gymapi.DOMAIN_SIM)
-            self.all_ids["robot"].append(franka_id)
+            self.all_ids["root"]["robot"].append(franka_id)
             for link_name in self.robot.franka_link_dict:
                 link_id = gym.find_actor_rigid_body_index(env, franka_handle, link_name, gymapi.DOMAIN_SIM)
-                self.all_ids["robot_links"].append([i, link_id])
+                self.all_ids["rb"]["robot_links"].append([i, link_id])
             # set dof properties
             gym.set_actor_dof_properties(env, franka_handle, self.robot.franka_dof_props)
             # set initial dof states
@@ -337,21 +350,20 @@ class RoboSensaiEnv:
             hand_handle = gym.find_actor_rigid_body_handle(env, franka_handle, "panda_gripper_mid")
             hand_pose = gym.get_rigid_transform(env, hand_handle)
             hand_id = gym.find_actor_rigid_body_index(env, franka_handle, "panda_gripper_mid", gymapi.DOMAIN_SIM)
-            self.all_ids["gripper"].append(hand_id)
+            self.all_ids["rb"]["gripper"].append(hand_id)
         
-
+        ## Record default scene setup
         for obj_name in self.scene_asset.keys():
             obj_asset, obj_pose = self.scene_asset[obj_name]
             scaling = 1 if obj_name not in ['robot', 'gripper'] else None
             obj_pos, obj_ori = transform2list(obj_pose)
             self.default_scene_dict[obj_name] = [self.to_torch(obj_pos), self.to_torch(obj_ori), 1]
 
-        self.movable_obj_name = {}
-        for obj_name, obj_ids in self.all_ids.items():
-            if obj_name == "envs": continue # envs are objects not ids
-            self.all_ids[obj_name] = self.to_torch(obj_ids, dtype=torch.long)
-            if obj_name not in ["envs", "gripper"]:
-                self.movable_obj_name[obj_name] = []
+        ## Transform all ids to tensors
+        for obj_root_name, obj_root_ids in self.all_ids["root"].items():
+            self.all_ids["root"][obj_root_name] = self.to_torch(obj_root_ids, dtype=torch.long)
+        for obj_rb_name, obj_rb_ids in self.all_ids["rb"].items():
+            self.all_ids["rb"][obj_rb_name] = self.to_torch(obj_rb_ids, dtype=torch.long)
 
         # Configure camera point
         self._configure_camera()
@@ -378,7 +390,7 @@ class RoboSensaiEnv:
             self.dof_states = gymtorch.wrap_tensor(_dof_states)
             self.dof_pos = self.dof_states[:, 0].view(self.num_envs, -1)[:, :self.robot.franka_num_dofs].contiguous()
             self.dof_vel = self.dof_states[:, 1].view(self.num_envs, -1)[:, :self.robot.franka_num_dofs].contiguous()
-            self.goal_dof_pos = torch.zeros_like(self.dof_pos)
+            self.goal_dof_pos = self.dof_pos.clone().detach()
             
         # get net-force state tensor / Force direction is in the local frame! / Normal Force + Tangential Force
         # How to split them using normal direction?
@@ -442,12 +454,15 @@ class RoboSensaiEnv:
         self.reach_success_checker[reset_ids] = 0
 
         # Update initial observation buffer
-        hand_world_poses, _ = get_pose(self.rb_states, self.all_ids['gripper'][reset_ids])
-        target_world_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]][reset_ids])
-        move_obj_world_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]][reset_ids])
+        hand_world_poses, _ = get_pose(self.rb_states, self.all_ids["rb"]["gripper"][reset_ids])
+        target_world_poses, _ = get_pose(self.rb_states, self.all_ids["rb"][self.object_name[0]][reset_ids])
+        move_obj_world_poses, _ = get_pose(self.rb_states, self.all_ids["rb"][self.object_name[0]][reset_ids])
         self.prev_target_hand_world_pos_dis_full[reset_ids] = torch.norm(hand_world_poses[:, :3] - target_world_poses[:, :3], p=2, dim=1)
         self.target_world_reset_poses_full[reset_ids] = target_world_poses.clone()
         self.move_obj_world_reset_poses_full[reset_ids] = move_obj_world_poses.clone()
+        # Goal dof_pos as the initial default dof_pos!
+        self.goal_dof_pos[reset_ids] = self.dof_pos[reset_ids]
+
         # self.nocontact_buf[reset_ids] = 0
         # self.env_stages[reset_ids] = 0
         # self.hand_pose_6D_buf[reset_ids] = self.hand_initial_pose_6D
@@ -499,7 +514,7 @@ class RoboSensaiEnv:
         self.delta_actions_6D[:, :3] = delta_actions[:, :3] * DeltaP
         self.delta_actions_6D[:, 3:] = delta_actions[:, 3:] * DeltaR
 
-        gripper_pose, _ = get_pose(self.rb_states, self.all_ids['gripper'])
+        gripper_pose, _ = get_pose(self.rb_states, self.all_ids["rb"]['gripper'])
         self.gripper_goal_pos = gripper_pose[:, :3] + self.delta_actions_6D[:, :3]
         self.gripper_goal_quat = quat_mul(gripper_pose[:, 3:], quat_from_euler(self.delta_actions_6D[:, 3:]))
         self.gripper_act_Flag = index_actions[:, 6]
@@ -525,7 +540,7 @@ class RoboSensaiEnv:
 
     def update_franka_goal_dof(self):
         # compute gripper current position and orientation error
-        gripper_cur_pose, _ = get_pose(self.rb_states, self.all_ids['gripper'])
+        gripper_cur_pose, _ = get_pose(self.rb_states, self.all_ids["rb"]['gripper'])
         pos_error = self.gripper_goal_pos - gripper_cur_pose[:, :3]
         ori_error = orientation_error(gripper_cur_pose[:, 3:], self.gripper_goal_quat)
         dpose = torch.cat([pos_error, ori_error], dim=1).unsqueeze(-1)
@@ -604,8 +619,8 @@ class RoboSensaiEnv:
             self.prev_scene_dict = [deepcopy(self.default_scene_dict) for _ in range(self.num_envs)]
 
         # Query from LLM model to get self.cur_scene_dict
-        body_ids = []; positions=[]; orientations=[]; linvels=[]; angvels=[]; scalings=[]
-        body_env_ids = []; move_body_ids = []; move_body_names = []; move_body_poss=[]; move_body_oris=[]; move_body_linvels=[]; move_body_angvels=[]
+        body_root_ids = []; positions=[]; orientations=[]; linvels=[]; angvels=[]; scalings=[]
+        body_env_ids = []; move_body_rb_ids = []; move_body_names = []; move_body_poss=[]; move_body_oris=[]; move_body_linvels=[]; move_body_angvels=[]
         # queried_scene_dict = self.questioner(give_input, reset_ids, self.prev_scene_dict, prev_diagnose)
         queried_scene_dict = self.query_scene()
         queried_scene_dicts = self.d_randomizer.fill_obj_poses([deepcopy(queried_scene_dict) for _ in range(self.num_envs)])
@@ -616,7 +631,7 @@ class RoboSensaiEnv:
             iterate_scene_dict = {**self.cur_scene_dict[env_id]["prefixed"], **self.cur_scene_dict[env_id]["movable"], **self.cur_scene_dict[env_id]["unused"]}
 
             for obj_name, obj_status in iterate_scene_dict.items():
-                body_ids.append(self.all_ids[obj_name][env_id])
+                body_root_ids.append(self.all_ids["root"][obj_name][env_id])
                 obj_pose_info = obj_status[1] # obj_status: [obj_bbox, [obj_pos, obj_ori, obj_scaling]]
                 positions.append(obj_pose_info[0])
                 orientations.append(obj_pose_info[1])
@@ -626,7 +641,7 @@ class RoboSensaiEnv:
 
             for move_obj_name, move_obj_status in self.cur_scene_dict[env_id]["movable"].items():
                 body_env_ids.append(env_id)
-                move_body_ids.append(self.all_ids[move_obj_name][env_id])
+                move_body_rb_ids.append(self.all_ids["rb"][move_obj_name][env_id])
                 move_body_names.append(move_obj_name)
                 move_obj_pose_info = move_obj_status[1] # obj_status: [obj_bbox, [obj_pos, obj_ori, obj_scaling]]
                 move_body_poss.append(move_obj_pose_info[0])
@@ -634,24 +649,24 @@ class RoboSensaiEnv:
                 move_body_linvels.append([0., 0., 0.])
                 move_body_angvels.append([0., 0., 0.])
 
-        body_ids = self.to_torch(body_ids, dtype=torch.long)
+        body_root_ids = self.to_torch(body_root_ids, dtype=torch.long)
         positions = torch.stack(positions).to(self.device) # positions are list of tensors
         orientations = torch.stack(orientations).to(self.device)
         linvels = self.to_torch(linvels)
         angvels = self.to_torch(angvels)
 
         body_env_ids = self.to_torch(body_env_ids, dtype=torch.long)
-        move_body_ids = self.to_torch(move_body_ids, dtype=torch.long)
+        move_body_rb_ids = self.to_torch(move_body_rb_ids, dtype=torch.long)
         move_body_names = np.array(move_body_names)
         move_body_poss = torch.stack(move_body_poss).to(self.device)
         move_body_oris = torch.stack(move_body_oris).to(self.device)
         move_body_linvels = self.to_torch(move_body_linvels)
         move_body_angvels = self.to_torch(move_body_angvels)
 
-        self.move_env_body_ids = torch.stack([body_env_ids, move_body_ids], dim=1)
+        self.move_env_body_rb_ids = torch.stack([body_env_ids, move_body_rb_ids], dim=1)
         
         # Reset all objects
-        set_pose(gym, self.sim, self.root_tensor, body_ids, positions, orientations, linvels, angvels)
+        set_pose(gym, self.sim, self.root_tensor, body_root_ids, positions, orientations, linvels, angvels)
 
         # Reset Robot Arm
         set_dof(gym, self.sim, self.dof_pos, self.dof_vel, reset_ids, 
@@ -663,7 +678,9 @@ class RoboSensaiEnv:
         
         self.stepsimulation()
 
-        self.failed_env_ids, self.check_table = self.post_corrector.handed_check_realiablity([body_env_ids, move_body_ids, move_body_names, \
+        # Post correct the scene
+        if post_correct:
+            self.failed_env_ids, self.check_table = self.post_corrector.handed_check_realiablity([body_env_ids, move_body_rb_ids, move_body_names, \
                                                                                               move_body_poss, move_body_oris, move_body_linvels, move_body_angvels], \
                                                                                               self.cur_scene_dict, force_check=correct_Flags[0], vel_check=correct_Flags[1],
                                                                                               gen_readable_table=False, verbose=False)
@@ -693,9 +710,9 @@ class RoboSensaiEnv:
         gym.fetch_results(self.sim, True)
         self.refresh_request_tensors()
 
-        hand_world_poses, hand_world_vel = get_pose(self.rb_states, self.all_ids['gripper'])
-        rgb_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
-        depth_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH))
+        hand_world_poses, hand_world_vel = get_pose(self.rb_states, self.all_ids["rb"]["gripper"])
+        rgb_images = self.to_torch(get_envs_images(self.sim, self.envs, self.camera_handles, gymapi.IMAGE_COLOR))
+        depth_images = self.to_torch(get_envs_images(self.sim, self.envs, self.camera_handles, gymapi.IMAGE_DEPTH))
         depth_images = torch.clamp(depth_images, min=-10.0, max=10.0)
         
         if False and self.add_random_noise:
@@ -724,13 +741,15 @@ class RoboSensaiEnv:
 
         # Visualization
 
+        if self.rendering: self.visualize_image_observation(env_id=0)
+
 
     def compute_reward_reach(self):
 
-        target_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]])
-        hand_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids["gripper"])
-        all_moveable_obj_poses, _ = get_pose(self.rb_states, self.move_env_body_ids[:, 1])
-        robot_contact_force = get_force(self.force_tensor, self.all_ids["robot_links"][:, 1])
+        target_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids["rb"][self.object_name[0]])
+        hand_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids["rb"]["gripper"])
+        all_moveable_obj_poses, _ = get_pose(self.rb_states, self.move_env_body_rb_ids[:, 1])
+        robot_contact_force = get_force(self.force_tensor, self.all_ids["rb"]["robot_links"][:, 1])
 
         # TODO: check all targets are in the cabinet
 
@@ -759,7 +778,7 @@ class RoboSensaiEnv:
         # if torch.any(target_fall_idxs): print("Target Fall")
         # terminated episodes that insert into the table
         robot_collision_link_idxs = torch.any(robot_contact_force >= self.maximum_detect_force, dim=-1).squeeze(dim=-1)
-        robot_collision_env_ids = self.all_ids["robot_links"][robot_collision_link_idxs, 0].unique()
+        robot_collision_env_ids = self.all_ids["rb"]["robot_links"][robot_collision_link_idxs, 0].unique()
         # if len(robot_collision_env_ids) > 0: print("Hand insertion")
         # Success
         reach_succ = delta_pos_norm_full < self.reach_success_thred
@@ -993,8 +1012,8 @@ class RoboSensaiEnv:
                     # step the viewer
                     self.update_viewer()
                 
-                rgb_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
-                depth_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH))
+                rgb_images = self.to_torch(get_envs_images(self.sim, self.envs, self.camera_handles, gymapi.IMAGE_COLOR))
+                depth_images = self.to_torch(get_envs_images(self.sim, self.envs, self.camera_handles, gymapi.IMAGE_DEPTH))
                 depth_images = torch.clamp(depth_images, min=-10.0, max=10.0)
 
                 image_tensor = torch.cat([rgb_images, depth_images.unsqueeze(-1)], dim=3).permute(0, 3, 1, 2) # (N, C, H, W)

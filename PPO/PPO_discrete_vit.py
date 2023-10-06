@@ -71,7 +71,7 @@ class Vit_backbone(nn.Module):
     def __init__(self, in_chans=4, pretrained=True, tensor_in=True) -> None:
         super().__init__()
         self.vit = timm.create_model(
-                        'vit_small_patch16_224', 
+                        'vit_tiny_patch16_224', 
                         pretrained=pretrained,
                         num_classes=0,
                         in_chans=in_chans)   # remove classifier nn.Linear

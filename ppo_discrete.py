@@ -39,7 +39,7 @@ def parse_args():
     # Isaac Gym parameters
     parser.add_argument('--headless', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Run headless without creating a viewer window')
     parser.add_argument('--nographics', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Disable graphics context creation, no viewer window is created, and no headless rendering is available')
-    parser.add_argument('--use_gpu_pipeline', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Disable graphics context creation, no viewer window is created, and no headless rendering is available')
+    parser.add_argument('--use_gpu_pipeline', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Disable graphics context creation, no viewer window is created, and no headless rendering is available')
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
     parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
     parser.add_argument('--num_threads', type=int, default=0, help='Number of cores used by PhysX')
@@ -330,14 +330,15 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs_dict, reward, done, infos = envs.step(step_action)
             next_vis_obs, next_vec_obs = next_obs_dict['image'], next_obs_dict['proprioception']
-
-            # rewards[step] = torch.tensor(reward).to(device).view(-1) # if reward is not tensor inside
-            rewards[step] = reward.to(device).view(-1)
             next_vis_obs = torch.Tensor(next_vis_obs).to(device)
             next_vec_obs = torch.Tensor(next_vec_obs).to(device)
+            # rewards[step] = torch.tensor(reward).to(device).view(-1) # if reward is not tensor inside
+            rewards[step] = reward.to(device).view(-1)
             next_done = torch.Tensor(done).to(device)
 
-            # Record all rewards information
+            #####################################################################
+            ###==================Record all rewards information===============###
+            #####################################################################
             pos_reward, act_penalty = infos['pos_reward'], infos['act_penalty']
 
             episode_rewards += reward

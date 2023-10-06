@@ -31,8 +31,8 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='cube_10-03_13:36_Pushing_Transformer_GPU_Rand_goal_targInit_With_Use_Add_limitws_Weight_pos20.0') # also point to json file path
-    parser.add_argument('--index_episode', type=str, default='800074')
+    parser.add_argument('--checkpoint', type=str, default='cube_10-05_20:37_Pushing_Transformer_CPU_Rand_goal_targInit_With_Use_Add_limitws_Weight_pos40.0') # also point to json file path
+    parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
     parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     if agent is not None: agent.set_mode('eval')  # to avoid batch_norm error if used in the future
     
     with torch.no_grad():
-        state = envs.reset()
+        state_dict = envs.reset()
     print('Evaluating:', f'{eval_args.num_trials} trials') # start evaluation
 
     while num_episodes < eval_args.num_trials or (hasattr(envs, "viewer") and not gym.query_viewer_has_closed(envs.viewer)):
@@ -209,13 +209,13 @@ if __name__ == "__main__":
         if eval_args.random_policy:
             action = envs.random_actions()
         else:
-            action = agent.select_action(agent.get_embedding(state).to(device))
-        next_state, reward, done, infos = envs.step(action)
+            vis_obs, vec_obs = state_dict['image'], state_dict['proprioception']
+            vis_obs = torch.Tensor(vis_obs).to(device)
+            vec_obs = torch.Tensor(vec_obs).to(device)
+            action = agent.select_action((vis_obs, vec_obs))
+        next_state_dict, reward, done, infos = envs.step(action)
 
-        # print('Running Evaluation!')
-        # print(envs.episode_trigger(envs.episode_id))
-
-        state = next_state
+        state_dict = next_state_dict
         iterations += 1
         # print(f'Iteration: {iterations}; Reward: {reward}')
     
