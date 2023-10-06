@@ -54,7 +54,7 @@ class Franka:
 
         # get link index of panda hand, which we will use as end effector
         self.franka_link_dict = gym.get_asset_rigid_body_dict(self.franka_asset)
-        self.franka_hand_index = self.franka_link_dict["panda_hand"]
+        self.franka_hand_index = self.franka_link_dict["panda_gripper_mid"]
 
 
     def to_torch(self, x, dtype=torch.float32):

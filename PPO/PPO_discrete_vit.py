@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 from torch.distributions.multivariate_normal import MultivariateNormal
 import timm
@@ -53,7 +54,7 @@ class Transfromer_Linear(nn.Module):
     
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, num_hidden_layers, output_size, init_std=0.01):
+    def __init__(self, input_size, hidden_size,  output_size, num_hidden_layers, init_std=0.01):
         super().__init__()
         self.linear = nn.Sequential()
         for i in range(num_hidden_layers):
@@ -84,6 +85,36 @@ class Vit_backbone(nn.Module):
 
     def forward(self, x):
         return self.vit(self.transforms(x))
+    
+
+class CrossAttention(nn.Module):
+    def __init__(self, input_size1, input_size2, output_size):
+        super().__init__()
+        self.linear_query = nn.Linear(input_size1, output_size)
+        self.linear_key = nn.Linear(input_size2, output_size)
+        self.linear_value = nn.Linear(input_size2, output_size)
+
+    def forward(self, feature1, feature2):
+        # Linear transformation for queries, keys, and values
+        query = self.linear_query(feature1)  # (batch_size, output_size)
+        key = self.linear_key(feature2)  # (batch_size, output_size)
+        value = self.linear_value(feature2)  # (batch_size, output_size)
+
+        # Compute attention scores
+        attention_scores = torch.matmul(query.unsqueeze(1), key.unsqueeze(2))  # (batch_size, 1, 1)
+
+        # Normalize attention scores using softmax
+        attention_weights = F.softmax(attention_scores, dim=-1)
+
+        # Apply attention weights to values
+        attended_values = torch.matmul(attention_weights, value.unsqueeze(1)).squeeze(1)  # (batch_size, output_size)
+
+        # Fused attention features
+        fused_features = feature1 + attended_values
+
+        return fused_features
+
+
 
 
 class Agent(nn.Module):
@@ -99,7 +130,7 @@ class Agent(nn.Module):
 
         self.vision_backbone = Vit_backbone(pretrained=True, tensor_in=True).to(self.device)
         self.vision_output_size = self.vision_backbone(torch.randn(1, *self.envs.single_img_obs_dim[1:]).to(self.device)).shape[-1]
-        self.robot_backbone = MLP(self.envs.single_proprioception_dim[1], self.hidden_size, 1, self.hidden_size).to(self.device)
+        self.robot_backbone = MLP(self.envs.single_proprioception_dim[1], self.hidden_size, self.hidden_size, 1).to(self.device)
         self.agent_input_size = self.vision_output_size + self.hidden_size
 
         # Use MLP
@@ -119,18 +150,19 @@ class Agent(nn.Module):
             
 
     def get_embedding(self, obs):
-        vis_obs, robot_obs = obs['image'].to(self.device), obs['proprioception'].to(self.device)
-        print(vis_obs[0, -1, :, :])
+        vis_obs, robot_obs = obs
         vis_emb = self.vision_backbone(vis_obs)
         robot_emb = self.robot_backbone(robot_obs)
         return torch.cat([vis_emb, robot_emb], dim=-1)
 
 
-    def get_value(self, x):
+    def get_value(self, obs):
+        x = self.get_embedding(obs)
         return self.critic(x)
 
 
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(self, obs, action=None):
+        x = self.get_embedding(obs)
         logits = self.actor(x)
         split_logits = torch.split(logits, self.action_nvec, dim=1)
         multi_categoricals = [Categorical(logits=logits) for logits in split_logits]
@@ -142,8 +174,8 @@ class Agent(nn.Module):
 
 
     def select_action(self, state):
-        state = state.to(self.device)  # size([sequence_len, state_dim]) --> size([1, sequence_len, state_dim])
-        logits = self.actor(state)
+        x = self.get_embedding(state)  # size([sequence_len, state_dim]) --> size([1, sequence_len, state_dim])
+        logits = self.actor(x)
         split_logits = torch.split(logits, self.action_nvec, dim=1)
         multi_categoricals = [Categorical(logits=logits) for logits in split_logits]
         action = torch.stack([categorical.sample() for categorical in multi_categoricals])
@@ -192,7 +224,20 @@ def update_tensor_buffer(buffer, new_v):
 
 if __name__ == "__main__":
 
-    class TestModule(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.actor_std = nn.Parameter(torch.zeros(1, 2), requires_grad=False)
+    # Example usage
+    input_size1 = 128  # Size of first input feature
+    input_size2 = 256  # Size of second input feature
+    output_size = 128  # Output feature size
+    batch_size = 32  # Batch size
+    feature1 = torch.randn(batch_size, input_size1)  # First input feature tensor
+    feature2 = torch.randn(batch_size, input_size2)  # Second input feature tensor
+
+    # Instantiate the cross-attention module
+    cross_attention = CrossAttention(input_size1, input_size2, output_size)
+
+    # Forward pass through the module
+    output_features = cross_attention(feature1, feature2)
+
+    print("Input Feature 1 shape:", feature1.shape)
+    print("Input Feature 2 shape:", feature2.shape)
+    print("Output Feature shape after Cross-Attention:", output_features.shape)

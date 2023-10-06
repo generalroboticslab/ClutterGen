@@ -74,7 +74,8 @@ class RoboSensaiEnv:
         self.urdf_folder = "objects/ycb_objects_origin_at_center_vhacd/urdfs"
         self.mesh_folder = "objects/ycb_objects_origin_at_center_vhacd/meshes"
         self.xml_folder = "objects/ycb_objects_origin_at_center_vhacd/xmls"
-        self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")][1:4]
+        # self.object_name = [name.split(".")[0] for name in os.listdir(os.path.join(self.asset_root, self.urdf_folder)) if name.endswith(".urdf")]
+        self.object_name = ["cube"]
         self.object_name_index = {}
         for i, name in enumerate(self.object_name):
             self.object_name_index[name] = i
@@ -86,13 +87,13 @@ class RoboSensaiEnv:
         # Mics
         self.use_gpt = self.args.use_gpt if hasattr(self.args, "use_gpt") else False
         self.auto_reset = True
-        self.maximum_steps = 100
+        self.maximum_steps = 50
         self.maximum_detect_force = 100
-        self.reach_success_thred = 0.02
+        self.reach_success_thred = 0.05
         self.reach_success_steps = 5
         self.obj_fall_threshold = -0.15
-        self.pos_w = self.args.pos_w if hasattr(self.args, "pos_w") else 1.
-        self.act_w = self.args.act_w if hasattr(self.args, "act_w") else 0.
+        self.pos_w = self.args.pos_weight if hasattr(self.args, "pos_weight") else 1.
+        self.act_w = self.args.act_weight if hasattr(self.args, "act_weight") else 0.
 
         # Visualization Configs
 
@@ -107,7 +108,7 @@ class RoboSensaiEnv:
         # Create GPT 
         self.gpt = GPT()
         # Create post corrector
-        self.post_corrector = PostCorrector(self, gen_readable_table=False, device=self.device)
+        self.post_corrector = PostCorrector(self, device=self.device)
         
         # Model Configs
         self.hidden_size = self.args.hidden_size if hasattr(self.args, "hidden_size") else 256
@@ -121,7 +122,7 @@ class RoboSensaiEnv:
         self.image_width, self.image_height = 640, 360
         self.rgb_image_dim = (self.image_height, self.image_width, 3)
         self.depth_image_dim = (self.image_height, self.image_width, 1)
-        self.proprioception = self.robot.franka_num_dofs + 7 + 6 # 7D eef pose + 6D eef velocity 
+        self.proprioception = self.robot.franka_num_dofs + 7 + 6 # 7 DOF + 7D eef pose + 6D eef velocity 
         self.single_img_obs_dim = (self.num_envs, self.rgb_image_dim[2]+self.depth_image_dim[2], self.image_height, self.image_width)
         self.single_proprioception_dim = (self.num_envs, self.proprioception)
 
@@ -236,47 +237,46 @@ class RoboSensaiEnv:
     def _configure_asset(self, scene_dict=None):
         # TODO: We should have a scene_dict to record the scene states
         self.scene_asset = {}
-        table_dims = [0.6, 1.0, 0.4]
+        self.scene_obj_bbox = self.object_name_index.copy()
+        #####################################################################
+        ###=========================Fixed Objects=======================###
+        #####################################################################
+        table_dims = [0.4, 0.8, 0.4]
         table_asset = self.create_box_asset(table_dims, fix_base_link=True)
         table_pose = gymapi.Transform()
         table_pose.p = gymapi.Vec3(0.5, 0.0, table_dims[2]/2)
+        self.scene_asset.update({"table": [table_asset, table_pose]})
+        self.scene_obj_bbox.update({"table": table_dims})
 
-        # cabinet asset
-        bin_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, "fixed", "bin")+".urdf", 
-                                             convex_dec=False, fix_base_link=True)
-        bin_dims = [0.1, 0.1, 0.1]
-        bin_pose = gymapi.Transform()
-        bin_pose.p = gymapi.Vec3(table_pose.p.x, -0.3, table_dims[2])
-        bin_pose.r = gymapi.Quat.from_euler_zyx(0, 0, -np.pi/2)
+        # Bin asset
+        # bin_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, "fixed", "bin")+".urdf", 
+        #                                      convex_dec=False, fix_base_link=True)
+        # bin_dims = [0.1, 0.1, 0.1]
+        # bin_pose = gymapi.Transform()
+        # bin_pose.p = gymapi.Vec3(table_pose.p.x, -0.3, table_dims[2])
+        # bin_pose.r = gymapi.Quat.from_euler_zyx(0, 0, -np.pi/2)
+        # self.scene_asset.update({"bin": [bin_asset, bin_pose]})
+        # self.scene_obj_bbox.update({"bin": bin_dims})
 
+        #####################################################################
+        ###=========================Movable Objects=======================###
+        #####################################################################
         self.obj_assets = self.object_name_index.copy()
-        self.obj_bbox = self.object_name_index.copy()
         self.obj_urdf = self.object_name_index.copy()
         self.obj_default_scaling = self.object_name_index.copy()
         for name in self.obj_assets:
-            obj_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, name)+".urdf", convex_dec=False)
+            obj_asset = self.create_target_asset(target_asset_file=os.path.join(self.urdf_folder, name)+".urdf", convex_dec=True)
             obj_pose = deepcopy(table_pose)
             self.scene_asset[name] = [obj_asset, obj_pose]
 
             urdfstate = getUrdfStates(os.path.join(self.asset_root, self.urdf_folder, name)+".urdf")
             org_scale = deepcopy(urdfstate[0][1].scale) if hasattr(urdfstate[0][1], "scale") else [1., 1., 1.]
-            self.obj_bbox[name] = getMeshBbox(os.path.join(self.asset_root, self.mesh_folder, name, 'collision')+'.obj', scale=org_scale)
+            self.scene_obj_bbox[name] = getMeshBbox(os.path.join(self.asset_root, self.mesh_folder, name, 'collision')+'.obj', scale=org_scale)
             self.obj_urdf[name] = urdfstate
             self.obj_default_scaling[name] = org_scale
 
-        # Manual Update here, later will need to merge in the main loop
-        self.scene_asset.update(
-            {"table": [table_asset, table_pose],
-             "bin": [bin_asset, bin_pose]}
-        )
-
-        self.obj_bbox.update({
-            "table": table_dims,
-            "bin":bin_dims
-        })
-
         # Should follow pre-loading scene_dict to add or delete object
-        self.all_ids = {"envs": [], "robot": [], "gripper": []}
+        self.all_ids = {"envs": [], "robot": [], "robot_links": [], "gripper": []}
         for key in self.scene_asset.keys():
             self.all_ids[key] = []
 
@@ -310,7 +310,7 @@ class RoboSensaiEnv:
         for i in range(self.num_envs):
             # create env
             env = gym.create_env(self.sim, env_lower, env_upper, self.num_per_row)
-            self.all_ids['envs'].append(env)
+            self.all_ids["envs"].append(env)
 
             for obj_name in self.scene_asset.keys():
                 if obj_name in ['robot']: continue
@@ -323,7 +323,10 @@ class RoboSensaiEnv:
             franka_asset, franka_pose = self.scene_asset["robot"]
             franka_handle = gym.create_actor(env, franka_asset, franka_pose, "franka", i, 2)
             franka_id = gym.get_actor_index(env, franka_handle, gymapi.DOMAIN_SIM)
-            self.all_ids['robot'].append(franka_id)
+            self.all_ids["robot"].append(franka_id)
+            for link_name in self.robot.franka_link_dict:
+                link_id = gym.find_actor_rigid_body_index(env, franka_handle, link_name, gymapi.DOMAIN_SIM)
+                self.all_ids["robot_links"].append([i, link_id])
             # set dof properties
             gym.set_actor_dof_properties(env, franka_handle, self.robot.franka_dof_props)
             # set initial dof states
@@ -331,10 +334,10 @@ class RoboSensaiEnv:
             # set initial position targets
             gym.set_actor_dof_position_targets(env, franka_handle, self.robot.default_dof_state["pos"])
             # get inital hand pose
-            hand_handle = gym.find_actor_rigid_body_handle(env, franka_handle, "panda_hand")
+            hand_handle = gym.find_actor_rigid_body_handle(env, franka_handle, "panda_gripper_mid")
             hand_pose = gym.get_rigid_transform(env, hand_handle)
-            hand_id = gym.find_actor_rigid_body_index(env, franka_handle, "panda_hand", gymapi.DOMAIN_SIM)
-            self.all_ids['gripper'].append(hand_id)
+            hand_id = gym.find_actor_rigid_body_index(env, franka_handle, "panda_gripper_mid", gymapi.DOMAIN_SIM)
+            self.all_ids["gripper"].append(hand_id)
         
 
         for obj_name in self.scene_asset.keys():
@@ -442,7 +445,7 @@ class RoboSensaiEnv:
         hand_world_poses, _ = get_pose(self.rb_states, self.all_ids['gripper'][reset_ids])
         target_world_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]][reset_ids])
         move_obj_world_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]][reset_ids])
-        self.prev_target_hand_world_pos_dis_full[reset_ids] = torch.norm(hand_world_poses[reset_ids, :3] - target_world_poses[reset_ids, :3], p=2, dim=1)
+        self.prev_target_hand_world_pos_dis_full[reset_ids] = torch.norm(hand_world_poses[:, :3] - target_world_poses[:, :3], p=2, dim=1)
         self.target_world_reset_poses_full[reset_ids] = target_world_poses.clone()
         self.move_obj_world_reset_poses_full[reset_ids] = move_obj_world_poses.clone()
         # self.nocontact_buf[reset_ids] = 0
@@ -464,16 +467,16 @@ class RoboSensaiEnv:
     def update_viewer(self):
         # update viewer
         gym.step_graphics(self.sim)
-        gym.draw_viewer(self.viewer, self.sim, False)
         gym.sync_frame_time(self.sim)
         gym.render_all_camera_sensors(self.sim)
+        if self.rendering: gym.draw_viewer(self.viewer, self.sim, False)
 
 
     def stepsimulation(self): # TODO: not fetch results at each time
         gym.simulate(self.sim)
         gym.fetch_results(self.sim, True)
         self.refresh_request_tensors()
-        if self.rendering: self.update_viewer()
+        self.update_viewer()
 
     
     def random_actions(self):
@@ -583,18 +586,18 @@ class RoboSensaiEnv:
                 unused_objs.remove(obj_name)
                 
         for name in prefixed_objs:
-            queried_scene_dict["prefixed"][name] = [self.obj_bbox[name], self.default_scene_dict[name]]
+            queried_scene_dict["prefixed"][name] = [self.scene_obj_bbox[name], self.default_scene_dict[name]]
         
         for name in movable_objs:
-            queried_scene_dict["movable"][name] = [self.obj_bbox[name], None]
+            queried_scene_dict["movable"][name] = [self.scene_obj_bbox[name], None]
 
         for name in unused_objs: # Need to set their collision group
-            queried_scene_dict["unused"][name] = [self.obj_bbox[name], [*self.prepare_area, 1]]
+            queried_scene_dict["unused"][name] = [self.scene_obj_bbox[name], [*self.prepare_area, 1]]
             
         return queried_scene_dict
 
 
-    def reset(self, reset_ids=None, post_correct=True, correct_Flags=[True, True]):
+    def reset(self, reset_ids=None, post_correct=True, correct_Flags=[False, True]):
         if reset_ids is None:
             reset_ids = torch.arange(self.num_envs, device=self.device)
             self.cur_scene_dict = [deepcopy(self.default_scene_dict) for _ in range(self.num_envs)]
@@ -662,12 +665,13 @@ class RoboSensaiEnv:
 
         self.failed_env_ids, self.check_table = self.post_corrector.handed_check_realiablity([body_env_ids, move_body_ids, move_body_names, \
                                                                                               move_body_poss, move_body_oris, move_body_linvels, move_body_angvels], \
-                                                                                              self.cur_scene_dict, force_check=correct_Flags[0], vel_check=correct_Flags[1])
+                                                                                              self.cur_scene_dict, force_check=correct_Flags[0], vel_check=correct_Flags[1],
+                                                                                              gen_readable_table=False, verbose=False)
+
         # reset the buffer
         self.reset_buffers(reset_ids)
 
         return self.observation_dict
-
 
 
     def compute_observations(self):
@@ -690,7 +694,7 @@ class RoboSensaiEnv:
         self.refresh_request_tensors()
 
         hand_world_poses, hand_world_vel = get_pose(self.rb_states, self.all_ids['gripper'])
-        rgba_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
+        rgb_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
         depth_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH))
         depth_images = torch.clamp(depth_images, min=-10.0, max=10.0)
         
@@ -698,10 +702,10 @@ class RoboSensaiEnv:
             pos_random_noise = torch_rand_float(*self.to_torch([-self.contact_noise_v, self.contact_noise_v]), shape=(self.num_envs, 3))
             force_random_noise = torch_rand_float(*self.to_torch([-self.force_noise_v, self.force_noise_v]), shape=(self.num_envs, 3))
             hand_world_poses[:, 0:3] += pos_random_noise
-            rgba_images[:, :, :, 0:3] += pos_random_noise.unsqueeze(1).unsqueeze(1)
+            rgb_images[:, :, :, 0:3] += pos_random_noise.unsqueeze(1).unsqueeze(1)
             
         # Start to concatenate all observations
-        image_tensor = torch.cat([rgba_images, depth_images.unsqueeze(-1)], dim=3)
+        image_tensor = torch.cat([rgb_images, depth_images.unsqueeze(-1)], dim=3)
         self.single_img_obs_buf[:, :, :, :] = image_tensor.permute(0, 3, 1, 2) # (N, C, H, W)
         self.single_proprioception_buf[:, :self.robot.franka_num_dofs] = self.dof_pos
         self.single_proprioception_buf[:, self.robot.franka_num_dofs:self.robot.franka_num_dofs+7] = hand_world_poses
@@ -726,7 +730,7 @@ class RoboSensaiEnv:
         target_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids[self.object_name[0]])
         hand_world_cur_poses, _ = get_pose(self.rb_states, self.all_ids["gripper"])
         all_moveable_obj_poses, _ = get_pose(self.rb_states, self.move_env_body_ids[:, 1])
-        robot_contact_force = get_force(self.force_tensor, self.all_ids["robot"])
+        robot_contact_force = get_force(self.force_tensor, self.all_ids["robot_links"][:, 1])
 
         # TODO: check all targets are in the cabinet
 
@@ -754,21 +758,23 @@ class RoboSensaiEnv:
         target_fall_idxs = (target_world_cur_poses[:, 2] - self.target_world_reset_poses_full[:, 2]) < self.obj_fall_threshold
         # if torch.any(target_fall_idxs): print("Target Fall")
         # terminated episodes that insert into the table
-        hand_insertion_idxs = torch.any(robot_contact_force >= self.maximum_detect_force, dim=-1).squeeze(dim=-1)
-        # if torch.any(hand_insertion_idxs): print("Hand insertion")
+        robot_collision_link_idxs = torch.any(robot_contact_force >= self.maximum_detect_force, dim=-1).squeeze(dim=-1)
+        robot_collision_env_ids = self.all_ids["robot_links"][robot_collision_link_idxs, 0].unique()
+        # if len(robot_collision_env_ids) > 0: print("Hand insertion")
         # Success
         reach_succ = delta_pos_norm_full < self.reach_success_thred
+        # if torch.any(reach_succ): print("Reach success")
         self.reach_success_checker[reach_succ] += 1
         success_idxs = self.reach_success_checker >= self.reach_success_steps
 
         self.success_buf[success_idxs] = 1
         rewards[out_of_time_index] -= penalty_r
         rewards[target_fall_idxs] -= penalty_r
-        rewards[hand_insertion_idxs] -= penalty_r
+        rewards[robot_collision_env_ids] -= penalty_r
         rewards[success_idxs] += success_r
 
         if self.auto_reset:
-            self.reset_buf[hand_insertion_idxs] = 1
+            self.reset_buf[robot_collision_env_ids] = 1
             self.reset_buf[target_fall_idxs] = 1
             self.reset_buf[out_of_time_index] = 1
             self.reset_buf[success_idxs] = 1
@@ -938,7 +944,7 @@ class RoboSensaiEnv:
     def step_manual(self):
         self.auto_reset = False;
         with keyboard.Events() as events:
-            while not gym.query_viewer_has_closed(self.viewer):
+            while (not hasattr(self, "viewer") or not gym.query_viewer_has_closed(self.viewer)):
                 key = None
                 event = events.get(0.0001)
                 if event is not None:
@@ -951,12 +957,12 @@ class RoboSensaiEnv:
                         if key == 'f': self.failed_env_ids = []
 
                 self.actions_tensor = torch.ones(self.action_dim, dtype=torch.float32, device=self.device)
-                if key == 'q': self.actions_tensor[:, 0] += 1
+                if key == 's': self.actions_tensor[:, 0] += 1
                 if key == 'w': self.actions_tensor[:, 0] -= 1
-                if key == 'a': self.actions_tensor[:, 1] += 1
-                if key == 's': self.actions_tensor[:, 1] -= 1
-                if key == 'z': self.actions_tensor[:, 2] += 1
-                if key == 'x': self.actions_tensor[:, 2] -= 1
+                if key == 'd': self.actions_tensor[:, 1] += 1
+                if key == 'a': self.actions_tensor[:, 1] -= 1
+                if key == 'q': self.actions_tensor[:, 2] += 1
+                if key == 'e': self.actions_tensor[:, 2] -= 1
                 if key == 'u': self.actions_tensor[:, 3] += 1
                 if key == 'i': self.actions_tensor[:, 3] -= 1
                 if key == 'j': self.actions_tensor[:, 5] += 1
@@ -965,7 +971,6 @@ class RoboSensaiEnv:
                 if key == ',': self.actions_tensor[:, 6] -= 1
 
                 self.step(self.actions_tensor)
-
 
     
     def freeze_sim(self):
@@ -982,31 +987,34 @@ class RoboSensaiEnv:
                 if key == 'f': 
                     self.rendering = previous_rendering
                     return key
-                if key == 's': 
+                if key == 'z': 
                     self.stepsimulation()
                 else:
                     # step the viewer
-                    if self.rendering: 
-                        self.update_viewer()
+                    self.update_viewer()
                 
-                self.rgb_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR)
-                self.depth_images = get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH)
-                self.rgbd_images = np.concatenate([self.rgb_images, np.expand_dims(self.depth_images, axis=-1)], axis=-1)
+                rgb_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_COLOR))
+                depth_images = self.to_torch(get_envs_images(self.sim, self.all_ids["envs"], self.camera_handles, gymapi.IMAGE_DEPTH))
+                depth_images = torch.clamp(depth_images, min=-10.0, max=10.0)
+
+                image_tensor = torch.cat([rgb_images, depth_images.unsqueeze(-1)], dim=3).permute(0, 3, 1, 2) # (N, C, H, W)
+                self.observation_dict.update({"image": image_tensor})
 
                 # self.rgbd_images = get_envs_images_tensor(self.sim, self.camera_tensors)
 
-                self.visualize_image_observation(env_id=2)
+                # self.visualize_image_observation(env_id=0)
     
 
     def visualize_image_observation(self, env_id=0):
-        rgb_image = self.rgb_images[env_id]
-        depth_image = self.depth_images[env_id]
-        if hasattr(rgb_image, 'device') and rgb_image.device != torch.device('cpu'):
-            rgb_image = rgb_image.cpu().numpy()
-            depth_image = depth_image.cpu().numpy()
+        rgbd_image = self.observation_dict["image"]
+        # Uint8 is necessary for the visualization of cv2!!!
+        rgb_image = rgbd_image[env_id, :3, :, :].permute(1, 2, 0).to(torch.uint8) # (C, H, W) -> (H, W, C)
+        depth_image = rgbd_image[env_id, 3, :, :]
+        rgb_image = rgb_image.cpu().numpy()
+        depth_image = depth_image.cpu().numpy()
         cv2_rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
         cv2_depth_image = np_scale(depth_image, 0, 255).astype(np.uint8)
-        cv2.imshow('RGBA', cv2.resize(cv2_rgb_image, (800, 400)))
+        cv2.imshow('RGB', cv2.resize(cv2_rgb_image, (800, 400)))
         cv2.imshow('Alpha', cv2.resize(cv2_depth_image, (800, 400)))
         cv2.waitKey(1)
 
@@ -1260,7 +1268,7 @@ if __name__ == '__main__':
     args.time_seq_obs = False
     args.use_transformer = True
     args.sequence_len = 5
-    args.num_envs = 50
+    args.num_envs = 1
     args.draw_contact = True
     args.filter_contact = True
     args.include_target_obs = False
