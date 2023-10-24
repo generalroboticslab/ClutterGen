@@ -18,7 +18,7 @@ class Franka:
         asset_options.flip_visual_attachments = True # ??? What is this for?
         self.franka_asset = gym.load_asset(self.sim, self.asset_root, franka_asset_file, asset_options)
         self.franka_pose = gymapi.Transform()
-        self.franka_pose.p = gymapi.Vec3(0, 0, 0)
+        self.franka_pose.p = gymapi.Vec3(0., 0., 0.)
         # configure franka dofs
         self.franka_dof_props = gym.get_asset_dof_properties(self.franka_asset)
         self.franka_lower_limits = self.franka_dof_props["lower"]

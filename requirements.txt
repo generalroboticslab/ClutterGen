@@ -32,4 +32,6 @@ urdf-parser-py
 tabulate
 seaborn
 Pillow
-timm
+timm==0.6.12 # For zoe depth
+transformers
+open3d

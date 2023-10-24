@@ -27,13 +27,13 @@ def sim_sec(sim, seconds, dt=DT):
 def set_pose(gym, sim, state_tensor, body_idxs, positions=None, orientations=None, linvels=None, angvels=None, verbose=False):
     if type(body_idxs) == list: # Multiple actors set_pose (required by GPU pipeline)
         for i, actor_body_idxs in enumerate(body_idxs):
-            if positions is not None:
+            if positions is not None and positions[i] is not None:
                 state_tensor[actor_body_idxs, :3] = positions[i]
-            if orientations is not None:
+            if orientations is not None and orientations[i] is not None:
                 state_tensor[actor_body_idxs, 3:7] = orientations[i]
-            if linvels is not None:
+            if linvels is not None and linvels[i] is not None:
                 state_tensor[actor_body_idxs, 7:10] = linvels[i]
-            if angvels is not None:
+            if angvels is not None and angvels[i] is not None:
                 state_tensor[actor_body_idxs, 10:13] = angvels[i]
         body_idxs = torch.cat(body_idxs).unique()
     else: # Single actor set_pose
@@ -275,6 +275,34 @@ def np_scale(x, lower=0, upper=255):
     shift_x = x - np.min(x)
     normalize_x = shift_x / (np.max(shift_x)+1e-15)
     return (upper - lower) * normalize_x + lower
+
+
+@torch.jit.script
+def euler_to_transform_matrix(roll, pitch, yaw):
+    # Create rotation matrices
+    R_roll = torch.stack([torch.ones_like(roll), torch.zeros_like(roll), torch.zeros_like(roll),
+                          torch.zeros_like(roll), torch.cos(roll), -torch.sin(roll),
+                          torch.zeros_like(roll), torch.sin(roll), torch.cos(roll)], dim=1).view(-1, 3, 3)
+
+    R_pitch = torch.stack([torch.cos(pitch), torch.zeros_like(pitch), torch.sin(pitch),
+                           torch.zeros_like(pitch), torch.ones_like(pitch), torch.zeros_like(pitch),
+                           -torch.sin(pitch), torch.zeros_like(pitch), torch.cos(pitch)], dim=1).view(-1, 3, 3)
+
+    R_yaw = torch.stack([torch.cos(yaw), -torch.sin(yaw), torch.zeros_like(yaw),
+                         torch.sin(yaw), torch.cos(yaw), torch.zeros_like(yaw),
+                         torch.zeros_like(yaw), torch.zeros_like(yaw), torch.ones_like(yaw)], dim=1).view(-1, 3, 3)
+    
+    # Multiply the rotation matrices to get the combined rotation matrix
+    R = torch.bmm(R_yaw, torch.bmm(R_pitch, R_roll))
+    
+    # Create a 4x4 identity matrix with batch dimensions
+    identity = torch.eye(4).unsqueeze(0).expand(R.size(0), -1, -1).to(R.device)
+
+    # Replace the upper-left 3x3 corner of the identity matrix with the rotation matrix
+    transform_matrix = identity.clone()
+    transform_matrix[:, :3, :3] = R
+    
+    return transform_matrix
 
 
 @torch.jit.script

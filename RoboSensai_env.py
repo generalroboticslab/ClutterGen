@@ -16,6 +16,7 @@ from Robot import Franka
 from domain_randomizer import DomainRandomizer
 from llm_query import GPT
 from post_corrector import PostCorrector
+from scene_importer import SceneImporter
 
 import matplotlib.pyplot as plt
 import cv2
@@ -81,9 +82,8 @@ class RoboSensaiEnv:
         for i, name in enumerate(self.object_name):
             self.object_name_index[name] = i
         
-        self.add_gms = self.args.add_gms if hasattr(self.args, "add_gms") else False
-        self.add_sides_shelf = self.args.add_sides_shelf if hasattr(self.args, "add_sides_shelf") else False
-        self.num_gms = self.args.num_gms if hasattr(self.args, "num_gms") else 1000
+        self.visualize_pc = self.args.visualize_pc if hasattr(self.args, "visualize_pc") else False
+        self.num_pcs = self.args.num_pcs if hasattr(self.args, "num_pcs") else 4000
         
         # Mics
         self.use_gpt = self.args.use_gpt if hasattr(self.args, "use_gpt") else False
@@ -104,6 +104,8 @@ class RoboSensaiEnv:
         self._configure_asset()
         # Create robot arm
         self._configure_robot()
+        # Create Scene importer
+        self.scene_importer = SceneImporter()
         # Create domain randomizer
         self.d_randomizer = DomainRandomizer(device=self.device)
         # Create GPT 
@@ -215,8 +217,8 @@ class RoboSensaiEnv:
         for i in range(self.num_envs):
             camera_handle = gym.create_camera_sensor(self.envs[i], camera_properties)                                     
             gym.set_camera_location(camera_handle, self.envs[i], cam_pos, cam_target)
-            cam_vinv = torch.inverse(self.to_torch(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle)))
-            cam_proj = self.to_torch(gym.get_camera_proj_matrix(self.sim, self.envs[i], camera_handle))
+            cam_vinv = np.linalg.inv(np.array(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle)))
+            cam_proj = np.array(gym.get_camera_proj_matrix(self.sim, self.envs[i], camera_handle))
             self.camera_handles.append(camera_handle)
             self.camera_view_matrixs.append(cam_vinv)
             self.camera_proj_matrixs.append(cam_proj)
@@ -226,6 +228,8 @@ class RoboSensaiEnv:
             # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_DEPTH)
             # env_depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
             # self.camera_tensors.append((env_rgb_tensor, env_depth_tensor))
+        self.camera_view_matrixs = self.to_torch(self.camera_view_matrixs)
+        self.camera_proj_matrixs = self.to_torch(self.camera_proj_matrixs)
 
     
     def _configure_ground(self):
@@ -291,6 +295,12 @@ class RoboSensaiEnv:
             self.all_ids["root"][key] = []
             self.all_ids["rb"][key] = []
 
+        # pc asset (Only for visualization, not included in the scene_asset)
+        if self.visualize_pc:
+            self.pc_asset = self.create_GM_asset(radius=0.005, fix_base_link=True, disable_gravity=True)
+            self.all_ids["root"]["pc"] = []
+            self.pc_handles = []
+
 
     def _configure_robot(self, robot_name="franka"):
         self.robot = Franka(sim=self.sim, asset_root=self.asset_root, device=self.device)
@@ -310,9 +320,9 @@ class RoboSensaiEnv:
         print("Creating %d environments" % self.num_envs)
 
         # prepare area
-        self.prepare_area = gymapi.Transform()
-        self.prepare_area.p = gymapi.Vec3(0., 1000., 0.5)
-        self.prepare_area = transform2list(self.prepare_area)
+        prepare_area = gymapi.Transform()
+        prepare_area.p = gymapi.Vec3(0., 1000., 0.5)
+        self.prepare_area = transform2list(prepare_area)
         self.prepare_area = [self.to_torch(self.prepare_area[0]), self.to_torch(self.prepare_area[1])]
 
         # object position dict
@@ -351,6 +361,17 @@ class RoboSensaiEnv:
             hand_pose = gym.get_rigid_transform(env, hand_handle)
             hand_id = gym.find_actor_rigid_body_index(env, franka_handle, "panda_gripper_mid", gymapi.DOMAIN_SIM)
             self.all_ids["rb"]["gripper"].append(hand_id)
+
+            # add pc to visualize points cloud
+            if self.visualize_pc:
+                # Add pc
+                temp_pc_ids = []; temp_pc_handles = []
+                for _ in range(self.num_pcs):
+                    gm_handle = gym.create_actor(env, self.pc_asset, prepare_area, "pc", i, 3)
+                    gm_id = gym.get_actor_index(env, gm_handle, gymapi.DOMAIN_SIM)
+                    temp_pc_ids.append(gm_id); temp_pc_handles.append(gm_handle)
+                self.all_ids["root"]["pc"].append(temp_pc_ids)
+                self.pc_handles.append(temp_pc_handles)
         
         ## Record default scene setup
         for obj_name in self.scene_asset.keys():
@@ -666,7 +687,16 @@ class RoboSensaiEnv:
         self.move_env_body_rb_ids = torch.stack([body_env_ids, move_body_rb_ids], dim=1)
         
         # Reset all objects
-        set_pose(gym, self.sim, self.root_tensor, body_root_ids, positions, orientations, linvels, angvels)
+        if self.visualize_pc and hasattr(self, "pc_pos") and hasattr(self, "pc_color"):
+            body_root_ids_list = [body_root_ids, self.all_ids["root"]["pc"][reset_ids].flatten()]
+            positions_list = [self.prepare_area[0].repeat(len(body_root_ids), 1), self.pc_pos]
+            orientations_list = [self.prepare_area[1].repeat(len(body_root_ids), 1), None]
+            linvels_list = [linvels, None]
+            angvels_list = [angvels, None]
+            set_pose(gym, self.sim, self.root_tensor, body_root_ids_list, positions_list, orientations_list, linvels_list, angvels_list)
+        else:
+            set_pose(gym, self.sim, self.root_tensor, body_root_ids, positions, orientations, linvels, angvels)
+            
 
         # Reset Robot Arm
         set_dof(gym, self.sim, self.dof_pos, self.dof_vel, reset_ids, 
@@ -962,6 +992,22 @@ class RoboSensaiEnv:
 
     def step_manual(self):
         self.auto_reset = False;
+
+        if self.visualize_pc:
+            from PIL import Image
+            test_img = Image.open("assets/image_dataset/scratch/test3.jpg")
+            self.pc_pos, self.pc_color = self.scene_importer.get_pc_from_rgb([test_img], 
+                                                                            intrinsic_matrix=self.scene_importer.intrinsic_matrix, 
+                                                                            extrinsic_matrix=self.camera_view_matrixs,
+                                                                            downsample=self.num_pcs)
+            # Change color for the points cloud
+            for i in range(self.num_envs):
+                env = self.envs[i]
+                for j, pc_id in enumerate(self.all_ids["root"]["pc"][i, :]):
+                    color = self.pc_color[i, j, :]
+                    pc_handle = self.pc_handles[i][j]
+                    gym.set_rigid_body_color(env, pc_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(*color))
+
         with keyboard.Events() as events:
             while (not hasattr(self, "viewer") or not gym.query_viewer_has_closed(self.viewer)):
                 key = None
@@ -1265,6 +1311,8 @@ class RoboSensaiEnv:
         asset_options.disable_gravity = disable_gravity
         if density is not None: asset_options.density = density
         if type_name =='sphere': return gym.create_sphere(self.sim, radius, asset_options)
+        elif type_name =='polybead': 
+            return gym.load_asset(self.sim, self.asset_root, os.path.join(self.urdf_folder, "polybead")+".urdf", asset_options)
         else: return gym.create_box(self.sim, radius, radius, radius, asset_options)
 
 
@@ -1283,7 +1331,7 @@ if __name__ == '__main__':
     args.object_name = 'cube'
     args.task = 'P2G'
     args.use_gpu_pipeline = True
-    args.rendering = True
+    args.rendering = False
     args.time_seq_obs = False
     args.use_transformer = True
     args.sequence_len = 5
@@ -1303,6 +1351,7 @@ if __name__ == '__main__':
     args.ori_weight = 0.
     args.act_weight = 0.
     args.real = False
+    args.visualize_pc = False
 
 
     args.use_gpt = False
