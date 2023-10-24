@@ -83,7 +83,7 @@ class RoboSensaiEnv:
             self.object_name_index[name] = i
         
         self.visualize_pc = self.args.visualize_pc if hasattr(self.args, "visualize_pc") else False
-        self.num_pcs = self.args.num_pcs if hasattr(self.args, "num_pcs") else 4000
+        self.num_pcs = self.args.num_pcs if hasattr(self.args, "num_pcs") else 1000
         
         # Mics
         self.use_gpt = self.args.use_gpt if hasattr(self.args, "use_gpt") else False
@@ -217,7 +217,7 @@ class RoboSensaiEnv:
         for i in range(self.num_envs):
             camera_handle = gym.create_camera_sensor(self.envs[i], camera_properties)                                     
             gym.set_camera_location(camera_handle, self.envs[i], cam_pos, cam_target)
-            cam_vinv = np.linalg.inv(np.array(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle)))
+            cam_vinv = np.array(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle))
             cam_proj = np.array(gym.get_camera_proj_matrix(self.sim, self.envs[i], camera_handle))
             self.camera_handles.append(camera_handle)
             self.camera_view_matrixs.append(cam_vinv)
@@ -228,8 +228,8 @@ class RoboSensaiEnv:
             # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_DEPTH)
             # env_depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
             # self.camera_tensors.append((env_rgb_tensor, env_depth_tensor))
-        self.camera_view_matrixs = self.to_torch(self.camera_view_matrixs)
-        self.camera_proj_matrixs = self.to_torch(self.camera_proj_matrixs)
+        self.camera_view_matrixs = self.to_torch(np.array(self.camera_view_matrixs))
+        self.camera_proj_matrixs = self.to_torch(np.array(self.camera_proj_matrixs))
 
     
     def _configure_ground(self):
@@ -297,7 +297,7 @@ class RoboSensaiEnv:
 
         # pc asset (Only for visualization, not included in the scene_asset)
         if self.visualize_pc:
-            self.pc_asset = self.create_GM_asset(radius=0.005, fix_base_link=True, disable_gravity=True)
+            self.pc_asset = self.create_GM_asset(radius=0.05, fix_base_link=True, disable_gravity=True)
             self.all_ids["root"]["pc"] = []
             self.pc_handles = []
 
@@ -995,7 +995,7 @@ class RoboSensaiEnv:
 
         if self.visualize_pc:
             from PIL import Image
-            test_img = Image.open("assets/image_dataset/scratch/test3.jpg")
+            test_img = Image.open("assets/image_dataset/scratch/test4.jpg")
             self.pc_pos, self.pc_color = self.scene_importer.get_pc_from_rgb([test_img], 
                                                                             intrinsic_matrix=self.scene_importer.intrinsic_matrix, 
                                                                             extrinsic_matrix=self.camera_view_matrixs,
@@ -1331,7 +1331,7 @@ if __name__ == '__main__':
     args.object_name = 'cube'
     args.task = 'P2G'
     args.use_gpu_pipeline = True
-    args.rendering = False
+    args.rendering = True
     args.time_seq_obs = False
     args.use_transformer = True
     args.sequence_len = 5
@@ -1351,7 +1351,7 @@ if __name__ == '__main__':
     args.ori_weight = 0.
     args.act_weight = 0.
     args.real = False
-    args.visualize_pc = False
+    args.visualize_pc = True
 
 
     args.use_gpt = False

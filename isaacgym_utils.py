@@ -305,7 +305,6 @@ def euler_to_transform_matrix(roll, pitch, yaw):
     return transform_matrix
 
 
-@torch.jit.script
 def ravel_multi_index(coords: torch.Tensor, shape: torch.Size) -> torch.Tensor:
     r"""Converts a tensor of coordinate vectors into a tensor of flat indices.
 
@@ -325,7 +324,6 @@ def ravel_multi_index(coords: torch.Tensor, shape: torch.Size) -> torch.Tensor:
     return (coords * coefs).sum(dim=-1)
 
 
-@torch.jit.script
 def unravel_index(indices: torch.Tensor, shape: torch.Size) -> torch.Tensor:
     r"""Converts a tensor of flat indices into a tensor of coordinate vectors.
 

@@ -117,7 +117,7 @@ class SceneImporter:
         point_cloud.points = o3d.utility.Vector3dVector(self.points_3d[index, :, :].cpu().numpy())
         point_cloud.colors = o3d.utility.Vector3dVector(self.colors[index, :, :].cpu().numpy())
 
-        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
+        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1., origin=[0, 0, 0])
 
         # Visualize the point cloud using Open3D
         o3d.visualization.draw_geometries([point_cloud, coord_frame])
@@ -142,7 +142,7 @@ if __name__=="__main__":
     from matplotlib import pyplot as plt
     scene_importer = SceneImporter()
 
-    org_image = Image.open("assets/image_dataset/scratch/test3.jpg")
+    org_image = Image.open("assets/image_dataset/scratch/test4.jpg")
     org_image = scene_importer.preprocess_image([org_image])
     depth_image = scene_importer.get_depth(org_image)
 
@@ -157,5 +157,5 @@ if __name__=="__main__":
     # Compute the transformation matrices
     transform_matrices = euler_to_transform_matrix(roll_angles, pitch_angles, yaw_angles)
 
-    scene_importer.get_pc_from_rgbd(org_image, depth_image, scene_importer.intrinsic_matrix, transform_matrices, downsample=10000)
+    scene_importer.get_pc_from_rgbd(org_image, depth_image, scene_importer.intrinsic_matrix, transform_matrices, downsample=1000)
     scene_importer.visualize_pc()
