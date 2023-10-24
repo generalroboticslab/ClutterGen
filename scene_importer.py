@@ -1,4 +1,4 @@
-from isaacgym_utils import euler_to_transform_matrix
+from isaacgym_utils import euler_to_transform_matrix, unravel_index
 
 from PIL import Image
 import requests
@@ -6,7 +6,6 @@ import numpy as np
 from torchvision import transforms
 from PIL import Image
 import torch
-from utils import unravel_index
 import open3d as o3d
 import torch
 
