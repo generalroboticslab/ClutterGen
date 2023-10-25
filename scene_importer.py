@@ -1,5 +1,5 @@
 from isaacgym_utils import euler_to_transform_matrix, unravel_index
-
+from isaacgym.torch_utils import *
 from PIL import Image
 import requests
 import numpy as np
@@ -56,7 +56,7 @@ class SceneImporter:
         return prediction
     
 
-    def get_pc_from_rgbd(self, rgb_images, depth_images, intrinsic_matrix, extrinsic_matrix=None, downsample=None):
+    def get_pc_from_rgbd(self, rgb_images, depth_images, intrinsic_matrix, extrinsic_pose=None, downsample=None):
         # Convert input NumPy arrays to PyTorch tensors
         depth_images_tensor = self.to_torch(depth_images, dtype=torch.float32)
         rgb_images_tensor = self.to_torch(rgb_images, dtype=torch.float32)
@@ -92,22 +92,23 @@ class SceneImporter:
         self.points_3d = points_3d.view(batch_size, -1, 3)
         self.colors = colors.permute(0, 2, 3, 1).view(batch_size, -1, 3) # colors should be (batch, H, W, C)
 
-        if extrinsic_matrix is not None:
-            extrinsic_matrix_tensor = self.to_torch(extrinsic_matrix, dtype=torch.float32)
+        if extrinsic_pose is not None:
+            extrinsic_quat, extrinsic_trans = extrinsic_pose
+            extrinsic_quat, extrinsic_trans = self.to_torch(extrinsic_quat), self.to_torch(extrinsic_trans)
             # extrinsic_matrix_tensor = extrinsic_matrix_tensor.repeat(batch_size, 1, 1) # (batch, 4, 4)
-            print(extrinsic_matrix_tensor.shape)
             # TODO: Dont compute inverse every time
-            v_extrinsc_matrix_tensor = torch.inverse(extrinsic_matrix_tensor)
-            points_3d_temp = torch.cat((self.points_3d, torch.ones((batch_size, self.points_3d.shape[1], 1), device=self.device)), dim=-1)
-            # X' = T@X, X'^T = X^T@T^T, assume X is (4, N) and T is (4, 4)
-            self.points_3d = (points_3d_temp @ v_extrinsc_matrix_tensor.transpose(1, 2))[..., :3]
+            # inv_extrinsic_quat, inv_extrinsic_trans = tf_inverse(extrinsic_quat, extrinsic_trans)
+            inv_extrinsic_quat, inv_extrinsic_trans = extrinsic_quat, extrinsic_trans
+            # v_extrinsic_matrix_tensor = extrinsic_matrix_tensor
+            self.points_3d = tf_apply(inv_extrinsic_quat, inv_extrinsic_trans, self.points_3d)
         
         return self.points_3d, self.colors
     
 
-    def get_pc_from_rgb(self, rgb_images: list, intrinsic_matrix, extrinsic_matrix=None, downsample=None):
+    def get_pc_from_rgb(self, rgb_images: list, intrinsic_matrix, extrinsic_matrix=None, negative_depth=False, downsample=None):
         processed_rgb_images = self.preprocess_image(rgb_images)
         depth_image = self.get_depth(processed_rgb_images)
+        if negative_depth: depth_image = -depth_image
         return self.get_pc_from_rgbd(processed_rgb_images, depth_image, intrinsic_matrix, extrinsic_matrix, downsample)
 
     
@@ -150,12 +151,10 @@ if __name__=="__main__":
     # scene_importer.visualize_depth(depth_image)
 
     batch_size = 1  # Example batch size
-    roll_angles = torch.tensor([torch.pi] * batch_size)  # 90 degrees in radians
-    pitch_angles = torch.tensor([0.] * batch_size)
-    yaw_angles = torch.tensor([0.] * batch_size)
 
     # Compute the transformation matrices
-    transform_matrices = euler_to_transform_matrix(roll_angles, pitch_angles, yaw_angles)
+    quat_rot = quat_conjugate(quat_from_euler_xyz(*torch.tensor([np.pi/2, -np.pi/2., 0.])))
+    extrinsic_pose = (quat_rot, torch.tensor([0.0, 0.0, 0.0]))
 
-    scene_importer.get_pc_from_rgbd(org_image, depth_image, scene_importer.intrinsic_matrix, transform_matrices, downsample=1000)
+    scene_importer.get_pc_from_rgbd(org_image, depth_image, scene_importer.intrinsic_matrix, extrinsic_pose, downsample=10000)
     scene_importer.visualize_pc()

@@ -83,7 +83,7 @@ class RoboSensaiEnv:
             self.object_name_index[name] = i
         
         self.visualize_pc = self.args.visualize_pc if hasattr(self.args, "visualize_pc") else False
-        self.num_pcs = self.args.num_pcs if hasattr(self.args, "num_pcs") else 1000
+        self.num_pcs = self.args.num_pcs if hasattr(self.args, "num_pcs") else 50000
         
         # Mics
         self.use_gpt = self.args.use_gpt if hasattr(self.args, "use_gpt") else False
@@ -139,7 +139,7 @@ class RoboSensaiEnv:
 
         # Create environments and allocate buffers
         self.create_envs()
-        
+
         self._link_states_tensor()
 
         self.allocate_buffers()
@@ -167,7 +167,7 @@ class RoboSensaiEnv:
         self.sim_params.physx.num_position_iterations = 8
         self.sim_params.physx.num_velocity_iterations = 1
         self.sim_params.physx.rest_offset = 0.000
-        self.sim_params.physx.contact_offset = 0.001
+        self.sim_params.physx.contact_offset = 0.005
         self.sim_params.physx.friction_offset_threshold = 0.001
         self.sim_params.physx.friction_correlation_distance = 0.0005
         self.sim_params.physx.num_threads = self.args.num_threads
@@ -202,12 +202,19 @@ class RoboSensaiEnv:
         table_pose = self.get_asset_pose('table')
         position = table_pose.p
         x, y, z = position.x, position.y, position.z
-        cam_pos = gymapi.Vec3(x+0.8, y, z+1.2)
-        cam_target = gymapi.Vec3(x-1, y, -0.5)
+        cam_transform = gymapi.Transform()
+        cam_transform.p = gymapi.Vec3(x+0.8, y, z+1.2)
+        cam_transform.p = gymapi.Vec3(0., 0., z+1.2)
+        cam_transform.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(3, 1, 0), np.radians(180.0))
+        cam_trans, cam_ori  = transform2list(cam_transform)
+        cam_trans, cam_ori = self.to_torch(cam_trans), self.to_torch(cam_ori)
+        isaacCam2RealCam_quat = quat_conjugate(quat_from_euler_xyz(*torch.tensor([np.pi/2, -np.pi/2., 0.]))).to(self.device)
+        isaacCam2RealCam_trans = torch.zeros(3).to(self.device)
         # Create camera
         self.camera_handles = []
         self.camera_tensors = []
-        self.camera_view_matrixs = []
+        self.camera_view_quats = []
+        self.camera_view_trans = []
         self.camera_proj_matrixs = []
 
         camera_properties = gymapi.CameraProperties()
@@ -216,11 +223,15 @@ class RoboSensaiEnv:
         camera_properties.enable_tensors = False
         for i in range(self.num_envs):
             camera_handle = gym.create_camera_sensor(self.envs[i], camera_properties)                                     
-            gym.set_camera_location(camera_handle, self.envs[i], cam_pos, cam_target)
-            cam_vinv = np.array(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle))
+            gym.set_camera_transform(camera_handle, self.envs[i], cam_transform)
+            World2RealCam_quat, World2RealCam_trans = tf_combine(cam_ori, cam_trans, 
+                                                                isaacCam2RealCam_quat,
+                                                                isaacCam2RealCam_trans)
+            # cam_view = np.array(gym.get_camera_view_matrix(self.sim, self.envs[i], camera_handle))
             cam_proj = np.array(gym.get_camera_proj_matrix(self.sim, self.envs[i], camera_handle))
             self.camera_handles.append(camera_handle)
-            self.camera_view_matrixs.append(cam_vinv)
+            self.camera_view_quats.append(World2RealCam_quat)
+            self.camera_view_trans.append(World2RealCam_trans)
             self.camera_proj_matrixs.append(cam_proj)
 
             # _rgb_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_COLOR)
@@ -228,8 +239,12 @@ class RoboSensaiEnv:
             # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_DEPTH)
             # env_depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
             # self.camera_tensors.append((env_rgb_tensor, env_depth_tensor))
-        self.camera_view_matrixs = self.to_torch(np.array(self.camera_view_matrixs))
-        self.camera_proj_matrixs = self.to_torch(np.array(self.camera_proj_matrixs))
+        print(self.camera_view_quats)
+        self.camera_view_quats = torch.stack(self.camera_view_quats, dim=0)
+        self.camera_view_trans = torch.stack(self.camera_view_trans, dim=0)
+        self.camera_proj_matrixs = self.to_torch(self.camera_proj_matrixs)
+
+        self.visualize_camera_axis(cam_trans, cam_ori)
 
     
     def _configure_ground(self):
@@ -297,7 +312,7 @@ class RoboSensaiEnv:
 
         # pc asset (Only for visualization, not included in the scene_asset)
         if self.visualize_pc:
-            self.pc_asset = self.create_GM_asset(radius=0.05, fix_base_link=True, disable_gravity=True)
+            self.pc_asset = self.create_GM_asset(radius=0.005, fix_base_link=True, disable_gravity=True)
             self.all_ids["root"]["pc"] = []
             self.pc_handles = []
 
@@ -366,8 +381,11 @@ class RoboSensaiEnv:
             if self.visualize_pc:
                 # Add pc
                 temp_pc_ids = []; temp_pc_handles = []
-                for _ in range(self.num_pcs):
-                    gm_handle = gym.create_actor(env, self.pc_asset, prepare_area, "pc", i, 3)
+                gm_pose_temp = gymapi.Transform()
+                gm_pos_full = self.rng.uniform([1000.]*3, [1001.]*3, size=(self.num_pcs, 3))
+                for k in range(self.num_pcs):
+                    gm_pose_temp.p = gymapi.Vec3(*gm_pos_full[k, :])
+                    gm_handle = gym.create_actor(env, self.pc_asset, gm_pose_temp, "pc", i, 3)
                     gm_id = gym.get_actor_index(env, gm_handle, gymapi.DOMAIN_SIM)
                     temp_pc_ids.append(gm_id); temp_pc_handles.append(gm_handle)
                 self.all_ids["root"]["pc"].append(temp_pc_ids)
@@ -387,9 +405,10 @@ class RoboSensaiEnv:
             self.all_ids["rb"][obj_rb_name] = self.to_torch(obj_rb_ids, dtype=torch.long)
 
         # Configure camera point
-        self._configure_camera()
         if self.rendering:
             self._configure_viewer()
+        self._configure_camera()
+
         # ==== prepare tensors =====
         # from now on, we will use the tensor API that can run on CPU or GPU
         gym.prepare_sim(self.sim)
@@ -689,7 +708,7 @@ class RoboSensaiEnv:
         # Reset all objects
         if self.visualize_pc and hasattr(self, "pc_pos") and hasattr(self, "pc_color"):
             body_root_ids_list = [body_root_ids, self.all_ids["root"]["pc"][reset_ids].flatten()]
-            positions_list = [self.prepare_area[0].repeat(len(body_root_ids), 1), self.pc_pos]
+            positions_list = [self.prepare_area[0].repeat(len(body_root_ids), 1), self.pc_pos[reset_ids].squeeze(0)]
             orientations_list = [self.prepare_area[1].repeat(len(body_root_ids), 1), None]
             linvels_list = [linvels, None]
             angvels_list = [angvels, None]
@@ -998,7 +1017,7 @@ class RoboSensaiEnv:
             test_img = Image.open("assets/image_dataset/scratch/test4.jpg")
             self.pc_pos, self.pc_color = self.scene_importer.get_pc_from_rgb([test_img], 
                                                                             intrinsic_matrix=self.scene_importer.intrinsic_matrix, 
-                                                                            extrinsic_matrix=self.camera_view_matrixs,
+                                                                            extrinsic_matrix=(self.camera_view_quats, self.camera_view_trans),
                                                                             downsample=self.num_pcs)
             # Change color for the points cloud
             for i in range(self.num_envs):
@@ -1247,7 +1266,16 @@ class RoboSensaiEnv:
             green_xyz_axis_lines = torch.cat([green_position_world.expand_as(green_xyz_axis_Wor), green_xyz_axis_Wor], dim=1)
             gym.add_lines(self.viewer, env, 6, torch.cat([red_xyz_axis_lines, green_xyz_axis_lines], dim=0), xyzAxisColor.repeat((2, 1)))
 
-    
+
+    def visualize_camera_axis(self, cam_trans, cam_ori):
+        xyzAxisColor = self.to_torch([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]], dtype=torch.float32)
+        xyzAxis = self.to_torch([[0.1, 0., 0.], [0., 0.1, 0.], [0., 0., 0.1]], dtype=torch.float32)
+        for i, env in enumerate(self.envs):
+            xyz_axis_Wor = tf_apply(cam_ori, cam_trans, xyzAxis)
+            xyz_axis_lines = torch.cat([cam_trans.expand_as(xyz_axis_Wor), xyz_axis_Wor], dim=1)
+            gym.add_lines(self.viewer, env, 3, xyz_axis_lines.cpu().numpy(), xyzAxisColor.cpu().numpy()) # use_gpu_pipeline will require .cpu.numpy()
+
+
     def visualize_filter_area(self, refresh=True):
         if refresh: gym.clear_lines(self.viewer)
         red_lines_color = self.to_torch([1., 0., 0.], dtype=torch.float32)
@@ -1352,6 +1380,7 @@ if __name__ == '__main__':
     args.act_weight = 0.
     args.real = False
     args.visualize_pc = True
+    args.num_pcs = 20000
 
 
     args.use_gpt = False

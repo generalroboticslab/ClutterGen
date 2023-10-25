@@ -5,6 +5,7 @@ import torch
 import trimesh
 import urdf_parser_py.urdf as urdf
 from copy import deepcopy
+import pytorch3d as p3d
 
 DT = 1 / 60
 gym = gymapi.acquire_gym()
@@ -277,34 +278,6 @@ def np_scale(x, lower=0, upper=255):
     return (upper - lower) * normalize_x + lower
 
 
-@torch.jit.script
-def euler_to_transform_matrix(roll, pitch, yaw):
-    # Create rotation matrices
-    R_roll = torch.stack([torch.ones_like(roll), torch.zeros_like(roll), torch.zeros_like(roll),
-                          torch.zeros_like(roll), torch.cos(roll), -torch.sin(roll),
-                          torch.zeros_like(roll), torch.sin(roll), torch.cos(roll)], dim=1).view(-1, 3, 3)
-
-    R_pitch = torch.stack([torch.cos(pitch), torch.zeros_like(pitch), torch.sin(pitch),
-                           torch.zeros_like(pitch), torch.ones_like(pitch), torch.zeros_like(pitch),
-                           -torch.sin(pitch), torch.zeros_like(pitch), torch.cos(pitch)], dim=1).view(-1, 3, 3)
-
-    R_yaw = torch.stack([torch.cos(yaw), -torch.sin(yaw), torch.zeros_like(yaw),
-                         torch.sin(yaw), torch.cos(yaw), torch.zeros_like(yaw),
-                         torch.zeros_like(yaw), torch.zeros_like(yaw), torch.ones_like(yaw)], dim=1).view(-1, 3, 3)
-    
-    # Multiply the rotation matrices to get the combined rotation matrix
-    R = torch.bmm(R_yaw, torch.bmm(R_pitch, R_roll))
-    
-    # Create a 4x4 identity matrix with batch dimensions
-    identity = torch.eye(4).unsqueeze(0).expand(R.size(0), -1, -1).to(R.device)
-
-    # Replace the upper-left 3x3 corner of the identity matrix with the rotation matrix
-    transform_matrix = identity.clone()
-    transform_matrix[:, :3, :3] = R
-    
-    return transform_matrix
-
-
 def ravel_multi_index(coords: torch.Tensor, shape: torch.Size) -> torch.Tensor:
     r"""Converts a tensor of coordinate vectors into a tensor of flat indices.
 
@@ -341,6 +314,96 @@ def unravel_index(indices: torch.Tensor, shape: torch.Size) -> torch.Tensor:
     coefs = shape[1:].flipud().cumprod(dim=0).flipud()
 
     return torch.div(indices[..., None], coefs, rounding_mode='trunc') % shape[:-1]
+
+
+@torch.jit.script
+def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
+    """
+    Convert rotations given as quaternions to rotation matrices.
+
+    Args:
+        quaternions: quaternions with real part first,
+            as tensor of shape (..., 4).
+
+    Returns:
+        Rotation matrices as tensor of shape (..., 3, 3).
+    """
+    r, i, j, k = torch.unbind(quaternions, -1)
+    # pyre-fixme[58]: `/` is not supported for operand types `float` and `Tensor`.
+    two_s = 2.0 / (quaternions * quaternions).sum(-1)
+
+    o = torch.stack(
+        (
+            1 - two_s * (j * j + k * k),
+            two_s * (i * j - k * r),
+            two_s * (i * k + j * r),
+            two_s * (i * j + k * r),
+            1 - two_s * (i * i + k * k),
+            two_s * (j * k - i * r),
+            two_s * (i * k - j * r),
+            two_s * (j * k + i * r),
+            1 - two_s * (i * i + j * j),
+        ),
+        -1,
+    )
+    return o.reshape(quaternions.shape[:-1] + (3, 3))
+
+
+@torch.jit.script
+def quaternion_translation_to_homogeneous_matrix_batched(quaternions, translations):
+    """
+    Converts batched quaternions and translations to batched homogeneous transformation matrices.
+    
+    Args:
+        quaternions (torch.Tensor): Batched quaternions tensor of shape (batch_size, 4) in the format [w, x, y, z].
+        translations (torch.Tensor): Batched translation vectors tensor of shape (batch_size, 3) in the format [x, y, z].
+        
+    Returns:
+        torch.Tensor: Batched homogeneous transformation matrices of shape (batch_size, 4, 4).
+    """
+    # Normalize quaternions if necessary
+    norm = torch.norm(quaternions, dim=1, keepdim=True)
+    normalized_quaternions = quaternions / norm
+    
+    # Create rotation matrices from quaternions
+    rotation_matrices = torch.nn.functional.normalize(quaternion_to_matrix(normalized_quaternions), dim=1)
+    print(rotation_matrices)
+    # Create homogeneous transformation matrices
+    homogeneous_matrices = torch.zeros(quaternions.size(0), 4, 4).to(quaternions.device)
+    homogeneous_matrices[:, :3, :3] = rotation_matrices
+    homogeneous_matrices[:, :3, 3] = translations
+    homogeneous_matrices[:, 3, 3] = 1
+    
+    return homogeneous_matrices
+
+
+def euler_to_transform_matrix(roll, pitch, yaw, translations=None):
+    # Create rotation matrices
+    R_roll = torch.stack([torch.ones_like(roll), torch.zeros_like(roll), torch.zeros_like(roll),
+                          torch.zeros_like(roll), torch.cos(roll), -torch.sin(roll),
+                          torch.zeros_like(roll), torch.sin(roll), torch.cos(roll)], dim=1).view(-1, 3, 3)
+
+    R_pitch = torch.stack([torch.cos(pitch), torch.zeros_like(pitch), torch.sin(pitch),
+                           torch.zeros_like(pitch), torch.ones_like(pitch), torch.zeros_like(pitch),
+                           -torch.sin(pitch), torch.zeros_like(pitch), torch.cos(pitch)], dim=1).view(-1, 3, 3)
+
+    R_yaw = torch.stack([torch.cos(yaw), -torch.sin(yaw), torch.zeros_like(yaw),
+                         torch.sin(yaw), torch.cos(yaw), torch.zeros_like(yaw),
+                         torch.zeros_like(yaw), torch.zeros_like(yaw), torch.ones_like(yaw)], dim=1).view(-1, 3, 3)
+    
+    # Multiply the rotation matrices to get the combined rotation matrix
+    R = torch.bmm(R_yaw, torch.bmm(R_pitch, R_roll))
+    
+    # Create a 4x4 identity matrix with batch dimensions
+    identity = torch.eye(4).unsqueeze(0).expand(R.size(0), -1, -1).to(R.device)
+
+    # Replace the upper-left 3x3 corner of the identity matrix with the rotation matrix
+    transform_matrix = identity.clone()
+    transform_matrix[:, :3, :3] = R
+    if translations is not None:
+        transform_matrix[:, :3, 3] = translations
+    
+    return transform_matrix
 
 
 @torch.jit.script
