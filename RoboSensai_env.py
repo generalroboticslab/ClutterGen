@@ -16,7 +16,7 @@ from Robot import Franka
 from domain_randomizer import DomainRandomizer
 from llm_query import GPT
 from post_corrector import PostCorrector
-from scene_importer import SceneImporter
+from scene_importer import SceneImporter, DinoSAM
 
 import matplotlib.pyplot as plt
 import cv2
@@ -106,6 +106,8 @@ class RoboSensaiEnv:
         self._configure_robot()
         # Create Scene importer
         self.scene_importer = SceneImporter()
+        # Create DinoSAM
+        self.dinosam = DinoSAM()
         # Create domain randomizer
         self.d_randomizer = DomainRandomizer(device=self.device)
         # Create GPT 
@@ -203,9 +205,9 @@ class RoboSensaiEnv:
         position = table_pose.p
         x, y, z = position.x, position.y, position.z
         cam_transform = gymapi.Transform()
-        cam_transform.p = gymapi.Vec3(x+0.8, y, z+1.2)
-        cam_transform.p = gymapi.Vec3(0., 0., z+1.2)
-        cam_transform.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(3, 1, 0), np.radians(180.0))
+        # cam_transform.p = gymapi.Vec3(x+0.8, y, z+1.2)
+        cam_transform.p = gymapi.Vec3(x+0.8, y, 0.5)
+        cam_transform.r = gymapi.Quat.from_axis_angle(gymapi.Vec3(0, 1, 0), np.radians(0.0))
         cam_trans, cam_ori  = transform2list(cam_transform)
         cam_trans, cam_ori = self.to_torch(cam_trans), self.to_torch(cam_ori)
         isaacCam2RealCam_quat = quat_conjugate(quat_from_euler_xyz(*torch.tensor([np.pi/2, -np.pi/2., 0.]))).to(self.device)
@@ -239,7 +241,7 @@ class RoboSensaiEnv:
             # _depth_tensor = gym.get_camera_image_gpu_tensor(self.sim, self.envs[i], camera_handle, gymapi.IMAGE_DEPTH)
             # env_depth_tensor = gymtorch.wrap_tensor(_depth_tensor)
             # self.camera_tensors.append((env_rgb_tensor, env_depth_tensor))
-        print(self.camera_view_quats)
+
         self.camera_view_quats = torch.stack(self.camera_view_quats, dim=0)
         self.camera_view_trans = torch.stack(self.camera_view_trans, dim=0)
         self.camera_proj_matrixs = self.to_torch(self.camera_proj_matrixs)
@@ -1014,11 +1016,15 @@ class RoboSensaiEnv:
 
         if self.visualize_pc:
             from PIL import Image
-            test_img = Image.open("assets/image_dataset/scratch/test4.jpg")
-            self.pc_pos, self.pc_color = self.scene_importer.get_pc_from_rgb([test_img], 
+            test_img = Image.open("assets/image_dataset/scratch/test4.jpg").convert("RGB").resize((384, 384), Image.BILINEAR)
+            _, index_masks, obj_phrase = self.dinosam.get_masks_labels_from_image(test_img)
+            self.pc_pos, self.pc_color, self.pc_masks = self.scene_importer.get_pc_from_rgb([test_img], 
                                                                             intrinsic_matrix=self.scene_importer.intrinsic_matrix, 
                                                                             extrinsic_matrix=(self.camera_view_quats, self.camera_view_trans),
+                                                                            masks=index_masks, 
                                                                             downsample=self.num_pcs)
+            obj_bboxes, obj_center_poses = self.scene_importer.get_obj_pos_bbox_batch(self.pc_pos, self.pc_masks)
+
             # Change color for the points cloud
             for i in range(self.num_envs):
                 env = self.envs[i]
@@ -1026,6 +1032,18 @@ class RoboSensaiEnv:
                     color = self.pc_color[i, j, :]
                     pc_handle = self.pc_handles[i][j]
                     gym.set_rigid_body_color(env, pc_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(*color))
+            
+            # Draw the bounding box
+            for i in range(self.num_envs):
+                env = self.envs[i]
+                obj_bbox = obj_bboxes[i, ...]
+                obj_center_pose = obj_center_poses[i, ...]
+                for j in range(obj_center_pose.shape[0]):
+                    bbox_lines = self.compute_bounding_box_lines(obj_bbox[j])
+                    self.visualize_bounding_box(env, bbox_lines, pose=None, refresh=False)
+                    self.freeze_sim()
+
+            self.bbox_lines = bbox_lines
 
         with keyboard.Events() as events:
             while (not hasattr(self, "viewer") or not gym.query_viewer_has_closed(self.viewer)):
@@ -1293,13 +1311,25 @@ class RoboSensaiEnv:
             gym.add_lines(self.viewer, env, len(green_lines_world_box), green_lines_world_box, green_lines_color.repeat((len(green_lines_world_box), 1)))
 
 
-    def compute_bounding_box_lines(self, env, start_end_coordinate: torch.Tensor):
+    def visualize_bounding_box(self, env, bbox_lines, pose=None, refresh=True):
+        if refresh: gym.clear_lines(self.viewer)
+        lines_color = self.to_torch([1., 0., 0.], dtype=torch.float32)
+        
+        if pose is None: 
+            lines_world_box = bbox_lines.reshape(-1, 6)
+        else: # Transform the bbox (bbox is in the local frame)
+            position_world, orientation_world = pose
+            lines_world_box = tf_apply(orientation_world, position_world, bbox_lines).reshape(-1, 6)
+        gym.add_lines(self.viewer, env, len(lines_world_box), lines_world_box.cpu().numpy(), lines_color.repeat((len(lines_world_box), 1)).cpu().numpy())
+
+
+    def compute_bounding_box_lines(self, start_end_coordinate: torch.Tensor):
         start_cor, end_cor = start_end_coordinate
         x1, y1, z1 = start_cor
         x2, y2, z2 = end_cor
-        corner_points = self.to_torch([(x1, y1),(x1, y2), (x2, y2), (x2, y1)])
-        up_points = torch.cat([corner_points, torch.ones((4, 1))*z1], dim=1)
-        bot_points = torch.cat([corner_points, torch.ones((4, 1))*z2], dim=1)
+        corner_points = self.to_torch([(x1, y1), (x1, y2), (x2, y2), (x2, y1)])
+        up_points = torch.cat([corner_points, torch.ones((4, 1), device=self.device)*z1], dim=1)
+        bot_points = torch.cat([corner_points, torch.ones((4, 1), device=self.device)*z2], dim=1)
         lines_box = []
         for i in range(len(up_points)-1):
             lines_box.append(torch.cat([up_points[i], up_points[i+1]]))
@@ -1308,7 +1338,7 @@ class RoboSensaiEnv:
         lines_box.append(torch.cat([up_points[0], up_points[-1]]))
         lines_box.append(torch.cat([bot_points[0], bot_points[-1]]))
         lines_box.append(torch.cat([up_points[-1], bot_points[-1]]))
-        return torch.cat(lines_box, dim=0)
+        return torch.cat(lines_box, dim=0).reshape(-1, 3)
 
 
     def create_target_asset(self, target_asset_file, fix_base_link=False, disable_gravity=False, density=None, use_default_cube=False, convex_dec=False, target_dim=[0.05]*3):
