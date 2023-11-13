@@ -12,9 +12,8 @@ import random
 import time
 from distutils.util import strtobool
 
-from isaacgym.gymutil import parse_device_str
-from PPO.PPO_discrete_vit import *
-from RoboSensai_env import *
+from PPO.PPO_continuous_sg import *
+from RoboSensai_bullet import *
 
 import numpy as np
 import torch
@@ -31,8 +30,8 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='cube_10-06_18:52_Pushing_Transformer_GPU_Rand_goal_targInit_With_Use_Add_limitws_Weight_pos40.0') # also point to json file path
-    parser.add_argument('--index_episode', type=str, default='570037')
+    parser.add_argument('--checkpoint', type=str, default='cube_11-10_19:19_Pushing_Transformer_GPU_Rand_goal_targInit_With_Use_Add_limitws_Weight_pos40.0') # also point to json file path
+    parser.add_argument('--index_episode', type=str, default='3400000')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
     parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
@@ -50,6 +49,7 @@ def get_args():
     parser.add_argument('--discrete_replay', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--real', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+    parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Using deterministic policy instead of normal")
 
     parser.add_argument('--record_trajectory', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--replay', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -71,14 +71,11 @@ def get_args():
     parser.add_argument('--add_sides_shelf', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add bucket for Granular Media')
     parser.add_argument('--num_gms', type=int, default=1000)
 
+
     eval_args = parser.parse_args()
     eval_args.json_file_path = os.path.join(eval_args.result_dir, eval_args.object_name, 'Json', eval_args.checkpoint+'.json')
     checkpoint_folder = os.path.join(eval_args.result_dir, eval_args.object_name, 'checkpoints', eval_args.checkpoint)
     eval_args.checkpoint_path = os.path.join(checkpoint_folder, eval_args.checkpoint + '_' + eval_args.index_episode)
-    
-    # Isaac Gym operations
-    eval_args.sim_device_type, eval_args.compute_device_id = parse_device_str(eval_args.sim_device)
-    eval_args.use_gpu = (eval_args.sim_device_type == 'cuda')
     
     restored_eval_args = eval_args.__dict__.copy()  # store eval_args to avoid overwrite
 
@@ -182,7 +179,7 @@ if __name__ == "__main__":
 
     ################ create world and scene set up ##################
     # Create the gym environment
-    envs = RoboSensaiEnv(eval_args)
+    envs = RoboSensaiBullet(eval_args)
     # torch.manual_seed(eval_args.seed); np.random.seed(eval_args.seed); random.seed(eval_args.seed)
 
     # Agent
@@ -201,27 +198,22 @@ if __name__ == "__main__":
     if agent is not None: agent.set_mode('eval')  # to avoid batch_norm error if used in the future
     
     with torch.no_grad():
-        state_dict = envs.reset()
+        state = torch.Tensor(envs.reset()).to(device)
     print('Evaluating:', f'{eval_args.num_trials} trials') # start evaluation
 
-    while num_episodes < eval_args.num_trials:
-        if hasattr(envs, "viewer") and gym.query_viewer_has_closed(envs.viewer):
-            break
+    while num_episodes < eval_args.num_trials or (hasattr(envs, "viewer") and not gym.query_viewer_has_closed(envs.viewer)):
         ################ agent evaluation ################
         if eval_args.random_policy:
             action = envs.random_actions()
+            probs = None
         else:
-            vis_obs, vec_obs = state_dict['image'], state_dict['proprioception']
-            vis_obs = torch.Tensor(vis_obs).to(device)
-            vec_obs = torch.Tensor(vec_obs).to(device)
-            action = agent.select_action((vis_obs, vec_obs))
-        next_state_dict, reward, done, infos = envs.step(action)
+            action = agent.select_action(state)
 
-        state_dict = next_state_dict
+        next_state, reward, done, infos = envs.step(action)
+        print(envs.his_steps)
+        time.sleep(3)
+        state = next_state
         iterations += 1
-        # print(f'Iteration: {iterations}; Reward: {reward}')
-    
-        pos_reward, act_penalty = infos['pos_reward'], infos['act_penalty']
 
         episode_rewards += reward
         
@@ -241,7 +233,6 @@ if __name__ == "__main__":
             
             episode_rewards[terminal_index] = 0.
                 
-
     episode_reward = torch.mean(episode_rewards_box).item()
     episode_success_rate = torch.mean(episode_success_box).item()
 

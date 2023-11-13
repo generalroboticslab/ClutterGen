@@ -170,7 +170,9 @@ class Agent(nn.Module):
             action = torch.stack([categorical.sample() for categorical in multi_categoricals])
         logprob = torch.stack([categorical.log_prob(a) for a, categorical in zip(action, multi_categoricals)])
         entropy = torch.stack([categorical.entropy() for categorical in multi_categoricals])
-        return action.T, logprob.sum(0), entropy.sum(0), self.critic(x) # why transpose: torch.stack makes space as [actions, env] but we need [env, actions]
+        # why transpose: torch.stack makes space as [actions, env] but we need [env, actions]
+        # why sum: logprob and entropy shape is (action_dim, num_envs), sum means the union probability of all actions
+        return action.T, logprob.sum(0), entropy.sum(0), self.critic(x)
 
 
     def select_action(self, state):

@@ -6,6 +6,8 @@ import trimesh
 import urdf_parser_py.urdf as urdf
 from copy import deepcopy
 import pytorch3d as p3d
+import json
+from utils import *
 
 DT = 1 / 60
 gym = gymapi.acquire_gym()
@@ -55,10 +57,12 @@ def set_pose(gym, sim, state_tensor, body_idxs, positions=None, orientations=Non
     if verbose: print('Pose Set:', success)
 
 
-def control_dof(gym, sim, dof_pos_tensor, env_idxs, control_signals, lower_limits=None, upper_limits=None, verbose=False):
+def control_dof(gym, sim, dof_pos_tensor, env_idxs, control_signals, control_index=None, lower_limits=None, upper_limits=None, verbose=False):
     if lower_limits is not None: control_signals = torch.clamp(control_signals, min=lower_limits)
     if upper_limits is not None: control_signals = torch.clamp(control_signals, max=upper_limits)
-    dof_pos_tensor[env_idxs, :] = control_signals
+    if control_index is None: control_index = slice(0, dof_pos_tensor.shape[1])
+
+    dof_pos_tensor[env_idxs, control_index] = control_signals
     success = gym.set_dof_position_target_tensor(sim, gymtorch.unwrap_tensor(dof_pos_tensor))
     # tensor_idxs = env_idxs.detach().clone().to(device=dof_pos_tensor.device, dtype=torch.int32)
     # success = gym.set_dof_position_target_tensor_indexed(sim, gymtorch.unwrap_tensor(dof_pos_tensor), \
@@ -66,11 +70,12 @@ def control_dof(gym, sim, dof_pos_tensor, env_idxs, control_signals, lower_limit
     if verbose: print('Dof Set:', success)
 
 
-def set_dof(gym, sim, dof_pos_tensor, dof_vel_tensor, env_idxs, target_pos, target_vel=None, lower_limits=None, upper_limits=None, verbose=False):
+def set_dof(gym, sim, dof_pos_tensor, dof_vel_tensor, env_idxs, target_pos, target_vel=None, control_index=None, lower_limits=None, upper_limits=None, verbose=False):
     if lower_limits is not None: target_pos = torch.clamp(target_pos, min=lower_limits)
     if upper_limits is not None: target_pos = torch.clamp(target_pos, max=upper_limits)
-    if target_vel is not None: dof_vel_tensor[env_idxs, :] = target_vel
-    dof_pos_tensor[env_idxs, :] = target_pos
+    if control_index is None: control_index = slice(0, dof_pos_tensor.shape[1])
+    if target_vel is not None: dof_vel_tensor[env_idxs, control_index] = target_vel
+    dof_pos_tensor[env_idxs, control_index] = target_pos
     dof_tensor = torch.cat([dof_pos_tensor.view(-1, 1), dof_vel_tensor.view(-1, 1)], dim=1)
     success = gym.set_dof_state_tensor(sim, gymtorch.unwrap_tensor(dof_tensor))
 

@@ -11,9 +11,8 @@ import random
 import time
 from distutils.util import strtobool
 
-from isaacgym.gymutil import parse_device_str
-from RoboSensai_env import *
-from PPO.PPO_discrete_vit import *
+from RoboSensai_bullet import *
+from PPO.PPO_continuous_sg import *
 
 import numpy as np
 import torch
@@ -46,7 +45,7 @@ def parse_args():
     parser.add_argument('--subscenes', type=int, default=0, help='Number of PhysX subscenes to simulate in parallel')
     parser.add_argument('--slices', type=int, help='Number of client threads that process env slices')
 
-    # Handem Env parameters
+    # RoboSensai Env parameters
     parser.add_argument('--task', type=str, default="P", help='Pushing Task Training')
     parser.add_argument('--random_target_init', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Randomize goal pose')
     parser.add_argument('--random_goal', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Randomize goal pose')
@@ -64,13 +63,19 @@ def parse_args():
     parser.add_argument('--use_relative_goal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use relative goal position or global goal position as the target goal')
     parser.add_argument('--contact_noise_v', type=float, default=0.01, help='Contact position noise range')
     parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
+    
     parser.add_argument('--pos_weight', type=float, default=40., help='Position reward weight')
     parser.add_argument('--ori_weight', type=float, default=0., help='Orientation reward weight')
     parser.add_argument('--act_weight', type=float, default=0., help='Action penalty weight')
     parser.add_argument('--draw_contact', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
 
+    parser.add_argument('--num_objects', type=int, default=1)  # database length if have
+    parser.add_argument('--maximum_steps', type=int, default=12)  # maximum steps trial for one episode
+    parser.add_argument('--random_select', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+
     # I/O hyper parameter
-    parser.add_argument('--assets_folder', type=str, default='assets', help="folder path that stores all urdf files")
+    parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
+    parser.add_argument('--object_folder', type=str, default='objects/ycb_objects_origin_at_center_vhacd', help="folder path that stores all urdf files")
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--baseline_experiment_path', type=str, default='a_new_assets', help='use motion path in this file for the run')  # 'a_new_assets'
@@ -78,18 +83,18 @@ def parse_args():
     parser.add_argument('--force_name', default=None, type=str)
 
     # Algorithm specific arguments
-    parser.add_argument('--env_name', default="RoboSensai_Solver", help='Pybullet environment')
+    parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
     parser.add_argument("--teacher_critic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Include target observation in critic obs states but not actor states.")
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
     parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
-    parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=32, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
+    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=8, help="the K epochs to update the policy")
+    parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
@@ -97,7 +102,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument('--policy', default="Gaussian", help='Policy Type: Gaussian | Deterministic (default: Gaussian)')
+    parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Using deterministic policy instead of normal")
     parser.add_argument('--eval', type=bool, default=False, help='Evaluates a policy a policy every 10 episode (default: True)')
     parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor for reward (default: 0.95)')
     parser.add_argument('--tau', type=float, default=0.0005, metavar='G', help='target smoothing coefficient(τ) (default: 0.0005)')
@@ -114,15 +119,12 @@ def parse_args():
     parser.add_argument('--expert_action', type=float, default=None, metavar='N', nargs='*', help='expert action run to see the variance')
     parser.add_argument('--sequence_len', type=int, default=10)
     parser.add_argument('--assigned_reward', type=int, default=1) 
-    parser.add_argument('--reward_steps', type=int, default=10000)
+    parser.add_argument('--reward_steps', type=int, default=5000)
     parser.add_argument('--cpus', type=int, default=[], nargs='+', help="run environments on specified cpus")
     parser.add_argument("--torch_deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
 
     args = parser.parse_args()
 
-    # Isaac Gym operations
-    args.sim_device_type, args.compute_device_id = parse_device_str(args.sim_device)
-    args.use_gpu = (args.sim_device_type == 'cuda')
     # Using --nographics implies --headless
     if args.nographics: args.headless = True
     if args.slices is None: args.slices = args.subscenes
@@ -235,20 +237,15 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env and scene setup; TODO Input the aruments into HandemEnv
-    envs = RoboSensaiEnv(args=args)
+    envs = RoboSensaiBullet(args=args)
     agent = Agent(envs).to(device)
     agent.set_mode('train')  # set to train
     optimizer = optim.Adam(agent.parameters(), lr=args.lr, eps=1e-5)
 
     # ALGO Logic: Storage setup
-    print(f"Image observation Shape: {envs.single_img_obs_dim}\n",
-          f"Proprioception observation Shape: {envs.single_proprioception_dim}\n",
-          f"Action Shape: {envs.action_dim}\n",
-          f"Agent input size: {agent.agent_input_size}\n")
-    
-    vis_obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_img_obs_dim[1:]).to(device)
-    vec_obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_proprioception_dim[1:]).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_dim[1:]).to(device)
+    print(f"Observation Shape: {envs.observation_shape}")
+    obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_shape[1:]).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_shape[1:]).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -257,21 +254,20 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs_dict = envs.reset()
-    next_vis_obs, next_vec_obs = next_obs_dict['image'].to(device), next_obs_dict['proprioception'].to(device)
+    next_obs = torch.Tensor(envs.reset()).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size  # ?? same as episodes? No!! episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
 
     # wandb
     config = dict(
         Name=args.env_name,
-        algorithm='PPO Discrete',
+        algorithm='PPO Continuous',
         num_updates=num_updates,
         lr=args.lr,
         gamma=args.gamma,
         alpha=args.ent_coef,
         batch_size=args.batch_size,
-        policy=args.policy,
+        deterministic=args.deterministic,
         sequence_len=args.sequence_len,
         assigned_reward=args.assigned_reward,
         random_policy=args.random_policy,
@@ -280,7 +276,7 @@ if __name__ == "__main__":
     resume = True if args.load_checkpoint else False
     name = args.final_name
     if args.collect_data and args.wandb:
-        wandb.init(project=args.env_name, entity='RoboSensai', config=config, resume=resume, name=name)
+        wandb.init(project=args.env_name, entity='jiayinsen', config=config, resume=resume, name=name)
     else:
         wandb.init(mode="disabled")
 
@@ -310,7 +306,7 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            vis_obs[step], vec_obs[step] = next_vis_obs, next_vec_obs
+            obs[step] = next_obs
             dones[step] = next_done
 
             ## ----- ALGO LOGIC: action logic ----- ##
@@ -318,7 +314,7 @@ if __name__ == "__main__":
             # transfer discrete actions to real actions; TODO: Logical problem about next_obs (terminal observation to query step action for the first action)
             if not args.expert_action and not args.random_policy:
                 with torch.no_grad():
-                    step_action, logprob, _, value = agent.get_action_and_value((next_vis_obs, next_vec_obs))
+                    step_action, logprob, _, value = agent.get_action_and_value(next_obs)
                     values[step] = value.flatten()
                 actions[step] = step_action
                 logprobs[step] = logprob
@@ -328,29 +324,24 @@ if __name__ == "__main__":
                 step_action = envs.random_actions()
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs_dict, reward, done, infos = envs.step(step_action)
-            next_vis_obs, next_vec_obs = next_obs_dict['image'], next_obs_dict['proprioception']
-            next_vis_obs = torch.Tensor(next_vis_obs).to(device)
-            next_vec_obs = torch.Tensor(next_vec_obs).to(device)
+            next_obs, reward, done, infos = envs.step(step_action)
+
             # rewards[step] = torch.tensor(reward).to(device).view(-1) # if reward is not tensor inside
             rewards[step] = reward.to(device).view(-1)
-            next_done = torch.Tensor(done).to(device)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
-            #####################################################################
-            ###==================Record all rewards information===============###
-            #####################################################################
-            pos_reward, act_penalty = infos['pos_reward'], infos['act_penalty']
+            # Record all rewards information
+            # pos_reward, act_penalty = infos['pos_reward'], infos['act_penalty']
 
             episode_rewards += reward
-            episode_pos_rewards += pos_reward
-            episode_act_penalties += act_penalty
+            # episode_pos_rewards += pos_reward
+            # episode_act_penalties += act_penalty
             
             terminal_index = done == 1
             terminal_nums = terminal_index.sum().item()
             # Compute the average episode rewards.
             if terminal_nums > 0:
                 i_episode += terminal_nums
-
                 update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                 update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
                 update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
@@ -360,11 +351,10 @@ if __name__ == "__main__":
                 episode_pos_rewards[terminal_index] = 0.
                 episode_act_penalties[terminal_index] = 0.
 
-                episode_reward = torch.mean(episode_rewards_box).item()
-                episode_pos_r = torch.mean(pos_r_box).item()
-                episode_act_p = torch.mean(act_p_box).item()
-                
-                episode_success_rate = torch.mean(episode_success_box).item()
+                episode_reward = torch.mean(episode_rewards_box[-i_episode:]).item()
+                episode_pos_r = torch.mean(pos_r_box[-i_episode:]).item()
+                episode_act_p = torch.mean(act_p_box[-i_episode:]).item()
+                episode_success_rate = torch.mean(episode_success_box[-i_episode:]).item()
 
                 if not args.quiet:
                     print(f"Global Steps:{global_step}/{args.total_timesteps}, Episode:{i_episode}, Success Rate:{episode_success_rate:.2f}, Reward:{episode_reward:.4f}," \
@@ -396,7 +386,7 @@ if __name__ == "__main__":
 
         ####----- Compute advantage for each state in the markov chain ----####
         with torch.no_grad():
-            next_value = agent.get_value((next_vis_obs, next_vec_obs)).reshape(1, -1)
+            next_value = agent.get_value(next_obs).reshape(1, -1)
             if args.gae:
                 advantages = torch.zeros_like(rewards).to(device)
                 lastgaelam = 0
@@ -423,24 +413,22 @@ if __name__ == "__main__":
                 advantages = returns - values
 
         # flatten the batch
-        b_vis_obs = vis_obs.reshape((-1,) + envs.single_img_obs_dim[1:])
-        b_vec_obs = vec_obs.reshape((-1,) + envs.single_proprioception_dim[1:])
+        b_obs = obs.reshape((-1,) + envs.observation_shape[1:])
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.action_dim[1:])
+        b_actions = actions.reshape((-1,) + envs.action_shape[1:])
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
 
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
-
         clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value((b_vis_obs[mb_inds], b_vec_obs[mb_inds]), b_actions[mb_inds].T)  # batch actions need to transpose for computation because it is easy for "zip" operation
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
