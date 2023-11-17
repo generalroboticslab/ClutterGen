@@ -104,31 +104,42 @@ class Agent(nn.Module):
         # Not train standard deviation, but only use linear schedular
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.action_shape)).to(self.device), requires_grad=True) # is_leaf problem for nn.parameters/must set to() within it
 
+        self.to(self.envs.obs_dtype)
+
 
     def get_value(self, x):
         return self.critic(x)
     
+    # MultivariateNormal does not support bfloat16
+    # def get_action_and_value(self, x, action=None):
+    #     action_mean = self.actor(x)
+    #     action_logstd = self.actor_logstd.expand_as(action_mean)
+    #     action_std = torch.exp(action_logstd)
+    #     cov_mat = torch.diag_embed(action_std)
+    #     probs = MultivariateNormal(action_mean, cov_mat)
+    #     if action is None:
+    #         action = action_mean if self.deterministic else probs.sample()
+    #     return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+
 
     def get_action_and_value(self, x, action=None):
         action_mean = self.actor(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
-        cov_mat = torch.diag_embed(action_std)
-        probs = MultivariateNormal(action_mean, cov_mat)
+        probs = Normal(action_mean, action_std)
         if action is None:
             action = action_mean if self.deterministic else probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
-
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+    
 
     def select_action(self, state):
-        state = state.to(self.device)  # size([sequence_len, state_dim]) --> size([1, sequence_len, state_dim])
-        action_mean = self.actor(state).sigmoid() # map mean value to [0, 1]
+        state = state.to(self.device) if state.device != self.device  # size([sequence_len, state_dim]) --> size([1, sequence_len, state_dim])
+        action_mean = self.actor(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
-        cov_mat = torch.diag_embed(action_std) # implicit assume that prediction_horizon and time_budget are independent
-        probs = MultivariateNormal(action_mean, cov_mat)
+        probs = Normal(action_mean, action_std)
         action = action_mean if self.deterministic else probs.sample()
-        return action.flatten()
+        return action
 
 
     def set_mode(self, mode='train'):
@@ -146,7 +157,7 @@ class Agent(nn.Module):
 
 
     # Load model parameters
-    def load_checkpoint(self, ckpt_path, evaluate=False, load_memory=True, map_location='cuda:0'):
+    def load_checkpoint(self, ckpt_path, evaluate=False, map_location='cuda:0'):
         print('Loading models from {}'.format(ckpt_path))
         if ckpt_path is not None:
             checkpoint = torch.load(ckpt_path, map_location=map_location)

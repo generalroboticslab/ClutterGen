@@ -84,8 +84,10 @@ celerybeat-schedule
 # Environments
 .env
 .venv
+.old_venv
 env/
 venv/
+old_venv/
 ENV/
 env.bak/
 venv.bak/
@@ -129,3 +131,8 @@ gym_env.py
 isaacgym/
 Gymnasium-Robotics/
 DexterousHands/
+assets/objects/partNet_mobility
+Grounded-Segment-Anything/
+assets/sem_checkpoints/
+dynamic_grasping_pybullet/
+Pointnet_Pointnet2_pytorch/

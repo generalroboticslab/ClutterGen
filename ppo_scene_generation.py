@@ -26,67 +26,33 @@ def parse_args():
     
     # Env hyper parameters
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True) # https://docs.python.org/3/library/argparse.html#:~:text=%27%3F%27.%20One%20argument,to%20illustrate%20this%3A
-    parser.add_argument('--object_name', type=str, default='cube', help="Target object to be grasped. Ex: cube")
-    parser.add_argument('--robot_config_name', type=str, default='ur5_robotiq', help="name of robot configs to load from grasputils. Ex: ur5_robotiq")
+    parser.add_argument('--object_pool_name', type=str, default='YCB', help="Target object to be grasped. Ex: cube")
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--num_trials', type=int, default=100)  # database length if have
-    parser.add_argument('--planner', type=str, default='birrt')
-    parser.add_argument('--path_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
-    # Isaac Gym parameters
-    parser.add_argument('--headless', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Run headless without creating a viewer window')
-    parser.add_argument('--nographics', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Disable graphics context creation, no viewer window is created, and no headless rendering is available')
-    parser.add_argument('--use_gpu_pipeline', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Disable graphics context creation, no viewer window is created, and no headless rendering is available')
-    parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
-    parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
-    parser.add_argument('--num_threads', type=int, default=0, help='Number of cores used by PhysX')
-    parser.add_argument('--subscenes', type=int, default=0, help='Number of PhysX subscenes to simulate in parallel')
-    parser.add_argument('--slices', type=int, help='Number of client threads that process env slices')
-
     # RoboSensai Env parameters
-    parser.add_argument('--task', type=str, default="P", help='Pushing Task Training')
-    parser.add_argument('--random_target_init', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Randomize goal pose')
-    parser.add_argument('--random_goal', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Randomize goal pose')
-    parser.add_argument('--random_target', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Randomize target pose')
-    parser.add_argument('--include_target_obs', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Whether target observation is included in the states')
-    parser.add_argument('--include_finger_vel', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Include finger discretized velocity into observation')
-    parser.add_argument('--use_world_frame_obs', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='The observation space in finger frame or world frame')
-    parser.add_argument('--use_abstract_contact_obs', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use human abstract observation')
-    parser.add_argument('--use_contact_torque', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use contact torque instead of contact location (default)')
-    parser.add_argument('--use_2D_contact', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use 2D contact observation')
-    parser.add_argument('--use_contact_force', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use contact torque instead of contact location (default)')
-    parser.add_argument('--filter_contact', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Mask out half of finger contact')
-    parser.add_argument('--constrain_ws', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Restrict the finger movement within a certain space')
-    parser.add_argument('--add_random_noise', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
-    parser.add_argument('--use_relative_goal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use relative goal position or global goal position as the target goal')
-    parser.add_argument('--contact_noise_v', type=float, default=0.01, help='Contact position noise range')
-    parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
+    parser.add_argument('--reward_pobj', type=float, default=10., help='Position reward weight')
+    parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
+    parser.add_argument('--maximum_steps', type=int, default=10)  # maximum steps trial for one object per episode
+    parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
+    parser.add_argument('--num_placing_objs', type=int, default=1)  # database length if have
+    parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='default data type')
     
-    parser.add_argument('--pos_weight', type=float, default=40., help='Position reward weight')
-    parser.add_argument('--ori_weight', type=float, default=0., help='Orientation reward weight')
-    parser.add_argument('--act_weight', type=float, default=0., help='Action penalty weight')
-    parser.add_argument('--draw_contact', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
-
-    parser.add_argument('--num_objects', type=int, default=1)  # database length if have
-    parser.add_argument('--maximum_steps', type=int, default=12)  # maximum steps trial for one episode
-    parser.add_argument('--random_select', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
-
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_folder', type=str, default='objects/ycb_objects_origin_at_center_vhacd', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='objects/ycb_objects_origin_at_center_vhacd', help="folder path that stores all urdf files")
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
-    parser.add_argument('--baseline_experiment_path', type=str, default='a_new_assets', help='use motion path in this file for the run')  # 'a_new_assets'
     parser.add_argument('--wandb', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--force_name', default=None, type=str)
 
     # Algorithm specific arguments
     parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
-    parser.add_argument("--teacher_critic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Include target observation in critic obs states but not actor states.")
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
-    parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
@@ -113,21 +79,15 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=123456, metavar='N', help='random seed (default: 123456)')
     parser.add_argument('--hidden_size', type=int, default=256, metavar='N', help='hidden size (default: 256)')
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
-    parser.add_argument('--load_checkpoint', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--checkpoint', type=str, default=None)
+    parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--expert_action', type=float, default=None, metavar='N', nargs='*', help='expert action run to see the variance')
     parser.add_argument('--sequence_len', type=int, default=10)
-    parser.add_argument('--assigned_reward', type=int, default=1) 
     parser.add_argument('--reward_steps', type=int, default=5000)
     parser.add_argument('--cpus', type=int, default=[], nargs='+', help="run environments on specified cpus")
     parser.add_argument("--torch_deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
 
     args = parser.parse_args()
-
-    # Using --nographics implies --headless
-    if args.nographics: args.headless = True
-    if args.slices is None: args.slices = args.subscenes
 
     # Training required attributes
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -141,57 +101,35 @@ def parse_args():
     if args.realtime:
         args.rendering = True
 
-    # Training flags check
-    if args.use_gpu_pipeline:
-        assert args.use_contact_torque is False, "Error: use_contact_torque only supports in CPU pipeline!"
-    else:
-        assert args.use_abstract_contact_obs is False, "Error: use_abstract_contact_obs only supports in GPU pipeline"
-
     # Uniformalize training name
-    additional = ''; additional += '_Pushing'
+    additional = ''
     ###--- suffix for final name ---###
     if args.use_lstm: additional += '_LSTM'
     elif args.use_transformer: additional += '_Transformer'
     else: additional += '_FC'
-    if args.use_gpu_pipeline: additional += '_GPU'
-    else: additional += '_CPU'
+    if args.checkpoint is not None: additional += '_FT'
     additional += '_Rand'
-    if args.random_goal: additional += '_goal'
-    if args.random_target: additional += '_target'
-    if args.random_target_init: additional += '_targInit'
-    additional += '_With'
-    if args.include_target_obs: additional += '_targetObs'
-    if args.include_finger_vel: additional += '_finVel'
-    if args.use_contact_force: additional += '_force'
-    additional += '_Use'
-    if args.use_world_frame_obs: additional += '_worldObs'
-    if args.use_contact_torque: additional += '_torqObs'
-    if args.use_abstract_contact_obs: additional += '_abstObs'
-    if args.use_2D_contact: additional += '_2dObs'
-    additional += '_Add'
-    if args.add_random_noise: additional += '_noise'
-    if args.filter_contact: additional += '_filter'
-    if args.constrain_ws: additional += '_limitws'
+    if args.random_select_pool: additional += '_pool'
+    if args.random_select_placing: additional += '_placing'
+    additional += '_Goal'
+    if args.num_placing_objs: additional += f'_{args.num_placing_objs}'
     additional += '_Weight'
-    if args.pos_weight > 0: additional += f'_pos{args.pos_weight}'
-    if args.ori_weight > 0: additional += f'_ori{args.ori_weight}'
-    if args.act_weight > 0: additional += f'_actP{args.act_weight}'
+    if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
+    if args.penalty > 0: additional += f'_ori{args.penalty}'
 
     args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
 
     if args.random_policy:  # final_name is in all file names: .csv / .json / trajectory / checkpoints
-        args.final_name = args.object_name + args.timer + additional.replace('-train', '-random_policy')
+        args.final_name = args.object_pool_name + args.timer + additional.replace('-train', '-random_policy')
     elif args.force_name:
         args.final_name = args.force_name + args.timer
-    elif args.load_checkpoint: # Resume training
-        args.final_name = args.checkpoint
     else: # Normal training
-        args.final_name = args.object_name + args.timer + additional  # only use final name
+        args.final_name = args.object_pool_name + args.timer + additional  # only use final name
     print(f"Uniform Name: {args.final_name}")
 
     ###### Saving Results ######
     # create result folder
-    args.result_dir = os.path.join(args.result_dir, args.object_name)
+    args.result_dir = os.path.join(args.result_dir, args.object_pool_name)
     if not os.path.exists(args.result_dir):
         os.makedirs(args.result_dir)
 
@@ -203,7 +141,7 @@ def parse_args():
 
     # create checkpoints folder; not create if use expert action
     args.checkpoint_dir = os.path.join(args.result_dir, 'checkpoints', args.final_name)
-    if args.collect_data and not args.expert_action and not os.path.exists(args.checkpoint_dir):
+    if args.collect_data and not os.path.exists(args.checkpoint_dir):
         os.makedirs(args.checkpoint_dir)
 
     # create trajectory folder
@@ -239,17 +177,23 @@ if __name__ == "__main__":
     # env and scene setup; TODO Input the aruments into HandemEnv
     envs = RoboSensaiBullet(args=args)
     agent = Agent(envs).to(device)
+    if args.checkpoint is not None:
+        checkpoint_folder = os.path.join(args.result_dir, 'checkpoints', args.checkpoint)
+        args.checkpoint_path = os.path.join(checkpoint_folder, args.checkpoint + '_' + args.index_episode)
+        assert os.path.exists(args.checkpoint_path), f"Checkpoint path {args.checkpoint_path} does not exist!"
+        agent.load_checkpoint(args.checkpoint_path, map_location=device)
+    agent = torch.compile(agent) # Speed up the model
     agent.set_mode('train')  # set to train
     optimizer = optim.Adam(agent.parameters(), lr=args.lr, eps=1e-5)
 
     # ALGO Logic: Storage setup
     print(f"Observation Shape: {envs.observation_shape}")
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_shape[1:]).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_shape[1:]).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_shape[1:], dtype=envs.obs_dtype).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_shape[1:], dtype=envs.obs_dtype).to(device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
+    rewards = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
+    dones = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
+    values = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -269,28 +213,26 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         deterministic=args.deterministic,
         sequence_len=args.sequence_len,
-        assigned_reward=args.assigned_reward,
         random_policy=args.random_policy,
-        expert_action=args.expert_action,
     )
-    resume = True if args.load_checkpoint else False
+
     name = args.final_name
     if args.collect_data and args.wandb:
-        wandb.init(project=args.env_name, entity='jiayinsen', config=config, resume=resume, name=name)
+        wandb.init(project=args.env_name, entity='jiayinsen', config=config, name=name)
     else:
         wandb.init(mode="disabled")
 
     # custom record information
-    episode_rewards = torch.zeros((args.num_envs, )).to(envs.device)
-    episode_pos_rewards = torch.zeros((args.num_envs, )).to(envs.device)
-    episode_ori_rewards = torch.zeros((args.num_envs, )).to(envs.device)
-    episode_act_penalties = torch.zeros((args.num_envs, )).to(envs.device)
+    episode_rewards = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
+    episode_pos_rewards = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
+    episode_ori_rewards = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
+    episode_act_penalties = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
 
-    episode_rewards_box = torch.zeros((args.reward_steps, )).to(envs.device)
-    episode_success_box = torch.zeros((args.reward_steps, )).to(envs.device)
-    pos_r_box = torch.zeros((args.reward_steps, )).to(envs.device)
-    ori_r_box = torch.zeros((args.reward_steps, )).to(envs.device)
-    act_p_box = torch.zeros((args.reward_steps, )).to(envs.device)
+    episode_rewards_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
+    episode_success_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
+    pos_r_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
+    ori_r_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
+    act_p_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
     best_acc = 0; i_episode = 0; mile_stone = 0
 
     # training
@@ -312,16 +254,14 @@ if __name__ == "__main__":
             ## ----- ALGO LOGIC: action logic ----- ##
             ## if not expert_action, normal training; Otherwise use only expert actions
             # transfer discrete actions to real actions; TODO: Logical problem about next_obs (terminal observation to query step action for the first action)
-            if not args.expert_action and not args.random_policy:
+            if args.random_policy:
+                step_action = envs.random_actions()
+            else:
                 with torch.no_grad():
                     step_action, logprob, _, value = agent.get_action_and_value(next_obs)
                     values[step] = value.flatten()
                 actions[step] = step_action
                 logprobs[step] = logprob
-            elif args.expert_action:
-                step_action = [args.expert_action] * args.num_envs
-            elif args.random_policy:
-                step_action = envs.random_actions()
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, infos = envs.step(step_action)
@@ -368,20 +308,18 @@ if __name__ == "__main__":
                         if i_episode >= args.reward_steps:  # episode success rate
                             wandb.log({'s_episodes': i_episode - args.reward_steps, 'reward/success_rate': episode_success_rate})
 
-                    if not args.expert_action:  # if expert action, it is not considered to save result
-                        if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
-                            best_acc = episode_success_rate;
-                            agent.save_checkpoint(folder_path=args.checkpoint_dir,
-                                                  folder_name=args.final_name, suffix='best')
-                            print(f'Now best accuracy is {best_acc * 100}%')
-                        if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
-                            agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
-                                                  suffix=str(i_episode))
-                            mile_stone = i_episode
+                    if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
+                        best_acc = episode_success_rate;
+                        agent.save_checkpoint(folder_path=args.checkpoint_dir,
+                                                folder_name=args.final_name, suffix='best')
+                        print(f'Now best accuracy is {best_acc * 100}%')
+                    if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
+                        agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
+                                                suffix=str(i_episode))
+                        mile_stone = i_episode
 
 
         ####----- force action to test variance; Skip the training process ----####
-        if args.expert_action: continue
         if args.random_policy: continue
 
         ####----- Compute advantage for each state in the markov chain ----####
@@ -474,7 +412,8 @@ if __name__ == "__main__":
                 if approx_kl > args.target_kl:
                     break
 
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+        # To float32 is because it does support for bfloat16 to numpy
+        y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
@@ -491,7 +430,7 @@ if __name__ == "__main__":
             print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
 
 
-    if args.collect_data and not args.expert_action:  # not expert action
+    if args.collect_data and not args.random_policy:  # not random policy or expert action
         agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name, suffix='last')  # last
     print('Process Over here')
     envs.close()
