@@ -25,13 +25,13 @@ def get_args():
     parser = argparse.ArgumentParser(description='Evaluate Handem Pushing Experiment')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument('--object_name', type=str, default='cube', help="Target object to be grasped. Ex: cube")
-    parser.add_argument('--specific_target', type=str, default=None) # the real grasp object
+    parser.add_argument('--object_pool_name', type=str, default='YCB', help="Object Pool. Ex: YCB, Partnet")
+    parser.add_argument('--specific_target', type=str, default=None)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='cube_11-10_19:19_Pushing_Transformer_GPU_Rand_goal_targInit_With_Use_Add_limitws_Weight_pos40.0') # also point to json file path
-    parser.add_argument('--index_episode', type=str, default='3400000')
+    parser.add_argument('--checkpoint', type=str, default='YCB_11-16_18:37_FC_Rand_Goal_2_Weight_rewardPobj10.0') # also point to json file path
+    parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
     parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
@@ -49,7 +49,7 @@ def get_args():
     parser.add_argument('--discrete_replay', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--real', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Using deterministic policy instead of normal")
+    parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Using deterministic policy instead of normal")
 
     parser.add_argument('--record_trajectory', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--replay', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -65,6 +65,7 @@ def get_args():
     parser.add_argument('--add_random_noise', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
     parser.add_argument('--contact_noise_v', type=float, default=0.01, help='Contact position noise range')
     parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
+    parser.add_argument('--seed', type=int, default=123456, help='Contact force noise range')
 
     # Granular Media
     parser.add_argument('--add_gms', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add Granular Media')
@@ -73,8 +74,8 @@ def get_args():
 
 
     eval_args = parser.parse_args()
-    eval_args.json_file_path = os.path.join(eval_args.result_dir, eval_args.object_name, 'Json', eval_args.checkpoint+'.json')
-    checkpoint_folder = os.path.join(eval_args.result_dir, eval_args.object_name, 'checkpoints', eval_args.checkpoint)
+    eval_args.json_file_path = os.path.join(eval_args.result_dir, eval_args.object_pool_name, 'Json', eval_args.checkpoint+'.json')
+    checkpoint_folder = os.path.join(eval_args.result_dir, eval_args.object_pool_name, 'checkpoints', eval_args.checkpoint)
     eval_args.checkpoint_path = os.path.join(checkpoint_folder, eval_args.checkpoint + '_' + eval_args.index_episode)
     
     restored_eval_args = eval_args.__dict__.copy()  # store eval_args to avoid overwrite
@@ -96,12 +97,10 @@ def get_args():
     # replace to another object
     # eval_args.target_list = ["tomato_soup_can", "bleach_cleanser", "cube", "mustard_bottle", "potted_meat_can", "power_drill", "sugar_box"]
     if eval_args.specific_target is not None:
-        # assert eval_args.specific_target in eval_args.target_list, f"Current object name {eval_args.specific_target} is not in {eval_args.target_list}"
-        eval_args.object_name = eval_args.specific_target
         eval_args.random_target = False
     
     # create result folder
-    eval_args.save_dir = os.path.join(eval_args.save_dir, eval_args.object_name)
+    eval_args.save_dir = os.path.join(eval_args.save_dir, eval_args.object_pool_name)
     if eval_args.collect_data and not os.path.exists(eval_args.save_dir):
         os.makedirs(eval_args.save_dir)
 
@@ -135,9 +134,6 @@ def get_args():
     if eval_args.collect_data and not os.path.exists(eval_args.csv_dir):
         os.makedirs(eval_args.csv_dir)
     eval_args.result_file_path = os.path.join(eval_args.csv_dir, eval_args.final_name + '.csv')
-
-    # A new asset file name
-    eval_args.save_to_assets_path = eval_args.baseline_experiment_path.replace('.csv', f'{eval_args.scene_suffix}.csv')
 
     if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.result_file_path):
         response = input(f"Find existing result file {eval_args.result_file_path}! Whether remove or not (y/n):")
@@ -186,7 +182,7 @@ if __name__ == "__main__":
     agent = None
     if eval_args.eval_result and not eval_args.random_policy:
         agent = Agent(envs).to(device)
-        agent.load_checkpoint(eval_args.checkpoint_path, load_memory=True, map_location="cuda:0")
+        agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
     # Evaluate checkpoint before replay
     avg_reward = 0.; num_success = 0; num_episodes = 0; iterations = 0; 
@@ -195,23 +191,21 @@ if __name__ == "__main__":
     episode_success_box = torch.zeros((eval_args.num_trials, ), device=envs.device, dtype=torch.float32)
     done = torch.zeros(eval_args.num_envs, device=envs.device, dtype=torch.float32)
 
-    if agent is not None: agent.set_mode('eval')  # to avoid batch_norm error if used in the future
-    
     with torch.no_grad():
         state = torch.Tensor(envs.reset()).to(device)
     print('Evaluating:', f'{eval_args.num_trials} trials') # start evaluation
 
-    while num_episodes < eval_args.num_trials or (hasattr(envs, "viewer") and not gym.query_viewer_has_closed(envs.viewer)):
+    while num_episodes < eval_args.num_trials:
         ################ agent evaluation ################
         if eval_args.random_policy:
             action = envs.random_actions()
             probs = None
         else:
-            action = agent.select_action(state)
+            with torch.no_grad():
+                action = agent.select_action(state)
 
         next_state, reward, done, infos = envs.step(action)
-        print(envs.his_steps)
-        time.sleep(3)
+
         state = next_state
         iterations += 1
 

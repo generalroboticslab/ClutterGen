@@ -132,8 +132,8 @@ class Agent(nn.Module):
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
     
 
-    def select_action(self, state):
-        state = state.to(self.device) if state.device != self.device  # size([sequence_len, state_dim]) --> size([1, sequence_len, state_dim])
+    def select_action(self, x):
+        x = x.to(self.device) if x.device != self.device else x  # size([sequence_len, state_dim]) --> size([1, sequence_len, state_dim])
         action_mean = self.actor(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
