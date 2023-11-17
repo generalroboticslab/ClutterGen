@@ -110,6 +110,7 @@ class Agent(nn.Module):
     def get_value(self, x):
         return self.critic(x)
     
+    
     # MultivariateNormal does not support bfloat16
     # def get_action_and_value(self, x, action=None):
     #     action_mean = self.actor(x)

@@ -87,7 +87,8 @@ class RoboSensaiBullet:
         self.default_scene_name_id["table"] = self.tableId
         # Default region using table position and table half extents
         self.default_region = [[-self.tableHalfExtents[0], -self.tableHalfExtents[1], self.tableHalfExtents[2]*2],
-                                 [self.tableHalfExtents[0], self.tableHalfExtents[1], self.tableHalfExtents[2]*2+0.2]]
+                               [self.tableHalfExtents[0], self.tableHalfExtents[1], self.tableHalfExtents[2]*2+0.2]]
+        self.default_region_tensor = self.to_torch(sum(self.default_region, []))
         # self.default_region = [[-1., -1., 0.], [1., 1., 1.5]]
         self.prepare_area = [[-1001., -1001., 0.], [-1000, -1000, 1.5]]
         self.default_scene_points = 2048
@@ -259,9 +260,8 @@ class RoboSensaiBullet:
         self.obj_done = True
         self.act_scene_pc = self.default_scene_pc.copy()
         self.act_scene_pc_feature = self.default_scene_pc_feature.clone()
-        self.obj_vel = [0.] * 6
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
-        self.last_raw_action = [0.] * 6
+        self.last_raw_action = torch.zeros(6, dtype=self.obs_dtype, device=self.device)
         # Rewards
         self.accm_vel_reward = 0.
         self.previous_reward = 0.
@@ -304,10 +304,11 @@ class RoboSensaiBullet:
             self.selected_obj_id = self.obj_name_id[self.selected_obj_name]
             self.selected_obj_pc = self.obj_name_pc[self.selected_obj_name]
             self.selected_obj_pc_feature = self.obj_name_pc_feature[self.selected_obj_name]
-        bbox_region = sum(self.default_region, [])
-        his_traj = sum(self.traj_history, [])
+        
+        # Convert history to tensor
+        his_traj = self.to_torch(self.traj_history, dtype=self.obs_dtype).flatten()
 
-        self.last_observation = self.to_torch([*self.act_scene_pc_feature, *self.selected_obj_pc_feature, *bbox_region, *self.last_raw_action, *his_traj])
+        self.last_observation = torch.cat([self.act_scene_pc_feature, self.selected_obj_pc_feature, self.default_region_tensor, self.last_raw_action, his_traj])
         
         return self.last_observation.unsqueeze(0)
 
