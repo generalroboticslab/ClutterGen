@@ -29,6 +29,7 @@ class RoboSensaiBullet:
         self.args = args
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.obs_dtype = torch.bfloat16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else torch.float32
+        self.rng = np.random.default_rng(args.seed if hasattr(args, "seed") else None)
         self._init_simulator()
         self.update_objects_back_pool()
         self.load_world(num_objects=self.args.num_pool_objs, 
@@ -56,14 +57,20 @@ class RoboSensaiBullet:
             "mustard_bottle": 1,
             "bowl": 1,
             "ball": 1,
-            "banana": 1,
-            "bleach_cleanser": 1,
-            "mug": 1,
-            "cracker_box": 1,
+            "potted_meat_can": 1,
+            "tomato_soup_can": 1,
+            "master_chef_can": 1,
             "pitcher_base": 1,
-            "power_drill": 1,
             "pentagram": 1,
-            "cuboid": 1
+            "cuboid": 1,
+            "cube": 1,
+            "cube_arrow": 1,
+            "banana": 1,
+            "mug": 1,
+            "bleach_cleanser": 1,
+            "cracker_box": 1,
+            "sugar_box": 1,
+            # "power_drill": 1, # Power drill is too difficult to place need 100 steps to be stable
         }
         self.obj_back_pool_name = np.array(list(self.obj_categories.keys()))
         self.obj_back_pool_indexes_nums = np.array(list(self.obj_categories.values()))
@@ -108,19 +115,19 @@ class RoboSensaiBullet:
         self.obj_name_id = {}; init_region = init_region if init_region is not None else self.default_region
         self.obj_name_pc = {}; self.obj_name_pc_feature = {}
         if random: # Random choose object categories from the pool and their index
-            obj_back_pool_indexes = np.random.choice(np.arange(len(self.obj_back_pool_name)), num_objects, replace=False)
+            obj_back_pool_indexes = self.rng.choice(np.arange(len(self.obj_back_pool_name)), num_objects, replace=False)
             objects_act_pool_name = self.obj_back_pool_name[obj_back_pool_indexes]
-            objects_act_pool_indexes = np.random.randint(self.obj_back_pool_indexes_nums[obj_back_pool_indexes])
+            objects_act_pool_indexes = self.rng.integers(self.obj_back_pool_indexes_nums[obj_back_pool_indexes])
         else:
             objects_act_pool_name = self.obj_back_pool_name[:num_objects]
             objects_act_pool_indexes = np.zeros(num_objects, dtype=np.int32)
 
         for i, obj_name in enumerate(objects_act_pool_name):
             obj_urdf_file = f"{self.args.asset_root}/{self.args.object_pool_folder}/{obj_name}/{objects_act_pool_indexes[i]}/mobility.urdf"
-            assert os.path.exists(obj_urdf_file), f"Object {obj_name} does not exist!"
+            assert os.path.exists(obj_urdf_file), f"Object {obj_name} does not exist! Given path: {obj_urdf_file}"
             
             try: 
-                basePosition, baseOrientation = np.random.uniform(*init_region), p.getQuaternionFromEuler([np.random.uniform(0., np.pi)]*3)
+                basePosition, baseOrientation = self.rng.uniform(*init_region), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
                 object_id = self.loadURDF(f"{self.args.asset_root}/{self.args.object_pool_folder}/{obj_name}/{objects_act_pool_indexes[i]}/mobility.urdf", 
                                         basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=default_scaling)  # Load an object at position [0, 0, 1]
                 self.obj_name_id[f"{obj_name}_{objects_act_pool_indexes[i]}"] = object_id
@@ -133,6 +140,7 @@ class RoboSensaiBullet:
             for obj_name, obj_pc in self.obj_name_pc.items(): # Extract the feature for each object
                 self.obj_name_pc_feature[obj_name] = self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.obs_dtype)
         self.num_pool_objs = len(self.obj_name_id)
+        self.args.num_placing_objs = min(self.args.num_placing_objs, self.num_pool_objs)
         self.reset_unplaced_objs()
 
     
@@ -183,13 +191,15 @@ class RoboSensaiBullet:
         reward = self.compute_reward() # Must compute reward before observation since we use the velocity to compute reward
         done = self.compute_done()
         # Success Visualization here since observation needs to be reset. Only for evaluation!
-        if (done and self.success_buf) and (self.args.rendering):
-            print(f"Success Placement! | Stable steps: {self.his_steps}")
-            time.sleep(3.)
+        if self.args.rendering:
+            print(f"Obj Name: {self.selected_obj_name} | Stable Steps: {self.his_steps}")
+            if done and self.success_buf:
+                print(f"Successfully Place {self.selected_obj_name}! | Stable steps: {self.his_steps}")
+                time.sleep(3.)
 
         observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
 
-        # Reset placed object pose | if reset, the placed_obj_poses will be empty 
+        # Reset placed object pose | when reset, the placed_obj_poses will be empty 
         for obj_name, obj_pose in self.placed_obj_poses.items():
             pu.set_pose(self.obj_name_id[obj_name], obj_pose, client_id=self.client_id)
 
@@ -199,7 +209,7 @@ class RoboSensaiBullet:
     def reset(self):
         # Place all objects to the prepare area
         for obj_name in self.obj_name_id.keys():
-            pu.set_pose(body=self.obj_name_id[obj_name], pose=(np.random.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+            pu.set_pose(body=self.obj_name_id[obj_name], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
         self.reset_unplaced_objs()
         # Reset Training buffer and update the start observation for the next episode
         self.reset_buffer()
@@ -242,7 +252,9 @@ class RoboSensaiBullet:
         self.args.num_placing_objs = self.args.num_placing_objs if hasattr(self.args, "num_placing_objs") else 1
         self.args.max_traj_history_len = self.args.max_traj_history_len if hasattr(self.args, "max_traj_history_len") else 240
         self.args.reward_pobj = self.args.reward_pobj if hasattr(self.args, "reward_pobj") else 10
-        self.maximum_steps = self.args.maximum_steps * self.args.num_placing_objs if hasattr(self.args, "maximum_steps") else 128
+        self.args.vel_reward_scale = self.args.vel_reward_scale if hasattr(self.args, "vel_reward_scale") else 0.005
+        self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
+        self.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         # Buffer does not need to be reset
         self.success_buf = self.to_torch([0.]) # Only read inside when done is true
 
@@ -264,14 +276,13 @@ class RoboSensaiBullet:
         self.last_raw_action = torch.zeros(6, dtype=self.obs_dtype, device=self.device)
         # Rewards
         self.accm_vel_reward = 0.
-        self.previous_reward = 0.
         # Scene
         self.placed_obj_poses = {}
 
     
     def reset_unplaced_objs(self):
         if self.args.random_select_placing:
-            unplaced_objs_name = np.random.choice(list(self.obj_name_id.keys()), self.args.num_placing_objs, replace=False)
+            unplaced_objs_name = self.rng.choice(list(self.obj_name_id.keys()), self.args.num_placing_objs, replace=False)
         else:
             unplaced_objs_name = list(self.obj_name_id.keys())[:self.args.num_placing_objs]
         self.unplaced_objs_name_id = {obj_name: self.obj_name_id[obj_name] for obj_name in unplaced_objs_name}
@@ -300,7 +311,7 @@ class RoboSensaiBullet:
         if self.obj_done:
             self.obj_done = False
             # Always start from random picked object
-            self.selected_obj_name = np.random.choice(list(self.unplaced_objs_name_id.keys()))
+            self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name_id.keys()))
             self.selected_obj_id = self.obj_name_id[self.selected_obj_name]
             self.selected_obj_pc = self.obj_name_pc[self.selected_obj_name]
             self.selected_obj_pc_feature = self.obj_name_pc_feature[self.selected_obj_name]
@@ -314,17 +325,17 @@ class RoboSensaiBullet:
 
 
     def compute_reward(self):
-        vel_reward = self.accm_vel_reward
-        self.previous_reward = self.accm_vel_reward
-        if self.his_steps <= 10: # Jump to the next object, object is stable within 10 simulation steps
-            self.obj_done = True
+        self.moving_steps += 1
+        vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
+        if self.his_steps <= self.args.max_stable_steps: # Jump to the next object, object is stable within 10 simulation steps
+            self.obj_done = True; self.moving_steps = 0
             self.unplaced_objs_name_id.pop(self.selected_obj_name)
             
             # Record the successful object pose
             selected_obj_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
             self.placed_obj_poses[self.selected_obj_name] = selected_obj_pose
-            vel_reward = max(100, self.args.reward_pobj * self.args.num_placing_objs) if len(self.placed_obj_poses) >= self.args.num_placing_objs \
-                         else self.args.reward_pobj
+            vel_reward += max(100, self.args.reward_pobj * self.args.num_placing_objs) if len(self.placed_obj_poses) >= self.args.num_placing_objs \
+                          else self.args.reward_pobj
             # Update the scene observation | transform the selected object point cloud to world frame using the current pose
             transformed_selected_obj_pc = np.array([p.multiplyTransforms(selected_obj_pose[0], selected_obj_pose[1], point, [0., 0., 0., 1.])[0] for point in self.selected_obj_pc])
             # transformed_selected_obj_pc = tf_apply(self.to_torch(selected_obj_pose[1]), self.to_torch(selected_obj_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
@@ -338,9 +349,8 @@ class RoboSensaiBullet:
         
 
     def compute_done(self): # The whole episode done
-        self.moving_steps += 1
-        # Fail condition
-        if self.moving_steps >= self.maximum_steps:
+        # Failed condition
+        if self.moving_steps >= self.max_trials:
             self.done = True
             self.success_buf[0] = 0
         # Goal condition
@@ -396,7 +406,7 @@ class RoboSensaiBullet:
         elif object_type == p.GEOM_BOX:
             # object_mesh_scale is object dimension if object_type is GEOM_BOX
             object_halfExtents = np.array(object_mesh_scale) / 2
-            return np.random.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
+            return self.rng.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
         elif object_type == p.GEOM_CYLINDER:
             raise NotImplementedError
 
@@ -425,7 +435,7 @@ if __name__=="__main__":
     args.default_scaling = 0.5
     args.realtime = True
     args.force_threshold = 20.
-    args.vel_threshold = [1/240, np.pi/2400] # 1m/s^2 and 18 degree/s^2
+    args.vel_threshold = [1/240, np.pi/2400] # Probably need to compute acceleration threshold!
 
     env = RoboSensaiBullet(args)
 
@@ -437,7 +447,7 @@ if __name__=="__main__":
     o3d.visualization.draw_geometries([pcd, coord_frame])
 
     while True:
-        random_action = env.to_torch(np.random.uniform(-1., 1., size=(1, 6)))
+        random_action = env.to_torch(env.rng.uniform(-1., 1., size=(1, 6)))
         env.step(random_action)
 
     # env.step_manual()

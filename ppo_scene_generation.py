@@ -32,15 +32,17 @@ def parse_args():
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
     # RoboSensai Env parameters
-    parser.add_argument('--reward_pobj', type=float, default=10., help='Position reward weight')
-    parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
-    parser.add_argument('--maximum_steps', type=int, default=10)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
     parser.add_argument('--num_placing_objs', type=int, default=1)  # database length if have
     parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='default data type')
-    
+    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
+    parser.add_argument("--max_stable_steps", type=int, default=50, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument('--reward_pobj', type=float, default=100., help='Position reward weight')
+    parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
+    parser.add_argument('--vel_reward_scale', type=float, default=0.005, help='scaler for the velocity reward')
+
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
     parser.add_argument('--object_pool_folder', type=str, default='objects/ycb_objects_origin_at_center_vhacd', help="folder path that stores all urdf files")
@@ -55,7 +57,7 @@ def parse_args():
     parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -90,6 +92,7 @@ def parse_args():
     args = parser.parse_args()
 
     # Training required attributes
+    args.num_steps = args.num_steps * args.num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
 
@@ -113,6 +116,7 @@ def parse_args():
     if args.random_select_placing: additional += '_placing'
     additional += '_Goal'
     if args.num_placing_objs: additional += f'_{args.num_placing_objs}'
+    if args.max_stable_steps: additional += f'_maxstable{args.max_stable_steps}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
     if args.penalty > 0: additional += f'_ori{args.penalty}'
@@ -182,7 +186,7 @@ if __name__ == "__main__":
         args.checkpoint_path = os.path.join(checkpoint_folder, args.checkpoint + '_' + args.index_episode)
         assert os.path.exists(args.checkpoint_path), f"Checkpoint path {args.checkpoint_path} does not exist!"
         agent.load_checkpoint(args.checkpoint_path, map_location=device)
-    agent = torch.compile(agent) # Speed up the model
+    # agent = torch.compile(agent) # Speed up the model
     agent.set_mode('train')  # set to train
     optimizer = optim.Adam(agent.parameters(), lr=args.lr, eps=1e-5)
 

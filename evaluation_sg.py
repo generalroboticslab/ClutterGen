@@ -30,7 +30,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='YCB_11-16_18:37_FC_Rand_Goal_2_Weight_rewardPobj10.0') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='YCB_11-21_02:33_FC_Rand_Goal_10_mxstable50_Weight_rewardPobj100.0') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -72,6 +72,10 @@ def get_args():
     parser.add_argument('--add_sides_shelf', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add bucket for Granular Media')
     parser.add_argument('--num_gms', type=int, default=1000)
 
+    # RoboSensai Bullet parameters
+    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--num_placing_objs', type=int, default=None)  # database length if have
+
 
     eval_args = parser.parse_args()
     eval_args.json_file_path = os.path.join(eval_args.result_dir, eval_args.object_pool_name, 'Json', eval_args.checkpoint+'.json')
@@ -80,8 +84,12 @@ def get_args():
     
     restored_eval_args = eval_args.__dict__.copy()  # store eval_args to avoid overwrite
 
-    with open(eval_args.json_file_path, 'r') as json_obj:
+    with open(eval_args.json_file_path, 'r') as json_obj: # Read the training args
         args_json = json.load(json_obj)
+
+    # Keep the training args if evaluation args is None
+    if eval_args.num_placing_objs is None: restored_eval_args['num_placing_objs'] = args_json['num_placing_objs']
+    
     eval_args.__dict__.update(args_json) # store in train_args
     eval_args.__dict__.update(restored_eval_args) # overwrite by eval_args to become real eval_args
 
