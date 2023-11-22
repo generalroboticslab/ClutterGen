@@ -19,6 +19,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from multi_envs import *
+
 
 def parse_args():
     # fmt: off
@@ -179,8 +181,10 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env and scene setup; TODO Input the aruments into HandemEnv
-    envs = RoboSensaiBullet(args=args)
-    agent = Agent(envs).to(device)
+    # envs = RoboSensaiBullet(args=args)
+    envs = create_multi_envs(args, 'spawn')
+    temp_env = envs.get_attr('env')[0]
+    agent = Agent(temp_env).to(device)
     if args.checkpoint is not None:
         checkpoint_folder = os.path.join(args.result_dir, 'checkpoints', args.checkpoint)
         args.checkpoint_path = os.path.join(checkpoint_folder, args.checkpoint + '_' + args.index_episode)
@@ -191,13 +195,13 @@ if __name__ == "__main__":
     optimizer = optim.Adam(agent.parameters(), lr=args.lr, eps=1e-5)
 
     # ALGO Logic: Storage setup
-    print(f"Observation Shape: {envs.observation_shape}")
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_shape[1:], dtype=envs.obs_dtype).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_shape[1:], dtype=envs.obs_dtype).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs), dtype=envs.obs_dtype).to(device)
+    print(f"Observation Shape: {temp_env.observation_shape}")
+    obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.observation_shape[1:], dtype=temp_env.tensor_dtype).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=temp_env.tensor_dtype).to(device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+    rewards = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+    dones = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+    values = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -227,16 +231,16 @@ if __name__ == "__main__":
         wandb.init(mode="disabled")
 
     # custom record information
-    episode_rewards = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
-    episode_pos_rewards = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
-    episode_ori_rewards = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
-    episode_act_penalties = torch.zeros((args.num_envs, ), dtype=envs.obs_dtype).to(envs.device)
+    episode_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+    episode_pos_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+    episode_ori_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+    episode_act_penalties = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
 
-    episode_rewards_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
-    episode_success_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
-    pos_r_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
-    ori_r_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
-    act_p_box = torch.zeros((args.reward_steps, ), dtype=envs.obs_dtype).to(envs.device)
+    episode_rewards_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
+    episode_success_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
+    pos_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
+    ori_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
+    act_p_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
     best_acc = 0; i_episode = 0; mile_stone = 0
 
     # training
@@ -270,18 +274,17 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, infos = envs.step(step_action)
 
-            # rewards[step] = torch.tensor(reward).to(device).view(-1) # if reward is not tensor inside
-            rewards[step] = reward.to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
-
+            rewards[step] = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
+            
             # Record all rewards information
             # pos_reward, act_penalty = infos['pos_reward'], infos['act_penalty']
 
-            episode_rewards += reward
+            episode_rewards += rewards[step]
             # episode_pos_rewards += pos_reward
             # episode_act_penalties += act_penalty
             
-            terminal_index = done == 1
+            terminal_index = next_done == 1
             terminal_nums = terminal_index.sum().item()
             # Compute the average episode rewards.
             if terminal_nums > 0:
@@ -289,7 +292,10 @@ if __name__ == "__main__":
                 update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                 update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
                 update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
-                update_tensor_buffer(episode_success_box, envs.success_buf[terminal_index])
+                
+                terminal_ids = terminal_index.nonzero().flatten()
+                success_buf = torch.Tensor([infos[id]['success'] for id in terminal_ids]).to(device)
+                update_tensor_buffer(episode_success_box, success_buf)
 
                 episode_rewards[terminal_index] = 0.
                 episode_pos_rewards[terminal_index] = 0.
@@ -355,9 +361,9 @@ if __name__ == "__main__":
                 advantages = returns - values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.observation_shape[1:])
+        b_obs = obs.reshape((-1,) + temp_env.observation_shape[1:])
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.action_shape[1:])
+        b_actions = actions.reshape((-1,) + temp_env.action_shape[1:])
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)

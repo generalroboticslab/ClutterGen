@@ -193,7 +193,7 @@ if __name__ == "__main__":
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
     # Evaluate checkpoint before replay
-    avg_reward = 0.; num_success = 0; num_episodes = 0; iterations = 0; 
+    avg_reward = 0.; num_success = 0; num_episodes = 0 
     episode_rewards = torch.zeros((eval_args.num_envs, ), device=envs.device, dtype=torch.float32)
     episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=envs.device, dtype=torch.float32)
     episode_success_box = torch.zeros((eval_args.num_trials, ), device=envs.device, dtype=torch.float32)
@@ -214,9 +214,10 @@ if __name__ == "__main__":
 
         next_state, reward, done, infos = envs.step(action)
 
-        state = next_state
-        iterations += 1
+        next_state, done = torch.Tensor(next_state).to(device), torch.Tensor(done).to(device)
+        reward = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
 
+        state = next_state
         episode_rewards += reward
         
         terminal_index = done == 1

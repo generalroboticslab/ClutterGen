@@ -104,7 +104,7 @@ class Agent(nn.Module):
         # Not train standard deviation, but only use linear schedular
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.action_shape)).to(self.device), requires_grad=True) # is_leaf problem for nn.parameters/must set to() within it
 
-        self.to(self.envs.obs_dtype)
+        self.to(self.envs.tensor_dtype)
 
 
     def get_value(self, x):

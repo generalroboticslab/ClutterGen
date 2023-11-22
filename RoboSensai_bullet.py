@@ -28,7 +28,8 @@ class RoboSensaiBullet:
     def __init__(self, args=None) -> None:
         self.args = args
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.obs_dtype = torch.bfloat16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else torch.float32
+        self.numpy_dtype = np.float16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else np.float32
+        self.tensor_dtype = torch.bfloat16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else torch.float32
         self.rng = np.random.default_rng(args.seed if hasattr(args, "seed") else None)
         self._init_simulator()
         self.update_objects_back_pool()
@@ -95,7 +96,7 @@ class RoboSensaiBullet:
         # Default region using table position and table half extents
         self.default_region = [[-self.tableHalfExtents[0], -self.tableHalfExtents[1], self.tableHalfExtents[2]*2],
                                [self.tableHalfExtents[0], self.tableHalfExtents[1], self.tableHalfExtents[2]*2+0.2]]
-        self.default_region_tensor = self.to_torch(sum(self.default_region, []))
+        self.default_region_np = self.to_numpy(sum(self.default_region, []))
         # self.default_region = [[-1., -1., 0.], [1., 1., 1.5]]
         self.prepare_area = [[-1001., -1001., 0.], [-1000, -1000, 1.5]]
         self.default_scene_points = 2048
@@ -105,10 +106,10 @@ class RoboSensaiBullet:
             if name == "plane": continue # Plane needs to use default region to sample (will do this later)
             object_pc_local_frame = self.get_link_pc_from_id(id, num_points=self.default_scene_points)
             object_pos, object_quat = pu.get_body_pose(id, client_id=self.client_id)
-            object_pc_world_frame = np.array([p.multiplyTransforms(object_pos, object_quat, point, [0., 0., 0., 1.])[0] for point in object_pc_local_frame])
+            object_pc_world_frame = self.to_numpy([p.multiplyTransforms(object_pos, object_quat, point, [0., 0., 0., 1.])[0] for point in object_pc_local_frame])
             default_scene_pc.append(object_pc_world_frame)
         self.default_scene_pc = np.concatenate(default_scene_pc, axis=0)
-        self.default_scene_pc_feature = self.pc_extractor(self.to_torch(self.default_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.obs_dtype)
+        self.default_scene_pc_feature = self.pc_extractor(self.to_torch(self.default_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
 
 
     def load_objects(self, num_objects=10, random=True, default_scaling=0.5, init_region=None):
@@ -138,7 +139,7 @@ class RoboSensaiBullet:
         # Pre-extract the feature for each object and store here 
         with torch.no_grad():
             for obj_name, obj_pc in self.obj_name_pc.items(): # Extract the feature for each object
-                self.obj_name_pc_feature[obj_name] = self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.obs_dtype)
+                self.obj_name_pc_feature[obj_name] = self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
         self.num_pool_objs = len(self.obj_name_id)
         self.args.num_placing_objs = min(self.args.num_placing_objs, self.num_pool_objs)
         self.reset_unplaced_objs()
@@ -156,7 +157,7 @@ class RoboSensaiBullet:
         self.failed_objs = []; headers = ["Type", "Env ID", "Name", "ID", "Value"]
 
         for obj_name, obj_id in self.obj_name_id.items():
-            obj_vel = pu.getObjVelocity(obj_id)
+            obj_vel = pu.getObjVelocity(obj_id, client_id=self.client_id)
             if (obj_vel[:3].__abs__() > self.args.vel_threshold[0]).any() \
                 or (obj_vel[3:].__abs__() > self.args.vel_threshold[1]).any():
                 
@@ -178,7 +179,7 @@ class RoboSensaiBullet:
         for self.his_steps in range(self.args.max_traj_history_len):
             self.simstep(1/240)
             obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-            obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True)
+            obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
             # Update the trajectory history
             self.traj_history[self.his_steps] = obj_pos + obj_quat + obj_vel.tolist()
             # Accumulate velocity reward
@@ -193,9 +194,9 @@ class RoboSensaiBullet:
         # Success Visualization here since observation needs to be reset. Only for evaluation!
         if self.args.rendering:
             print(f"Obj Name: {self.selected_obj_name} | Stable Steps: {self.his_steps}")
-            if done and self.success_buf:
+            if done and self.info['success'] == 1:
                 print(f"Successfully Place {self.selected_obj_name}! | Stable steps: {self.his_steps}")
-                time.sleep(3.)
+                # time.sleep(3.)
 
         observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
 
@@ -203,7 +204,7 @@ class RoboSensaiBullet:
         for obj_name, obj_pose in self.placed_obj_poses.items():
             pu.set_pose(self.obj_name_id[obj_name], obj_pose, client_id=self.client_id)
 
-        return observation, reward, done, None
+        return observation, reward, done, self.info
 
 
     def reset(self):
@@ -256,7 +257,7 @@ class RoboSensaiBullet:
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
         self.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         # Buffer does not need to be reset
-        self.success_buf = self.to_torch([0.]) # Only read inside when done is true
+        self.info = {'success': 0.}
 
     
     def _init_pc_extractor(self):
@@ -271,9 +272,9 @@ class RoboSensaiBullet:
         # Observations
         self.obj_done = True
         self.act_scene_pc = self.default_scene_pc.copy()
-        self.act_scene_pc_feature = self.default_scene_pc_feature.clone()
+        self.act_scene_pc_feature = self.default_scene_pc_feature.copy()
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
-        self.last_raw_action = torch.zeros(6, dtype=self.obs_dtype, device=self.device)
+        self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
         # Scene
@@ -290,13 +291,13 @@ class RoboSensaiBullet:
         
     def convert_actions(self, action):
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
-        action = action.squeeze(dim=0).sigmoid() # Map action to (0, 1)
+        action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
         action[3:5] = 0. # No x,y rotation
-        self.last_raw_action = action.clone()
+        self.last_raw_action = action.copy()
         
         # action = [x, y, z, roll, pitch, yaw]
         placed_bbox = self.last_observation[self.placed_region_slice]
-        step_action_xyz = (action[:3] * (placed_bbox[3:] - placed_bbox[:3]) + placed_bbox[:3]).cpu().tolist()
+        step_action_xyz = (action[:3] * (placed_bbox[3:] - placed_bbox[:3]) + placed_bbox[:3]).tolist()
         step_action_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
 
         if self.args.rendering and not hasattr(self, "region_vis_id"):
@@ -317,11 +318,11 @@ class RoboSensaiBullet:
             self.selected_obj_pc_feature = self.obj_name_pc_feature[self.selected_obj_name]
         
         # Convert history to tensor
-        his_traj = self.to_torch(self.traj_history, dtype=self.obs_dtype).flatten()
+        his_traj = self.to_numpy(self.traj_history).flatten()
 
-        self.last_observation = torch.cat([self.act_scene_pc_feature, self.selected_obj_pc_feature, self.default_region_tensor, self.last_raw_action, his_traj])
+        self.last_observation = np.concatenate([self.act_scene_pc_feature, self.selected_obj_pc_feature, self.default_region_np, self.last_raw_action, his_traj])
         
-        return self.last_observation.unsqueeze(0)
+        return self.last_observation
 
 
     def compute_reward(self):
@@ -337,13 +338,14 @@ class RoboSensaiBullet:
             vel_reward += max(100, self.args.reward_pobj * self.args.num_placing_objs) if len(self.placed_obj_poses) >= self.args.num_placing_objs \
                           else self.args.reward_pobj
             # Update the scene observation | transform the selected object point cloud to world frame using the current pose
-            transformed_selected_obj_pc = np.array([p.multiplyTransforms(selected_obj_pose[0], selected_obj_pose[1], point, [0., 0., 0., 1.])[0] for point in self.selected_obj_pc])
+            transformed_selected_obj_pc = self.to_numpy([p.multiplyTransforms(selected_obj_pose[0], selected_obj_pose[1], point, [0., 0., 0., 1.])[0] for point in self.selected_obj_pc])
             # transformed_selected_obj_pc = tf_apply(self.to_torch(selected_obj_pose[1]), self.to_torch(selected_obj_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
             self.act_scene_pc = np.concatenate([self.act_scene_pc, transformed_selected_obj_pc], axis=0)
+            # Run one inference needs ~0.5s!
             with torch.no_grad():
-                self.act_scene_pc_feature = self.pc_extractor(self.to_torch(self.act_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.obs_dtype)
+                self.act_scene_pc_feature = self.pc_extractor(self.to_torch(self.act_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).cpu().numpy()
 
-        self.last_reward = self.to_torch([vel_reward])
+        self.last_reward = vel_reward
 
         return self.last_reward
         
@@ -352,12 +354,12 @@ class RoboSensaiBullet:
         # Failed condition
         if self.moving_steps >= self.max_trials:
             self.done = True
-            self.success_buf[0] = 0
+            self.info['success'] = 0.
         # Goal condition
         if len(self.placed_obj_poses) >= self.args.num_placing_objs:
             self.done = True
-            self.success_buf[0] = 1
-        return self.to_torch([self.done])
+            self.info['success'] = 1.
+        return self.done
         
 
     ######################################
@@ -388,7 +390,7 @@ class RoboSensaiBullet:
         point_cloud = mesh.sample_points_uniformly(number_of_points=num_points)
 
         # Convert the Open3D point cloud to a NumPy array
-        point_cloud_np = np.asarray(point_cloud.points) * np.array(mesh_scaling)
+        point_cloud_np = np.asarray(point_cloud.points) * self.to_numpy(mesh_scaling)
 
         if visualize:
             pcd = o3d.geometry.PointCloud()
@@ -399,21 +401,26 @@ class RoboSensaiBullet:
     
 
     def get_link_pc_from_id(self, obj_id, link_index=-1, num_points=1024):
-        object_info = pu.get_link_collision_shape(obj_id, link_index)
+        object_info = pu.get_link_collision_shape(obj_id, link_index, cline_id=self.client_id)
         object_type, object_mesh_scale, object_mesh_path = object_info[2], object_info[3], object_info[4]
         if object_type == p.GEOM_MESH:
             return self.sample_pc_from_mesh(object_mesh_path, object_mesh_scale, num_points)
         elif object_type == p.GEOM_BOX:
             # object_mesh_scale is object dimension if object_type is GEOM_BOX
-            object_halfExtents = np.array(object_mesh_scale) / 2
+            object_halfExtents = self.to_numpy(object_mesh_scale) / 2
             return self.rng.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
         elif object_type == p.GEOM_CYLINDER:
             raise NotImplementedError
 
 
     def to_torch(self, x, dtype=None):
-        dtype = dtype if dtype is not None else self.obs_dtype
+        dtype = dtype if dtype is not None else self.tensor_dtype
         return torch.tensor(x, dtype=dtype, device=self.device)
+    
+
+    def to_numpy(self, x, dtype=None):
+        dtype = dtype if dtype is not None else self.numpy_dtype
+        return np.array(x, dtype=dtype)
     
 
     def close(self):
