@@ -207,7 +207,7 @@ class RoboSensaiBullet:
             print(f"Obj Name: {self.selected_obj_name} | Stable Steps: {self.his_steps}")
             if done and self.info['success'] == 1:
                 print(f"Successfully Place {self.selected_obj_name}! | Stable steps: {self.his_steps}")
-                if hasattr(self.args, "eval_result"): time.sleep(3.)
+                if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
 
         if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
         else: observation = self.last_observation
