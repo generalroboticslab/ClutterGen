@@ -168,41 +168,54 @@ class RoboSensaiBullet:
             self.check_table = tabulate(self.failed_objs, headers, tablefmt="pretty")
             print(self.check_table)
 
-    
-    def step(self, action):
-        
-        pose_xyz, pose_quat = self.convert_actions(action)
-        pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
-        
-        self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
-        self.accm_vel_reward = 0.
-        for self.his_steps in range(self.args.max_traj_history_len):
-            self.simstep(1/240)
-            obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-            obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
-            # Update the trajectory history
-            self.traj_history[self.his_steps] = obj_pos + obj_quat + obj_vel.tolist()
-            # Accumulate velocity reward
-            self.accm_vel_reward += -obj_vel[:].__abs__().sum()
-            # Jump out if the object is not moving
-            if (obj_vel[:3].__abs__() < self.args.vel_threshold[0]).all() \
-                and (obj_vel[3:].__abs__() < self.args.vel_threshold[1]).all():
-                break
 
-        reward = self.compute_reward() # Must compute reward before observation since we use the velocity to compute reward
-        done = self.compute_done()
+    def step(self, action):
+        # stepping == 1 means this action is from the agent and is meaningful
+        # Pre-physical step
+        if self.info['stepping'] == 1.:
+            pose_xyz, pose_quat = self.convert_actions(action)
+            pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
+            self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
+            self.accm_vel_reward = 0.
+            self.his_steps = 0
+            self.info['stepping'] = 0.
+        
+        # stepping == 0 means previous action is still running, we need to wait until the object is stable
+        # In-pysical step
+        if self.info['stepping'] == 0.:
+            for _ in range(ceil(self.args.max_traj_history_len/self.args.step_divider)):
+                self.simstep(1/240)
+                obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
+                obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
+                # Update the trajectory history
+                self.traj_history[self.his_steps] = obj_pos + obj_quat + obj_vel.tolist()
+                # Accumulate velocity reward
+                self.accm_vel_reward += -obj_vel[:].__abs__().sum()
+                # Jump out if the object is not moving (in the future, we might need to add acceleration checker)
+                self.his_steps += 1
+                if ((obj_vel[:3].__abs__() < self.args.vel_threshold[0]).all() \
+                    and (obj_vel[3:].__abs__() < self.args.vel_threshold[1]).all()) \
+                    or self.his_steps >= self.args.max_traj_history_len:
+                    self.info['stepping'] = 1.
+                    break
+        
+        # Post-physical step
+        reward = self.compute_reward() if self.info['stepping']==1 else 0. # Must compute reward before observation since we use the velocity to compute reward
+        done = self.compute_done() if self.info['stepping']==1 else False
         # Success Visualization here since observation needs to be reset. Only for evaluation!
-        if self.args.rendering:
+        if self.args.rendering and self.info['stepping']==1:
             print(f"Obj Name: {self.selected_obj_name} | Stable Steps: {self.his_steps}")
             if done and self.info['success'] == 1:
                 print(f"Successfully Place {self.selected_obj_name}! | Stable steps: {self.his_steps}")
-                # time.sleep(3.)
+                if hasattr(self.args, "eval_result"): time.sleep(3.)
 
-        observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
+        if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
+        else: observation = self.last_observation
 
-        # Reset placed object pose | when reset, the placed_obj_poses will be empty 
-        for obj_name, obj_pose in self.placed_obj_poses.items():
-            pu.set_pose(self.obj_name_id[obj_name], obj_pose, client_id=self.client_id)
+        # Reset placed object pose | when reset, the placed_obj_poses will be empty
+        if self.info['stepping'] == 1.:
+            for obj_name, obj_pose in self.placed_obj_poses.items():
+                pu.set_pose(self.obj_name_id[obj_name], obj_pose, client_id=self.client_id)
 
         return observation, reward, done, self.info
 
@@ -252,12 +265,13 @@ class RoboSensaiBullet:
         self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [1/240, np.pi/2400] # 1m/s^2 and 18 degree/s^2
         self.args.num_placing_objs = self.args.num_placing_objs if hasattr(self.args, "num_placing_objs") else 1
         self.args.max_traj_history_len = self.args.max_traj_history_len if hasattr(self.args, "max_traj_history_len") else 240
+        self.args.step_divider = self.args.step_divider if hasattr(self.args, "step_divider") else 6
         self.args.reward_pobj = self.args.reward_pobj if hasattr(self.args, "reward_pobj") else 10
         self.args.vel_reward_scale = self.args.vel_reward_scale if hasattr(self.args, "vel_reward_scale") else 0.005
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
         self.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         # Buffer does not need to be reset
-        self.info = {'success': 0.}
+        self.info = {'success': 0., 'stepping': 1.}
 
     
     def _init_pc_extractor(self):

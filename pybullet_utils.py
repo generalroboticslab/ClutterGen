@@ -1,5 +1,6 @@
 from collections import namedtuple
 import pybullet as p
+import pybullet_data
 import numpy as np
 import time
 import matplotlib as mpl
@@ -11,6 +12,30 @@ INF = np.inf
 PI = np.pi
 CIRCULAR_LIMITS = -PI, PI
 MAX_DISTANCE = 0
+
+
+def configure_pybullet(rendering=False, debug=False, yaw=50.0, pitch=-35.0, dist=1.2, target=(0.0, 0.0, 0.0)):
+    """
+    This function is likely to be called multiples times to initiate multiple connections
+    Note that Only one local in-process GUI/GUI_SERVER connection allowed.
+    Pass in the client ID is important because otherwise they all operate on the first connection
+
+    you can use p.GUI in different python files
+    you can use p.DIRECT in a same python file
+    """
+    if not rendering:
+        client_id = p.connect(p.DIRECT)
+    else:
+        client_id = p.connect(p.GUI)  # be careful about GUI vs GUI_SERVER, GUI_SERVER should only be used with shared memory
+    p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=client_id)
+    if not debug:
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=client_id)
+    reset_camera(yaw=yaw, pitch=pitch, dist=dist, target=target, client_id=client_id)
+    p.setPhysicsEngineParameter(enableFileCaching=0, physicsClientId=client_id)
+    p.resetSimulation(physicsClientId=client_id)
+    p.setGravity(0, 0, -9.8)
+    return client_id
+
 
 def step(duration=1.0, client_id=0):
     for i in range(int(duration * 240)):

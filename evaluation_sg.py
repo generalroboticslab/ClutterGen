@@ -14,6 +14,7 @@ from distutils.util import strtobool
 
 from PPO.PPO_continuous_sg import *
 from RoboSensai_bullet import *
+from multi_envs import *
 
 import numpy as np
 import torch
@@ -30,7 +31,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='YCB_11-21_02:33_FC_Rand_Goal_10_mxstable50_Weight_rewardPobj100.0') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -73,7 +74,7 @@ def get_args():
     parser.add_argument('--num_gms', type=int, default=1000)
 
     # RoboSensai Bullet parameters
-    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='random select objects from the pool')
     parser.add_argument('--num_placing_objs', type=int, default=None)  # database length if have
 
 
@@ -183,21 +184,21 @@ if __name__ == "__main__":
 
     ################ create world and scene set up ##################
     # Create the gym environment
-    envs = RoboSensaiBullet(eval_args)
+    envs = create_multi_envs(eval_args, 'forkserver')
     # torch.manual_seed(eval_args.seed); np.random.seed(eval_args.seed); random.seed(eval_args.seed)
 
     # Agent
     agent = None
     if eval_args.eval_result and not eval_args.random_policy:
-        agent = Agent(envs).to(device)
+        agent = Agent(envs.tempENV).to(device)
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
     # Evaluate checkpoint before replay
     avg_reward = 0.; num_success = 0; num_episodes = 0 
-    episode_rewards = torch.zeros((eval_args.num_envs, ), device=envs.device, dtype=torch.float32)
-    episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=envs.device, dtype=torch.float32)
-    episode_success_box = torch.zeros((eval_args.num_trials, ), device=envs.device, dtype=torch.float32)
-    done = torch.zeros(eval_args.num_envs, device=envs.device, dtype=torch.float32)
+    episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
+    episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
+    episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
+    done = torch.zeros(eval_args.num_envs, device=device, dtype=torch.float32)
 
     with torch.no_grad():
         state = torch.Tensor(envs.reset()).to(device)
@@ -206,8 +207,7 @@ if __name__ == "__main__":
     while num_episodes < eval_args.num_trials:
         ################ agent evaluation ################
         if eval_args.random_policy:
-            action = envs.random_actions()
-            probs = None
+            action = torch.rand((eval_args.num_envs, envs.tempENV.action_shape[1]), device=device)
         else:
             with torch.no_grad():
                 action = agent.select_action(state)
@@ -227,7 +227,9 @@ if __name__ == "__main__":
             num_episodes += terminal_nums
 
             update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
-            update_tensor_buffer(episode_success_box, envs.success_buf[terminal_index])
+            terminal_ids = terminal_index.nonzero().flatten()
+            success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
+            update_tensor_buffer(episode_success_box, success_buf)
 
             print_info = f"Episodes: {num_episodes}" + f" / Total Success: {episode_success_box.sum().item()}" 
             if eval_args.num_envs == 1:

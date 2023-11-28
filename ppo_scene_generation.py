@@ -35,8 +35,9 @@ def parse_args():
 
     # RoboSensai Env parameters
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
-    parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
-    parser.add_argument('--num_placing_objs', type=int, default=1)  # database length if have
+    parser.add_argument('--num_pool_objs', type=int, default=20)
+    parser.add_argument('--num_placing_objs', type=int, default=1) 
+    parser.add_argument('--max_traj_history_len', type=int, default=240)  
     parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
@@ -59,7 +60,7 @@ def parse_args():
     parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -182,7 +183,7 @@ if __name__ == "__main__":
 
     # env and scene setup; TODO Input the aruments into HandemEnv
     # envs = RoboSensaiBullet(args=args)
-    envs = create_multi_envs(args, 'spawn')
+    envs = create_multi_envs(args, 'forkserver')
     temp_env = envs.get_attr('env')[0]
     agent = Agent(temp_env).to(device)
     if args.checkpoint is not None:
@@ -214,11 +215,14 @@ if __name__ == "__main__":
     config = dict(
         Name=args.env_name,
         algorithm='PPO Continuous',
+        batch_size=args.batch_size,
+        num_steps=args.num_steps,
+        num_envs=args.num_envs,
+        max_traj_len=args.max_traj_history_len,
         num_updates=num_updates,
         lr=args.lr,
         gamma=args.gamma,
         alpha=args.ent_coef,
-        batch_size=args.batch_size,
         deterministic=args.deterministic,
         sequence_len=args.sequence_len,
         random_policy=args.random_policy,
@@ -263,7 +267,7 @@ if __name__ == "__main__":
             ## if not expert_action, normal training; Otherwise use only expert actions
             # transfer discrete actions to real actions; TODO: Logical problem about next_obs (terminal observation to query step action for the first action)
             if args.random_policy:
-                step_action = envs.random_actions()
+                step_action = torch.rand((args.num_envs, temp_env.action_shape[1]), device=device)
             else:
                 with torch.no_grad():
                     step_action, logprob, _, value = agent.get_action_and_value(next_obs)

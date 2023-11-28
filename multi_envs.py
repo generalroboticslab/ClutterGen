@@ -1,6 +1,6 @@
 import gymnasium as gym
 import numpy as np
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3 import PPO
 from RoboSensai_bullet import RoboSensaiBullet
 import copy
@@ -55,7 +55,13 @@ def create_multi_envs(args, start_method='forkserver'):
         env_fc = make_env(args_inst)
         envs_func.append(env_fc)
     envs = SubprocVecEnv(envs_func, start_method=start_method)
+    envs.tempENV = envs.get_attr('env')[0]
     return envs
+
+
+def combine_envs_info(infos, key, env_ids=None):
+    if env_ids is None: env_ids = range(len(infos))
+    return [infos[id][key] for id in env_ids]
 
 
 if __name__ == "__main__":
@@ -63,7 +69,7 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     args = ArgumentParser()
-    args.rendering = True
+    args.rendering = False
     args.debug = False
     args.asset_root = "assets"
     args.object_pool_folder = "objects/ycb_objects_origin_at_center_vhacd"
@@ -77,7 +83,7 @@ if __name__ == "__main__":
     args.vel_threshold = [1/240, np.pi/2400] # 1m/s^2 and 18 degree/s^2
     args.seed = 123456
 
-    args.num_envs = 1
+    args.num_envs = 4
 
     # Create the vectorized environment
     all_envs = create_multi_envs(args, 'forkserver')

@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument('--num_pool_objs', type=int, default=20)
     parser.add_argument('--num_placing_objs', type=int, default=1) 
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
-    parser.add_argument('--step_divider', type=int, default=6) 
+    parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
@@ -241,6 +241,7 @@ if __name__ == "__main__":
         num_steps=args.num_steps,
         num_envs=args.num_envs,
         max_traj_len=args.max_traj_history_len,
+        step_divider=args.step_divider,
         num_updates=num_updates,
         lr=args.lr,
         gamma=args.gamma,
