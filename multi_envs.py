@@ -29,6 +29,10 @@ class CustomPyBulletEnv(gym.Env):
         return observation, reward, done, False, info
 
 
+    def set_args(self, args_name, args_value):
+        setattr(self.env.args, args_name, args_value)
+
+
     def render(self, mode='human'):
         # Render the env (optional)
         self.env.render(mode)

@@ -15,6 +15,7 @@ from distutils.util import strtobool
 from PPO.PPO_continuous_sg import *
 from RoboSensai_bullet import *
 from multi_envs import *
+from utils import *
 
 import numpy as np
 import torch
@@ -24,7 +25,7 @@ import torch.optim as optim
 
 def get_args():
     parser = argparse.ArgumentParser(description='Evaluate Handem Pushing Experiment')
-    parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
+    parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument('--object_pool_name', type=str, default='YCB', help="Object Pool. Ex: YCB, Partnet")
     parser.add_argument('--specific_target', type=str, default=None)
@@ -75,7 +76,8 @@ def get_args():
 
     # RoboSensai Bullet parameters
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='random select objects from the pool')
-    parser.add_argument('--num_placing_objs', type=int, default=None)  # database length if have
+    parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
+    parser.add_argument('--num_placing_objs_lst', type=int, default=None, nargs='+')
 
 
     eval_args = parser.parse_args()
@@ -89,8 +91,7 @@ def get_args():
         args_json = json.load(json_obj)
 
     # Keep the training args if evaluation args is None
-    if eval_args.num_placing_objs is None: restored_eval_args['num_placing_objs'] = args_json['num_placing_objs']
-    
+
     eval_args.__dict__.update(args_json) # store in train_args
     eval_args.__dict__.update(restored_eval_args) # overwrite by eval_args to become real eval_args
 
@@ -98,13 +99,8 @@ def get_args():
     if eval_args.real: eval_args.collect_data = False
     # Draw contact should under the rendering situation
     if eval_args.rendering is False: eval_args.draw_contact = False
-    # Task maybe not exsit in the old checkpoint
-    eval_args.task = eval_args.task if hasattr(eval_args, "task") else "P2G"
-    # handed_search may not exsit in the old checkpoint
-    eval_args.handed_search = eval_args.handed_search if hasattr(eval_args, "handed_search") else True
 
     # replace to another object
-    # eval_args.target_list = ["tomato_soup_can", "bleach_cleanser", "cube", "mustard_bottle", "potted_meat_can", "power_drill", "sugar_box"]
     if eval_args.specific_target is not None:
         eval_args.random_target = False
     
@@ -129,7 +125,7 @@ def get_args():
     eval_args.final_name = eval_args.final_name + ckeckpoint_index + eval_args.scene_suffix
 
     # Generate benchmark table does not use collect_data
-    if eval_args.generate_benchmark:
+    if eval_args.generate_benchmark: 
         eval_args.collect_data = False
 
     # Use uniform name for CSV, Json, and Trajectories name
@@ -182,6 +178,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = eval_args.torch_deterministic
     device = torch.device("cuda" if torch.cuda.is_available() and eval_args.cuda else "cpu")
 
+    ################ Save Eval Json File ##################
+    if eval_args.collect_data:
+        with open(eval_args.json_file, 'w') as json_obj:
+            json.dump(vars(eval_args), json_obj, indent=4)
+
     ################ create world and scene set up ##################
     # Create the gym environment
     envs = create_multi_envs(eval_args, 'forkserver')
@@ -194,58 +195,78 @@ if __name__ == "__main__":
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
     # Evaluate checkpoint before replay
-    avg_reward = 0.; num_success = 0; num_episodes = 0 
-    episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
-    episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
-    episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
-    done = torch.zeros(eval_args.num_envs, device=device, dtype=torch.float32)
+    for num_placing_objs in eval_args.num_placing_objs_lst:
+        envs.env_method('set_args', 'num_placing_objs', num_placing_objs)
 
-    with torch.no_grad():
-        state = torch.Tensor(envs.reset()).to(device)
-    print('Evaluating:', f'{eval_args.num_trials} trials') # start evaluation
+        num_episodes = 0 
+        episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
+        episode_timesteps = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
+        episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
+        episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
+        done = torch.zeros(eval_args.num_envs, device=device, dtype=torch.float32)
+        success_scene_cfg = []
 
-    while num_episodes < eval_args.num_trials:
-        ################ agent evaluation ################
-        if eval_args.random_policy:
-            action = torch.rand((eval_args.num_envs, envs.tempENV.action_shape[1]), device=device)
-        else:
-            with torch.no_grad():
-                action = agent.select_action(state)
+        with torch.no_grad():
+            state = torch.Tensor(envs.reset()).to(device)
+        print(f" Start Evaluating: {num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials")
 
-        next_state, reward, done, infos = envs.step(action)
+        start_time = time.time()
+        while num_episodes < eval_args.num_trials:
+            ################ agent evaluation ################
+            if eval_args.random_policy:
+                action = (torch.rand((eval_args.num_envs, envs.tempENV.action_shape[1]), device=device) * 2 - 1) * 5
+            else:
+                with torch.no_grad():
+                    action = agent.select_action(state)
 
-        next_state, done = torch.Tensor(next_state).to(device), torch.Tensor(done).to(device)
-        reward = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
+            next_state, reward, done, infos = envs.step(action)
 
-        state = next_state
-        episode_rewards += reward
-        
-        terminal_index = done == 1
-        terminal_nums = terminal_index.sum().item()
-        # Compute the average episode rewards.
-        if terminal_nums > 0:
-            num_episodes += terminal_nums
+            next_state, done = torch.Tensor(next_state).to(device), torch.Tensor(done).to(device)
+            reward = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
 
-            update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
-            terminal_ids = terminal_index.nonzero().flatten()
-            success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
-            update_tensor_buffer(episode_success_box, success_buf)
-
-            print_info = f"Episodes: {num_episodes}" + f" / Total Success: {episode_success_box.sum().item()}" 
-            if eval_args.num_envs == 1:
-                print_info += f" / Episode reward: {episode_rewards.item()}"
-            print(print_info)
+            state = next_state
+            episode_rewards += reward
             
-            episode_rewards[terminal_index] = 0.
-                
-    episode_reward = torch.mean(episode_rewards_box).item()
-    episode_success_rate = torch.mean(episode_success_box).item()
+            terminal_index = done == 1
+            terminal_nums = terminal_index.sum().item()
+            # Compute the average episode rewards.
+            if terminal_nums > 0:
+                num_episodes += terminal_nums
+                terminal_ids = terminal_index.nonzero().flatten()
 
-        # if eval_args.collect_data: # save_file
-        #     with open(os.path.join(eval_args.trajectory_dir, 'index-{0}.json'.format(trial)), 'w') as outfile:
-        #         json.dump(envs.grasp_world.log_trajectory, outfile)
-    
-    print(f"{eval_args.num_trials} Trials| Success Rate: {episode_success_rate * 100}% | Avg Reward: {episode_reward}")
+                update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
+                success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
+                update_tensor_buffer(episode_success_box, success_buf)
+                steps_buf = torch.Tensor(combine_envs_info(infos, 'his_steps', terminal_ids)).to(device)
+                update_tensor_buffer(episode_timesteps, steps_buf)
+                success_ids = terminal_ids[success_buf.to(torch.bool)]
+                success_scene_cfg.extend(combine_envs_info(infos, 'placed_obj_poses', success_ids))
+
+                print_info = f"Episodes: {num_episodes}" + f" / Total Success: {episode_success_box.sum().item()}" 
+                if eval_args.num_envs == 1:
+                    print_info += f" / Episode reward: {episode_rewards.item()}"
+                print(print_info)
+                
+                episode_rewards[terminal_index] = 0.
+                    
+        episode_reward = torch.mean(episode_rewards_box).item()
+        success_rate = torch.mean(episode_success_box).item()
+        unstable_steps = torch.mean(episode_timesteps).item()
+        machine_time = time.time() - start_time
+        
+        print(f"Num of Placing Objs: {num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
+        print(f"Time: {machine_time} | Num of Env: {eval_args.num_envs} | Episode Steps: {unstable_steps}", end='\n\n')
+        
+        # Save the evaluation result
+        if eval_args.collect_data:
+            csv_result = {"num_placing_objs": num_placing_objs, 
+                        "num_trials": eval_args.num_trials,
+                        "success_rate": success_rate,
+                        "unstable_steps": unstable_steps,
+                        "avg_reward": episode_reward,
+                        "machine_time": machine_time,
+                        "success_scene_cfg": success_scene_cfg}
+            write_csv_line(eval_args.result_file_path, csv_result)
 
     print('Process Over')
     envs.close()

@@ -5,7 +5,6 @@ import torch
 import trimesh
 import urdf_parser_py.urdf as urdf
 from copy import deepcopy
-import pytorch3d as p3d
 import json
 from utils import *
 

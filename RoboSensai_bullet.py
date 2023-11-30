@@ -179,6 +179,7 @@ class RoboSensaiBullet:
             self.accm_vel_reward = 0.
             self.his_steps = 0
             self.info['stepping'] = 0.
+            self.info['his_steps'] = 0
         
         # stepping == 0 means previous action is still running, we need to wait until the object is stable
         # In-pysical step
@@ -197,6 +198,7 @@ class RoboSensaiBullet:
                     and (obj_vel[3:].__abs__() < self.args.vel_threshold[1]).all()) \
                     or self.his_steps >= self.args.max_traj_history_len:
                     self.info['stepping'] = 1.
+                    self.info['his_steps'] = self.his_steps
                     break
         
         # Post-physical step
@@ -269,9 +271,9 @@ class RoboSensaiBullet:
         self.args.reward_pobj = self.args.reward_pobj if hasattr(self.args, "reward_pobj") else 10
         self.args.vel_reward_scale = self.args.vel_reward_scale if hasattr(self.args, "vel_reward_scale") else 0.005
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
-        self.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
+        self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         # Buffer does not need to be reset
-        self.info = {'success': 0., 'stepping': 1.}
+        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0}
 
     
     def _init_pc_extractor(self):
@@ -366,13 +368,14 @@ class RoboSensaiBullet:
 
     def compute_done(self): # The whole episode done
         # Failed condition
-        if self.moving_steps >= self.max_trials:
+        if self.moving_steps >= self.args.max_trials:
             self.done = True
             self.info['success'] = 0.
         # Goal condition
         if len(self.placed_obj_poses) >= self.args.num_placing_objs:
             self.done = True
             self.info['success'] = 1.
+            self.info['placed_obj_poses'] = self.placed_obj_poses
         return self.done
         
 

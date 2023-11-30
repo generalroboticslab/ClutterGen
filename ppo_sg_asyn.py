@@ -301,7 +301,7 @@ if __name__ == "__main__":
                 ## if not expert_action, normal training; Otherwise use only expert actions
                 # transfer discrete actions to real actions; TODO: Logical problem about next_obs (terminal observation to query step action for the first action)
                 if args.random_policy:
-                    step_action = torch.rand((args.num_envs, temp_env.action_shape[1]), device=device)
+                    step_action = (torch.rand((args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 5
                 else:
                     with torch.no_grad():
                         step_action, logprob, _, value = agent.get_action_and_value(next_obs)
