@@ -134,8 +134,8 @@ DexterousHands/
 assets/objects/partNet_mobility
 Grounded-Segment-Anything/
 assets/sem_checkpoints/
-assets/objects/
-!assets/objects/ycb_objects_origin_at_center_vhacd/*
+assets/objects/*
+!assets/objects/ycb_objects_origin_at_center_vhacd/
 assets/scenes/
 dynamic_grasping_pybullet/
 Pointnet_Pointnet2_pytorch/
