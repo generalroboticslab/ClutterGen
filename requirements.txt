@@ -35,3 +35,5 @@ timm
 transformers
 open3d
 protobuf
+paramiko
+scp
