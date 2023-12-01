@@ -25,7 +25,7 @@ class Plot_Utils:
             columns_to_read = list(range(5)) # First 5 columns to read
             df = pd.read_csv(file_path, usecols=columns_to_read)
             # Convert string to python objects
-            self.data[checkpoint_name] = df.map(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
+            self.data[checkpoint_name] = df.apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
         else: raise NotImplementedError("Unsupported file type: {}".format(suffix))
 
 
@@ -60,7 +60,6 @@ class Plot_Utils:
             axes[1].plot(num_obj, unstable_steps, '-o', label=checkpoint_name, linewidth=2, markersize=8)
 
             if 'p' in checkpoint_name:
-                import ipdb; ipdb.set_trace()
                 axes[1].scatter(self.trained_objs, unstable_steps[num_obj.isin(self.trained_objs)], 
                                 marker='*', s=250, c='g', zorder=2, label='Trained Objects')
 
