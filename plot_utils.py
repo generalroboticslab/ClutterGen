@@ -25,7 +25,7 @@ class Plot_Utils:
             columns_to_read = list(range(5)) # First 5 columns to read
             df = pd.read_csv(file_path, usecols=columns_to_read)
             # Convert string to python objects
-            self.data[checkpoint_name] = df.map(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
+            self.data[checkpoint_name] = df.apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
         else: raise NotImplementedError("Unsupported file type: {}".format(suffix))
 
 
@@ -38,13 +38,15 @@ class Plot_Utils:
         axes[0].set_xlabel("Number of Objects", fontsize=14)
         axes[0].set_ylabel("Reset Success Rate", fontsize=14)
 
+        trained_obj_label = 'Trained Objects'
         for checkpoint_name in self.data.keys():
             num_obj = self.data[checkpoint_name]["num_placing_objs"]
             success_rate = self.data[checkpoint_name]["success_rate"]
             axes[0].plot(num_obj, success_rate, '-o', label=checkpoint_name, linewidth=2, markersize=8)
             if 'p' in checkpoint_name:
                 axes[0].scatter(self.trained_objs, success_rate[num_obj.isin(self.trained_objs)], 
-                                marker='*', s=250, c='g', zorder=2, label='Trained Objects')
+                                marker='*', s=250, c='g', zorder=2, label=trained_obj_label)
+                trained_obj_label = None # Only show the label once
 
         axes[0].legend(fontsize=12)
         axes[0].tick_params(axis='both', labelsize=12)
@@ -60,9 +62,8 @@ class Plot_Utils:
             axes[1].plot(num_obj, unstable_steps, '-o', label=checkpoint_name, linewidth=2, markersize=8)
 
             if 'p' in checkpoint_name:
-                import ipdb; ipdb.set_trace()
                 axes[1].scatter(self.trained_objs, unstable_steps[num_obj.isin(self.trained_objs)], 
-                                marker='*', s=250, c='g', zorder=2, label='Trained Objects')
+                                marker='*', s=250, c='g', zorder=2, label=trained_obj_label)
 
         axes[1].legend(fontsize=12)
         axes[1].tick_params(axis='both', labelsize=12)
@@ -84,5 +85,7 @@ class Plot_Utils:
 if __name__ == "__main__":
     plot_utils = Plot_Utils()
     plot_utils.read_file("eval_res/YCB/CSV/YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="10p_best")
+    plot_utils.read_file("eval_res/YCB/CSV/YCB_11-28_01:10_FC_FT_Rand_placing_Goal_12_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="12p_best")
+    plot_utils.read_file("eval_res/YCB/CSV/YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0_EVALbestold_Setup.csv", checkpoint_name="10p_best_old")
     plot_utils.read_file("eval_res/YCB/CSV/EVAL_RandomPolicy_Setup.csv", checkpoint_name="Random")
     plot_utils.plot_success_steps()
