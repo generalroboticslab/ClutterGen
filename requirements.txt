@@ -37,3 +37,4 @@ open3d
 protobuf
 paramiko
 scp
+str2bool
