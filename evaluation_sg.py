@@ -77,7 +77,7 @@ def get_args():
     # RoboSensai Bullet parameters
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='random select objects from the pool')
     parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
-    parser.add_argument('--num_placing_objs_lst', type=int, default=None, nargs='+')
+    parser.add_argument('--num_placing_objs_lst', type=int, default=[10], nargs='+')
 
 
     eval_args = parser.parse_args()
