@@ -104,9 +104,7 @@ class RoboSensaiBullet:
         default_scene_pc = []
         for name, id in self.default_scene_name_id.items():
             if name == "plane": continue # Plane needs to use default region to sample (will do this later)
-            object_pc_local_frame = self.get_link_pc_from_id(id, num_points=self.default_scene_points)
-            object_pos, object_quat = pu.get_body_pose(id, client_id=self.client_id)
-            object_pc_world_frame = self.to_numpy([p.multiplyTransforms(object_pos, object_quat, point, [0., 0., 0., 1.])[0] for point in object_pc_local_frame])
+            object_pc_world_frame = self.get_link_pc_from_id(id, num_points=self.default_scene_points, use_worldpos=True)
             default_scene_pc.append(object_pc_world_frame)
         self.default_scene_pc = np.concatenate(default_scene_pc, axis=0)
         self.default_scene_pc_feature = self.pc_extractor(self.to_torch(self.default_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
@@ -132,7 +130,7 @@ class RoboSensaiBullet:
                 object_id = self.loadURDF(f"{self.args.asset_root}/{self.args.object_pool_folder}/{obj_name}/{objects_act_pool_indexes[i]}/mobility.urdf", 
                                         basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=default_scaling)  # Load an object at position [0, 0, 1]
                 self.obj_name_id[f"{obj_name}_{objects_act_pool_indexes[i]}"] = object_id
-                self.obj_name_pc[f"{obj_name}_{objects_act_pool_indexes[i]}"] = self.get_link_pc_from_id(object_id, num_points=1024)
+                self.obj_name_pc[f"{obj_name}_{objects_act_pool_indexes[i]}"] = self.get_link_pc_from_id(object_id, num_points=1024, use_worldpos=False)
             except:
                 print(f"Failed to load object {obj_name}")
         
@@ -361,6 +359,8 @@ class RoboSensaiBullet:
             with torch.no_grad():
                 self.act_scene_pc_feature = self.pc_extractor(self.to_torch(self.act_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).cpu().numpy()
 
+            # pu.visualize_pc(self.act_scene_pc)
+
         self.last_reward = vel_reward
 
         return self.last_reward
@@ -400,34 +400,10 @@ class RoboSensaiBullet:
                           globalScaling=globalScaling, physicsClientId=self.client_id)
     
 
-    def sample_pc_from_mesh(self, mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, visualize=False):
-        mesh = o3d.io.read_triangle_mesh(mesh_path)
-
-        # Sample a point cloud from the mesh
-        point_cloud = mesh.sample_points_uniformly(number_of_points=num_points)
-
-        # Convert the Open3D point cloud to a NumPy array
-        point_cloud_np = np.asarray(point_cloud.points) * self.to_numpy(mesh_scaling)
-
-        if visualize:
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(point_cloud_np)
-            o3d.visualization.draw_geometries([pcd])
-
-        return point_cloud_np
-    
-
-    def get_link_pc_from_id(self, obj_id, link_index=-1, num_points=1024):
-        object_info = pu.get_link_collision_shape(obj_id, link_index, cline_id=self.client_id)
-        object_type, object_mesh_scale, object_mesh_path = object_info[2], object_info[3], object_info[4]
-        if object_type == p.GEOM_MESH:
-            return self.sample_pc_from_mesh(object_mesh_path, object_mesh_scale, num_points)
-        elif object_type == p.GEOM_BOX:
-            # object_mesh_scale is object dimension if object_type is GEOM_BOX
-            object_halfExtents = self.to_numpy(object_mesh_scale) / 2
-            return self.rng.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
-        elif object_type == p.GEOM_CYLINDER:
-            raise NotImplementedError
+    def get_link_pc_from_id(self, obj_id, link_index=-1, num_points=1024, use_worldpos=False):
+        return pu.get_link_pc_from_id(obj_id, link_index=link_index, 
+                                      num_points=num_points, use_worldpos=use_worldpos,
+                                      rng=self.rng, client_id=self.client_id).astype(self.numpy_dtype)
 
 
     def to_torch(self, x, dtype=None):
