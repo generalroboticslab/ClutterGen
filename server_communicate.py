@@ -30,7 +30,7 @@ def upload_file(local_path, server_path, server_address, username, password):
     print(f"Uploaded:\n{local_path}\nto\n{server_path}.")
 
 
-def download_file(local_path, server_path, server_address, username, password):
+def download_file(server_path, local_path, server_address, username, password):
     """
     Downloads a file from a remote server to a local path using SCP.
 
@@ -47,6 +47,7 @@ def download_file(local_path, server_path, server_address, username, password):
 
         # Create an SCP client
         with SCPClient(transport) as scp:
+            subprocess.run(f'mkdir -p {local_path}', shell=True)  # Create the local folder if it doesn't exist
             # Download the file from the remote path to the local path
             scp.get(server_path, recursive=True, local_path=local_path)
 
@@ -62,17 +63,18 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     # Example usage:
-    assert os.path.exists(args.relative_file_path), f"File does not exist: {args.relative_file_path}"
+    if args.send:
+        assert os.path.exists(args.relative_file_path), f"File does not exist: {args.relative_file_path}"
     local_project_path = "/home/grl/Working/projects/RoboSensai"
     server_project_path = "/home/yj208/Working/RoboSensai"
     local_abs_file_path = os.path.join(local_project_path, args.relative_file_path)
-    server_abs_folder_path = os.path.join(server_project_path, os.path.dirname(args.relative_file_path))
+    server_abs_file_path = os.path.join(server_project_path, args.relative_file_path)
     server_address = "bc298-cmp-00.egr.duke.edu"
     username = "yj208"
     password = "Jys11053032!"
 
     if args.send:
-        upload_file(local_abs_file_path, server_abs_folder_path, server_address, username, password)
+        upload_file(local_abs_file_path, os.path.dirname(server_abs_file_path), server_address, username, password)
     else:
         # Clear the local file before downloading
         if os.path.exists(local_abs_file_path):
@@ -80,4 +82,4 @@ if __name__=="__main__":
             if key == "": os.remove(local_abs_file_path)
             else: raise Exception("Invalid input.")
 
-        download_file(server_abs_folder_path, local_abs_file_path, server_address, username)
+        download_file(server_abs_file_path, os.path.dirname(local_abs_file_path), server_address, username, password)
