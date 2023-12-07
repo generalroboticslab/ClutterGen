@@ -7,6 +7,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from collections import defaultdict, deque, namedtuple
 from itertools import product, combinations, count
+import open3d as o3d
 
 INF = np.inf
 PI = np.pi
@@ -553,17 +554,21 @@ def get_link_state(body, link, client_id=0):
     return LinkState(*p.getLinkState(body, link, physicsClientId=client_id))
 
 
-def get_link_collision_shape(body, link=-1, cline_id=0):
-    return p.getCollisionShapeData(body, link, physicsClientId=cline_id)[0]
+def get_link_collision_shape(body, link=-1, client_id=0):
+    return p.getCollisionShapeData(body, link, physicsClientId=client_id)
 
 
-def get_com_pose(body, link):  # COM = center of mass
-    link_state = get_link_state(body, link)
+def get_com_pose(body, link, client_id=0):  # COM = center of mass
+    if link == BASE_LINK:
+        return get_body_pose(body, client_id=client_id)
+    link_state = get_link_state(body, link, client_id=client_id)
     return list(link_state.linkWorldPosition), list(link_state.linkWorldOrientation)
 
 
-def get_link_inertial_pose(body, link):
-    link_state = get_link_state(body, link)
+def get_link_inertial_pose(body, link, client_id=0):
+    if link == BASE_LINK:
+        return get_body_pose(body, client_id=client_id)
+    link_state = get_link_state(body, link, client_id=client_id)
     return link_state.localInertialFramePosition, link_state.localInertialFrameOrientation
 
 
@@ -1061,3 +1066,61 @@ def multiply_multi_transforms(*args):
         for i in range(2, len(args)):
             accumulate_pose = p.multiplyTransforms(*accumulate_pose, *args[i])
         return accumulate_pose
+    
+
+######### RoboSensai Specified #########
+def sample_pc_from_mesh(mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, visualize=False):
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
+
+    # Sample a point cloud from the mesh
+    point_cloud = mesh.sample_points_uniformly(number_of_points=num_points)
+
+    # Convert the Open3D point cloud to a NumPy array
+    point_cloud_np = np.asarray(point_cloud.points) * np.array(mesh_scaling)
+
+    if visualize:
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(point_cloud_np)
+        o3d.visualization.draw_geometries([pcd])
+
+    return point_cloud_np
+
+
+def get_link_pc_from_id(obj_id, link_index=-1, num_points=1024, use_worldpos=False, rng=None, client_id=0):
+    # Pybullet bug: get link pose can only get the joint pose (it ignores the link offset!!)
+    world2basejoint = get_body_pose(obj_id, client_id=client_id)
+    world2linkjoint = get_link_pose(obj_id, link_index, client_id=client_id) 
+    # if use absolute point position, we transform the point from world to link, point position in the worldframe
+    # else we use relative point position, which is the point position in the baselink frame (So it will not change for movable objects)
+    what2linkjoint = world2linkjoint if use_worldpos else \
+                     p.multiplyTransforms(*p.invertTransform(*world2basejoint), *world2linkjoint)
+    link_collision_infos = get_link_collision_shape(obj_id, link_index, client_id=client_id)
+    link_pc = []
+    for i, link_collision_info in enumerate(link_collision_infos):
+        if len(link_collision_info)==0: 
+            print(f'No collision shape for object {obj_id}, link {link_index}, {i}th part')
+            continue
+
+        link_type, link_mesh_scale, link_mesh_path, par2link_pos, par2link_ori = link_collision_info[2:7]
+        what2linkpart = p.multiplyTransforms(what2linkjoint[0], what2linkjoint[1], par2link_pos, par2link_ori)
+        if link_type == p.GEOM_MESH:
+            linkpart_pc_local = sample_pc_from_mesh(link_mesh_path, link_mesh_scale, num_points)
+        elif link_type == p.GEOM_BOX:
+            # link_mesh_scale is object dimension if link_type is GEOM_BOX
+            object_halfExtents = np.array(link_mesh_scale) / 2
+            if rng is not None: linkpart_pc_local = rng.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
+            else: linkpart_pc_local = np.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
+        elif link_type == p.GEOM_CYLINDER:
+            raise NotImplementedError
+        
+        linkpart_pc_world = [p.multiplyTransforms(what2linkpart[0], what2linkpart[1], point, [0, 0, 0, 1.])[0] for point in linkpart_pc_local]
+        link_pc.extend(linkpart_pc_world)
+    return np.array(link_pc)
+
+
+def visualize_pc(point_cloud_np):
+    # Visualize the point cloud
+    o3d_pc = o3d.geometry.PointCloud()
+    o3d_pc.points = o3d.utility.Vector3dVector(point_cloud_np)
+    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+    o3d.visualization.draw_geometries([o3d_pc, coord_frame])
