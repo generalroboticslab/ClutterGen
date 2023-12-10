@@ -324,7 +324,7 @@ if __name__ == "__main__":
                 rewards_asy[reward_step_env_steps, step_env_id] = rewards[step_env_id]
                 env_step_idx[step_env_id] += 1
 
-                # copy buffer to real obs and clean the buffer
+                # copy buffer to real obs and clean the buffer; completed_seq_env_ids is a subset of step_env_id, so next_obs and next_done must be real next
                 completed_seq_env_ids = (env_step_idx >= args.num_steps).nonzero().squeeze(dim=-1)
                 if len(completed_seq_env_ids) > 0:
                     next_completed_seq_num = completed_seq_num + len(completed_seq_env_ids)
@@ -402,18 +402,19 @@ if __name__ == "__main__":
         rewards = rewards_buf[:, :completed_seq_num]
         dones = dones_buf[:, :completed_seq_num]
         values = values_buf[:, :completed_seq_num]
+        # next_obs and next_done are used for next roll-out, we can not overwrite them, they are also not real next_obs and next_done for asyn trajectories!
         next_asyn_obs = next_obs_buf[:completed_seq_num]
         next_asyn_done = next_done_buf[:completed_seq_num]
 
         ####----- Compute advantage for each state in the markov chain ----####
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            next_value = agent.get_value(next_asyn_obs).reshape(1, -1)
             if args.gae:
                 advantages = torch.zeros_like(rewards).to(device)
                 lastgaelam = 0
                 for t in reversed(range(args.num_steps)):
                     if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
+                        nextnonterminal = 1.0 - next_asyn_done
                         nextvalues = next_value
                     else:
                         nextnonterminal = 1.0 - dones[t + 1]
@@ -425,7 +426,7 @@ if __name__ == "__main__":
                 returns = torch.zeros_like(rewards).to(device)
                 for t in reversed(range(args.num_steps)):
                     if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
+                        nextnonterminal = 1.0 - next_asyn_done
                         next_return = next_value
                     else:
                         nextnonterminal = 1.0 - dones[t + 1]
