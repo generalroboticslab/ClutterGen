@@ -49,7 +49,7 @@ def parse_args():
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='objects/ycb_objects_origin_at_center_vhacd', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='objects', help="folder path that stores all urdf files")
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--wandb', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
