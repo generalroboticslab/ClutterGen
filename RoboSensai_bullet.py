@@ -345,7 +345,7 @@ class RoboSensaiBullet:
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
-        self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 4096
+        self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
         self.args.max_stage = len(self.args.max_num_placing_objs) - 1 # We start from stage 0 (plane)
         self.reset_all = True
         # Buffer does not need to be reset
