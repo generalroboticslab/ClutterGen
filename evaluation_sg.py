@@ -28,7 +28,6 @@ def get_args():
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument('--object_pool_name', type=str, default='YCB', help="Object Pool. Ex: YCB, Partnet")
-    parser.add_argument('--specific_target', type=str, default=None)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -75,9 +74,12 @@ def get_args():
     parser.add_argument('--num_gms', type=int, default=1000)
 
     # RoboSensai Bullet parameters
+    parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='objects', help="folder path that stores all urdf files")
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='random select objects from the pool')
     parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
-    parser.add_argument('--num_placing_objs_lst', type=int, default=[10], nargs='+')
+    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=[[0, 3, 10]], help='Nested list argument')
+    parser.add_argument('--specific_scene', type=str, default=None)
 
 
     eval_args = parser.parse_args()
@@ -99,10 +101,6 @@ def get_args():
     if eval_args.real: eval_args.collect_data = False
     # Draw contact should under the rendering situation
     if eval_args.rendering is False: eval_args.draw_contact = False
-
-    # replace to another object
-    if eval_args.specific_target is not None:
-        eval_args.random_target = False
     
     # create result folder
     eval_args.save_dir = os.path.join(eval_args.save_dir, eval_args.object_pool_name)
@@ -115,7 +113,7 @@ def get_args():
     else: ckeckpoint_index = '_EVAL' + eval_args.index_episode 
     
     eval_args.scene_suffix = '_Setup'
-    if eval_args.specific_target is not None: eval_args.scene_suffix += f'_fix_{eval_args.specific_target}'
+    if eval_args.specific_scene is not None: eval_args.scene_suffix += f'_fix_{eval_args.specific_scene}'
     temp_filename = eval_args.final_name + ckeckpoint_index + eval_args.scene_suffix
     
     maximum_name_len = 250
@@ -195,8 +193,8 @@ if __name__ == "__main__":
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
     # Evaluate checkpoint before replay
-    for num_placing_objs in eval_args.num_placing_objs_lst:
-        envs.env_method('set_args', 'num_placing_objs', num_placing_objs)
+    for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
+        envs.env_method('set_args', 'max_num_placing_objs', max_num_placing_objs)
 
         num_episodes = 0 
         episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
@@ -208,7 +206,7 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             state = torch.Tensor(envs.reset()).to(device)
-        print(f" Start Evaluating: {num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials")
+        print(f" Start Evaluating: {max_num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials")
 
         start_time = time.time()
         while num_episodes < eval_args.num_trials:
@@ -254,12 +252,12 @@ if __name__ == "__main__":
         unstable_steps = torch.mean(episode_timesteps).item()
         machine_time = time.time() - start_time
         
-        print(f"Num of Placing Objs: {num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
+        print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
         print(f"Time: {machine_time} | Num of Env: {eval_args.num_envs} | Episode Steps: {unstable_steps}", end='\n\n')
         
         # Save the evaluation result
         if eval_args.collect_data:
-            csv_result = {"num_placing_objs": num_placing_objs, 
+            csv_result = {"max_num_placing_objs": max_num_placing_objs, 
                         "num_trials": eval_args.num_trials,
                         "success_rate": success_rate,
                         "unstable_steps": unstable_steps,

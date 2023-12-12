@@ -32,6 +32,10 @@ class CustomPyBulletEnv(gym.Env):
     def set_args(self, args_name, args_value):
         setattr(self.env.args, args_name, args_value)
 
+    
+    def get_args(self, args_name):
+        return getattr(self.env.args, args_name)
+
 
     def render(self, mode='human'):
         # Render the env (optional)
@@ -78,7 +82,7 @@ if __name__ == "__main__":
     args.asset_root = "assets"
     args.object_pool_folder = "objects/ycb_objects_origin_at_center_vhacd"
     args.num_pool_objs = 13
-    args.num_placing_objs = 1
+    args.max_num_placing_objs = 1
     args.random_select_pool = False
     args.random_select_placing = True
     args.default_scaling = 0.5

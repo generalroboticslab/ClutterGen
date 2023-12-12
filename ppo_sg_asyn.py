@@ -36,7 +36,7 @@ def parse_args():
     # RoboSensai Env parameters
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--num_pool_objs', type=int, default=20)
-    parser.add_argument('--num_placing_objs', type=int, default=1) 
+    parser.add_argument('--max_num_placing_objs', type=int, default=[0, 3, 16], nargs='+') 
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
@@ -96,7 +96,7 @@ def parse_args():
     args = parser.parse_args()
 
     # Training required attributes
-    args.num_steps = args.num_steps * args.num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
+    args.num_steps = args.num_steps * max(args.max_num_placing_objs) # make sure the num_steps is 5 times larger than agent traj length
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
 
@@ -119,7 +119,7 @@ def parse_args():
     if args.random_select_pool: additional += '_pool'
     if args.random_select_placing: additional += '_placing'
     additional += '_Goal'
-    if args.num_placing_objs: additional += f'_{args.num_placing_objs}'
+    if args.max_num_placing_objs: additional += f'_{args.max_num_placing_objs}'
     if args.max_stable_steps: additional += f'_maxstable{args.max_stable_steps}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
@@ -358,7 +358,7 @@ if __name__ == "__main__":
                     update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                     update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
                     update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
-                    success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
+                    success_buf = torch.Tensor(combine_envs_info(infos, 'success_placed_obj_num', terminal_ids)).to(device)
                     update_tensor_buffer(episode_success_box, success_buf)
 
                     episode_rewards[terminal_index] = 0.
@@ -386,7 +386,8 @@ if __name__ == "__main__":
                             best_acc = episode_success_rate;
                             agent.save_checkpoint(folder_path=args.checkpoint_dir,
                                                     folder_name=args.final_name, suffix='best')
-                            print(f'Now best accuracy is {best_acc * 100}%')
+                            # print(f'Now best accuracy is {best_acc * 100}%')
+                            print(f'Now best accuracy is {best_acc} success placed objects')
                         if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
                             agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
                                                     suffix=str(i_episode))

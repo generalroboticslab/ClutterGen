@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict, deque, namedtuple
 from itertools import product, combinations, count
 import open3d as o3d
+from math import ceil
 
 INF = np.inf
 PI = np.pi
@@ -221,6 +222,7 @@ def joint_from_movable(body, index, client_id=0):
 
 
 def is_circular(body, joint, client_id=0):
+    # Do not understand what this means
     joint_info = get_joint_info(body, joint, client_id=client_id)
     if joint_info.jointType == p.JOINT_FIXED:
         return False
@@ -234,8 +236,6 @@ def get_joint_limits(body, joint, client_id=0):
     :param joint: int
     :return: (int, int), lower limit and upper limit
     """
-    if is_circular(body, joint, client_id=client_id):
-        return CIRCULAR_LIMITS
     joint_info = get_joint_info(body, joint, client_id=client_id)
     return joint_info.jointLowerLimit, joint_info.jointUpperLimit
 
@@ -461,6 +461,12 @@ def get_body_pose(body, client_id=0):
     return [position, orn]
 
 
+def get_body_mesh_num(body, client_id=0):
+    link_num = get_num_links(body, client_id=client_id) # add baselink
+    num_mesh_parts = sum([len(get_link_collision_shape(body, link_index, client_id=client_id)) for link_index in range(-1, link_num-1)])
+    return num_mesh_parts
+
+
 # Control
 
 def control_joint(body, joint, value, client_id=0):
@@ -475,9 +481,10 @@ def control_joint(body, joint, value, client_id=0):
 
 
 def control_joints(body, joints, positions, control_type='hard', client_id=0):
-    if control_type == 'limited': forces = [get_max_force(body, joint) for joint in joints]
-    else: forces = [100000] * len(joints)
-    return p.setJointMotorControlArray(body, joints, p.POSITION_CONTROL,
+    forces = [get_max_force(body, joint) for joint in joints] if control_type == 'limited' else [100000] * len(joints)
+    return p.setJointMotorControlArray(bodyUniqueId=body, 
+                                       jointIndices=joints, 
+                                       controlMode=p.POSITION_CONTROL,
                                        targetPositions=positions,
                                        targetVelocities=[0.0] * len(joints),
                                        forces=forces, physicsClientId=client_id)
@@ -798,6 +805,14 @@ def create_arrow_marker_points(pose=((0, 0, 0), (0, 0, 0, 1)),
     return markers_id
 
 
+def change_obj_color(obj_id, linklist=None, rgba_color=[0, 0, 0, 1], client_id=0):
+    num_links = get_num_links(obj_id, client_id=client_id)
+    linklist = list(range(num_links)) + [-1] if linklist is None else linklist
+    for link in linklist:
+        if link > num_links: continue
+        p.changeVisualShape(obj_id, link, rgbaColor=rgba_color, physicsClientId=client_id)
+
+
 class MplColorHelper:
     def __init__(self, cmap_name, start_val, stop_val):
         self.cmap_name = cmap_name
@@ -889,7 +904,8 @@ def draw_sphere_body(position, radius=0.01, rgba_color=[0.5,0.5,1,0.8], client_i
 
 def draw_box_body(position, orientation=[0, 0, 0, 1], halfExtents=[0.003, 0.003, 0.003], rgba_color=[1, 0, 0, 1], client_id=0):
     vs_id = p.createVisualShape(p.GEOM_BOX, halfExtents=halfExtents, rgbaColor=rgba_color, physicsClientId=client_id)
-    body_id = p.createMultiBody(basePosition=position, baseCollisionShapeIndex=-1, baseVisualShapeIndex=vs_id, physicsClientId=client_id)
+    body_id = p.createMultiBody(basePosition=position, baseOrientation=orientation, 
+                                baseCollisionShapeIndex=-1, baseVisualShapeIndex=vs_id, physicsClientId=client_id)
     return body_id
 
 def create_box_body(position, orientation=[0, 0, 0, 1], halfExtents=[0.003, 0.003, 0.003], rgba_color=[1, 0, 0, 1], mass=0., client_id=0):
@@ -1086,7 +1102,7 @@ def sample_pc_from_mesh(mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, v
     return point_cloud_np
 
 
-def get_link_pc_from_id(obj_id, link_index=-1, num_points=1024, use_worldpos=False, rng=None, client_id=0):
+def get_link_pc_from_id(obj_id, link_index=-1, min_num_points=1024, use_worldpos=False, rng=None, client_id=0):
     # Pybullet bug: get link pose can only get the joint pose (it ignores the link offset!!)
     world2basejoint = get_body_pose(obj_id, client_id=client_id)
     world2linkjoint = get_link_pose(obj_id, link_index, client_id=client_id) 
@@ -1104,12 +1120,12 @@ def get_link_pc_from_id(obj_id, link_index=-1, num_points=1024, use_worldpos=Fal
         link_type, link_mesh_scale, link_mesh_path, par2link_pos, par2link_ori = link_collision_info[2:7]
         what2linkpart = p.multiplyTransforms(what2linkjoint[0], what2linkjoint[1], par2link_pos, par2link_ori)
         if link_type == p.GEOM_MESH:
-            linkpart_pc_local = sample_pc_from_mesh(link_mesh_path, link_mesh_scale, num_points)
+            linkpart_pc_local = sample_pc_from_mesh(link_mesh_path, link_mesh_scale, min_num_points)
         elif link_type == p.GEOM_BOX:
             # link_mesh_scale is object dimension if link_type is GEOM_BOX
             object_halfExtents = np.array(link_mesh_scale) / 2
-            if rng is not None: linkpart_pc_local = rng.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
-            else: linkpart_pc_local = np.uniform(-object_halfExtents, object_halfExtents, size=(num_points, 3))
+            if rng is not None: linkpart_pc_local = rng.uniform(-object_halfExtents, object_halfExtents, size=(min_num_points, 3))
+            else: linkpart_pc_local = np.uniform(-object_halfExtents, object_halfExtents, size=(min_num_points, 3))
         elif link_type == p.GEOM_CYLINDER:
             raise NotImplementedError
         
@@ -1118,9 +1134,35 @@ def get_link_pc_from_id(obj_id, link_index=-1, num_points=1024, use_worldpos=Fal
     return np.array(link_pc)
 
 
-def visualize_pc(point_cloud_np):
+def get_obj_pc_from_id(obj_id, num_points=1024, use_worldpos=False, rng=None, client_id=0):
+    # Set all joints to the lower limit before getting bbox and pc; Assumption is lower joints means the object is in the most compact shape!
+    obj_joints_num = get_num_joints(obj_id, client_id=client_id)
+    joints_lower_limit = [get_joint_limits(obj_id, joint_i, client_id=client_id)[0] for joint_i in range(obj_joints_num)]
+    set_joint_positions(obj_id, list(range(obj_joints_num)), joints_lower_limit, client_id=client_id)
+    control_joints(obj_id, list(range(obj_joints_num)), joints_lower_limit, client_id=client_id)
+    # Get object point cloud
+    obj_pc = []; link_num = get_num_links(obj_id, client_id=client_id) + 1 # add baselink
+    num_mesh_parts = get_body_mesh_num(obj_id, client_id=client_id)
+    min_num_points = ceil(num_points / max(num_mesh_parts, 1)) * 2
+    for i, link_index in enumerate(range(-1, link_num-1)):
+        link_pc = get_link_pc_from_id(obj_id, link_index, min_num_points=min_num_points, use_worldpos=use_worldpos, rng=rng, client_id=client_id)
+        obj_pc.extend(link_pc)
+    if rng is not None: return rng.permutation(obj_pc)[:num_points]
+    else: return np.random.permutation(obj_pc)[:num_points]
+
+
+def get_obj_axes_aligned_bbox_from_pc(obj_pc):
+    o3d_pc = o3d.geometry.PointCloud()
+    o3d_pc.points = o3d.utility.Vector3dVector(obj_pc)
+    bbox = o3d_pc.get_axis_aligned_bounding_box()
+    return np.concatenate([bbox.get_center(), [0., 0., 0., 1.], bbox.get_half_extent()])
+
+
+def visualize_pc(point_cloud_np, zoom=0.8):
     # Visualize the point cloud
     o3d_pc = o3d.geometry.PointCloud()
     o3d_pc.points = o3d.utility.Vector3dVector(point_cloud_np)
     coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    o3d.visualization.draw_geometries([o3d_pc, coord_frame])
+    # front means the direction pointing to the camera (facing the camera), up means the up translation between camera and world coordinate
+    o3d.visualization.draw_geometries([o3d_pc, coord_frame], lookat=[0.0, 0.0, 0.0], 
+                                      front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)

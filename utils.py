@@ -3,6 +3,7 @@ from collections import OrderedDict
 import os
 import csv
 import pprint
+import numpy as np
 
 
 
@@ -11,9 +12,11 @@ def read_json(json_path):
         data = json.load(f)
     return data
 
+
 def write_json(data, json_path):
     with open(json_path, 'w') as f:
         json.dump(data, f, indent=4)
+
 
 def write_csv_line(result_file_path, result):
     """ write a line in a csv file; create the file and write the first line if the file does not already exist """
@@ -25,3 +28,33 @@ def write_csv_line(result_file_path, result):
         writer = csv.DictWriter(csv_file, result.keys())
         if not file_exists: writer.writeheader()
         writer.writerow(result)
+
+
+def dict2list(diction):
+    """ convert a dictionary to a list of tuples """
+    key_list, value_list = [], []
+    for k, v in diction.items():
+        if isinstance(v, dict):
+            subkey_lst, subvalue_lst = dict2list(v)
+            key_list.extend(subkey_lst)
+            value_list.extend(subvalue_lst)
+        else:
+            key_list.append(k)
+            value_list.append(v)
+    return key_list, value_list
+
+
+def get_on_bbox(bbox, half_z_extend=0.1):
+    center_pos = bbox[:3]
+    center_pos[2] += half_z_extend
+    half_extents = bbox[7:10]
+    half_extents[2] += half_z_extend
+    orientation = bbox[3:7]
+    return np.array([*center_pos, *orientation, *half_extents])
+
+
+def pc_random_downsample(pc_array, num_points):
+    """ Randomly downsample a point cloud """
+    num_points = min(num_points, pc_array.shape[0])
+    idx = np.random.choice(pc_array.shape[0], num_points, replace=False)
+    return pc_array[idx]
