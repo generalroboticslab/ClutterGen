@@ -115,8 +115,6 @@ class CrossAttention(nn.Module):
         return fused_features
 
 
-
-
 class Agent(nn.Module):
     def __init__(self, envs):
         super().__init__()
