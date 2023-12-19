@@ -185,7 +185,7 @@ class RoboSensaiBullet:
                 obj_mesh_num = pu.get_body_mesh_num(object_id, client_id=self.client_id)
                 obj_joints_num = pu.get_num_joints(object_id, client_id=self.client_id)
                 self.obj_name_id[object_unique_name] = object_id
-                self.obj_name_pc[object_unique_name] = self.get_obj_pc_from_id(object_id, num_points=min(max(256*obj_mesh_num, 1024), 4096), use_worldpos=False)
+                self.obj_name_pc[object_unique_name] = self.get_obj_pc_from_id(object_id, num_points=min(max(256*obj_mesh_num, 1024), self.args.max_num_scene_points), use_worldpos=False)
                 self.obj_name_axes_bbox[object_unique_name] = pu.get_obj_axes_aligned_bbox_from_pc(self.obj_name_pc[object_unique_name])
                 self.obj_stage_name_id[self.get_obj_stage(obj_name)].update({object_unique_name: object_id})
                 # TODO: For object who has self.IN relation, set transparence to 0.5
