@@ -64,27 +64,26 @@ class RoboSensaiBullet:
         #   0: "Table"
         self.obj_categories = {
             1: {"microwave": 1,
-                # "bowl": 1,
-                # "tomato_soup_can": 1,
-                # "master_chef_can": 1,
-                # "pitcher_base": 1,
-                # "cuboid": 1,
-                # "cube_arrow": 1,
-                # "mug": 3,
-                # "bleach_cleanser": 1,
-                # "cracker_box": 1,
-                # "sugar_box": 1,
-                # "lamp": 1,
-                # "power_drill": 1, # Power drill is too difficult to place need 100 steps to be stable
-                # "storage_furniture": 1,
+                "bowl": 1,
+                "tomato_soup_can": 1,
+                "master_chef_can": 1,
+                "pitcher_base": 1,
+                "cuboid": 1,
+                "cube_arrow": 1,
+                "mug": 3,
+                "bleach_cleanser": 1,
+                "cracker_box": 1,
+                "sugar_box": 1,
+                "lamp": 1,
+                "storage_furniture": 1,
             },
             2: {
                 "ball": 1,
-                # "cube": 1,
-                # "mustard_bottle": 1,
-                # "potted_meat_can": 1,
-                # "pentagram": 1,
-                # "banana": 1,
+                "cube": 1,
+                "mustard_bottle": 1,
+                "potted_meat_can": 1,
+                "pentagram": 1,
+                "banana": 1,
             }
         }
 
@@ -92,6 +91,7 @@ class RoboSensaiBullet:
         self.obj_scaling = {
             "microwave": 0.2,
             "lamp": 0.1,
+            "storage_furniture": 0.1,
         }
 
         self.valid_place_relation = {
