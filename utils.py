@@ -44,11 +44,10 @@ def dict2list(diction):
     return key_list, value_list
 
 
-def get_on_bbox(bbox, half_z_extend=0.1):
-    center_pos = bbox[:3]
-    center_pos[2] += half_z_extend
-    half_extents = bbox[7:10]
-    half_extents[2] += half_z_extend
+def get_on_bbox(bbox, z_half_extend=0.1):
+    center_pos, half_extents = bbox[:3], bbox[7:10]
+    center_pos[2] += half_extents[2] + z_half_extend
+    half_extents[2] = z_half_extend
     orientation = bbox[3:7]
     return np.array([*center_pos, *orientation, *half_extents])
 

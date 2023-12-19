@@ -36,7 +36,7 @@ class RoboSensaiBullet:
         self.tensor_dtype = torch.bfloat16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else torch.float32
         self.rng = np.random.default_rng(args.seed if hasattr(args, "seed") else None)
         self._init_simulator()
-        self.update_objects_back_pool()
+        self.update_objects_database()
         self.load_world(num_objects=self.args.num_pool_objs, 
                         random=self.args.random_select_pool, 
                         default_scaling=self.args.default_scaling if hasattr(self.args, "default_scaling") else 1.)
@@ -56,22 +56,22 @@ class RoboSensaiBullet:
         p.setGravity(0, 0, -9.8, physicsClientId=self.client_id)
 
 
-    def update_objects_back_pool(self):
+    def update_objects_database(self):
         # self.obj_categories = read_json(f'{self.args.asset_root}/{self.args.object_pool_folder}/obj_categories.json')
         # self.test_obj_categories = read_json(f'{self.args.asset_root}/{self.args.object_pool_folder}/test_obj_categories.json')
         
-        #   0: "plane"
+        #   0: "Table"
         self.obj_categories = {
             1: {
                 # "microwave": 1,
                 # "table": 1,
-                "table": 2,
+                # "table": 2,
                 # "table": 3,
-                "dishwasher": 3,
-                "refrigerator": 1,
-                "trash_can": 1,
+                # "dishwasher": 3,
+                # "refrigerator": 1,
+                # "trash_can": 1,
                 # "WashingMachine": 1,
-                "chair": 1,
+                # "chair": 2,
                 "storage_furniture": 1,
                 # "storage_furniture": 2,
                 # "storage_furniture": 3,
@@ -103,6 +103,7 @@ class RoboSensaiBullet:
             "microwave": self.IN,
             "table": self.ON,
             "dishwasher": self.IN,
+            'storage_furniture_0': self.ON,
         }
 
         obj_names, obj_values = dict2list(self.obj_categories)
@@ -111,18 +112,21 @@ class RoboSensaiBullet:
 
 
     def _load_default_scene(self):
+        self.default_scene_name = "table"
         self.default_scene_name_id = {}
         # Plane
         self.planeId = self.loadURDF("plane.urdf", 
                                      basePosition=[0, 0, 0.], 
                                      baseOrientation=p.getQuaternionFromEuler([0, 0, 0]), 
                                      useFixedBase=True)
-        self.default_scene_name_id["plane"] = self.planeId
-        self.plane_region = [[-1, -1, 0.], [1, 1, 1.5]]
-        plane_region_np = self.to_numpy(self.plane_region)
-        self.plane_region_np = self.to_numpy([*np.sum(plane_region_np, axis=0)/2, 
-                                              *p.getQuaternionFromEuler([0., 0., 0.]), 
-                                              *np.abs(np.diff(plane_region_np, axis=0).squeeze())/2])
+        # self.default_scene_name_id["plane"] = self.planeId
+        self.plane_pose = pu.get_body_pose(self.planeId, client_id=self.client_id)
+        plane_qr_region_half_extents = [1., 1., 1.]
+        plane_qr_region_pos = [0., 0., 0.]
+        plane_qr_region_ori = p.getQuaternionFromEuler([0., 0., 0.])
+        planeHalfExtents = [*plane_qr_region_half_extents[:2], 0.]
+        self.plane_qr_region_np = self.to_numpy([*plane_qr_region_pos, *plane_qr_region_ori, *plane_qr_region_half_extents])
+
         # Walls
         # self.wallHalfExtents = [1., 0.05, 0.75]
         # self.wallxId = pu.create_box_body(position=[-1, 0., self.wallHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., np.pi/2]),
@@ -130,33 +134,37 @@ class RoboSensaiBullet:
         # self.wallyId = pu.create_box_body(position=[0., -1, self.wallHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
         #                                     halfExtents=self.wallHalfExtents, rgba_color=[1, 1, 1, 1], client_id=self.client_id)
         # Table
-        # self.tableHalfExtents = [0.2, 0.3, 0.2]
-        # self.tableId = pu.create_box_body(position=[0., 0., self.tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
-        #                                   halfExtents=self.tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
-        # self.default_scene_name_id["table"] = self.tableId
+        tableHalfExtents = [0.3, 0.4, 0.2]
+        self.tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
+                                          halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
+        self.table_pose = pu.get_body_pose(self.tableId, client_id=self.client_id)
+        self.default_scene_name_id["table"] = self.tableId
         # Default region using table position and table half extents
-        # default_region_half_extents = [self.tableHalfExtents[0], self.tableHalfExtents[1], 0.1]
-        # default_region_pos = [0., 0., self.tableHalfExtents[2]*2+default_region_half_extents[2]]
-        # default_region_ori = p.getQuaternionFromEuler([0., 0., 0.])
-        # self.default_region = [*default_region_pos, *default_region_ori, *default_region_half_extents]
-        # self.default_region_np = self.to_numpy(sum(self.default_region, []))
+        table_region_half_extents = [tableHalfExtents[0], tableHalfExtents[1], 0.1]
+        # Keep in mind: our queried region is in the object local frame!!
+        table_region_pos = [0., 0., tableHalfExtents[2]+table_region_half_extents[2]]
+        table_region_ori = p.getQuaternionFromEuler([0., 0., 0.])
+        self.table_qr_region = [*table_region_pos, *table_region_ori, *table_region_half_extents]
+        
         self.prepare_area = [[-1100., -1100., 0.], [-1000, -1000, 5]]
-        self.default_scene_points = 2048
-
-        default_scene_pc = []
+        self.default_scene_points = 4096
+        init_scene_pc = []
         for name, id in self.default_scene_name_id.items():
             if name == "plane": # Plane needs to use default region to sample
-                plane_region_np[:, 2] = 0. # Set the z to 0
-                default_scene_pc.append(self.rng.uniform(*plane_region_np, size=(self.default_scene_points, 3)))
+                plane_pc_sample_region = self.to_numpy(plane_qr_region_half_extents[:2]+[0.])
+                init_scene_pc.append(self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.default_scene_points, 3)))
             else:
                 object_pc_world_frame = self.get_obj_pc_from_id(id, num_points=self.default_scene_points, use_worldpos=True)
-                default_scene_pc.append(object_pc_world_frame)
-        self.default_scene_pc = np.concatenate(default_scene_pc, axis=0)
-        self.default_scene_pc_feature = self.pc_extractor(self.to_torch(self.default_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
+                init_scene_pc.append(object_pc_world_frame)
+        self.init_scene_pose = self.table_pose if self.default_scene_name == "table" else self.plane_pose
+        init_scene_half_extents = tableHalfExtents if self.default_scene_name == "table" else planeHalfExtents
+        self.init_scene_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *init_scene_half_extents]
+        self.init_scene_pc = np.concatenate(init_scene_pc, axis=0)
+        self.init_scene_pc_feature = self.pc_extractor(self.to_torch(self.init_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
 
 
     def load_objects(self, num_objects=10, random=True, default_scaling=1., init_region=None):
-        self.obj_name_id = {}; init_region = init_region if init_region is not None else self.plane_region
+        self.obj_name_id = {}; init_region = init_region if init_region is not None else self.table_qr_region
         self.obj_name_pc = {}; self.obj_name_axes_bbox = {}; self.obj_name_pc_feature = {}; self.obj_stage_name_id = {k:{} for k, v in self.obj_categories.items()}
         self.scene_obj_valid_place_relation = {}; self.obj_name_joint_limits = {}
         if random: # Random choose object categories from the pool and their index
@@ -173,7 +181,7 @@ class RoboSensaiBullet:
 
             try: 
                 obj_globalScaling = self.specify_obj_scale(obj_name, default_scaling=default_scaling)
-                basePosition, baseOrientation = self.rng.uniform(*init_region), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
+                basePosition, baseOrientation = self.rng.uniform(*self.region2axesbbox(init_region)), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
                 object_unique_name = f"{obj_name}_{objects_act_pool_indexes[i]}"
                 object_id = self.loadURDF(f"{self.args.asset_root}/{self.args.object_pool_folder}/{obj_name}/{objects_act_pool_indexes[i]}/mobility.urdf", 
                                         basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=obj_globalScaling)  # Load an object at position [0, 0, 1]
@@ -192,8 +200,8 @@ class RoboSensaiBullet:
                     pu.set_joint_positions(object_id, list(range(obj_joints_num)), joints_limits[:, 0], client_id=self.client_id)
                     pu.control_joints(object_id, list(range(obj_joints_num)), joints_limits[:, 0], client_id=self.client_id)
                     self.obj_name_joint_limits[object_unique_name] = joints_limits
-            except:
-                print(f"Failed to load object {obj_name}")
+            except Exception as e:
+                print(f"Failed to load object {obj_name} | Error: {e}")
         
         # Pre-extract the feature for each object and store here 
         with torch.no_grad():
@@ -203,11 +211,11 @@ class RoboSensaiBullet:
         self.num_pool_objs = len(self.obj_name_id)
         self.args.max_num_placing_objs = [min(stage_obj_num, self.num_pool_objs) for stage_obj_num in self.args.max_num_placing_objs]
 
-        self.obj_name_id['plane'] = self.planeId
-        self.obj_name_pc['plane'] = self.default_scene_pc
-        self.obj_name_axes_bbox['plane'] = self.plane_region_np
-        self.obj_name_pc_feature['plane'] = self.default_scene_pc_feature
-        self.obj_stage_name_id.update({0: {'plane': self.planeId}})
+        self.obj_name_id[self.default_scene_name] = self.default_scene_name_id[self.default_scene_name]
+        self.obj_name_pc[self.default_scene_name] = self.init_scene_pc
+        self.obj_name_axes_bbox[self.default_scene_name] = self.init_scene_bbox
+        self.obj_name_pc_feature[self.default_scene_name] = self.init_scene_pc_feature
+        self.obj_stage_name_id.update({0: {self.default_scene_name: self.obj_name_id[self.default_scene_name]}})
 
         assert len(self.args.max_num_placing_objs) == len(self.obj_stage_name_id.keys()), \
             f"Max number of placing objects {len(self.args.max_num_placing_objs)} does not match the number of stages {len(self.obj_stage_name_id.keys())}!"
@@ -219,6 +227,7 @@ class RoboSensaiBullet:
         self._init_misc_variables()
         self._init_obs_act_space()
         self.load_objects(num_objects=num_objects, random=random, default_scaling=default_scaling)
+        self.reset_all = True
 
 
     def post_checker(self, verbose=False):
@@ -226,9 +235,7 @@ class RoboSensaiBullet:
 
         for obj_name, obj_id in self.obj_name_id.items():
             obj_vel = pu.getObjVelocity(obj_id, client_id=self.client_id)
-            if (obj_vel[:3].__abs__() > self.args.vel_threshold[0]).any() \
-                or (obj_vel[3:].__abs__() > self.args.vel_threshold[1]).any():
-                
+            if not self.vel_checker(obj_vel):
                 self.failed_objs.append(["VEL_FAIL", self.client_id, obj_name, obj_id, obj_vel])
 
         if verbose: 
@@ -252,6 +259,7 @@ class RoboSensaiBullet:
         # stepping == 0 means previous action is still running, we need to wait until the object is stable
         # In-pysical step
         if self.info['stepping'] == 0.:
+            self.prev_obj_vel = np.array([0.]*6, dtype=self.numpy_dtype)
             for _ in range(ceil(self.args.max_traj_history_len/self.args.step_divider)):
                 self.simstep(1/240)
                 obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
@@ -262,12 +270,12 @@ class RoboSensaiBullet:
                 self.accm_vel_reward += -obj_vel[:].__abs__().sum()
                 # Jump out if the object is not moving (in the future, we might need to add acceleration checker)
                 self.his_steps += 1
-                if ((obj_vel[:3].__abs__() < self.args.vel_threshold[0]).all() \
-                    and (obj_vel[3:].__abs__() < self.args.vel_threshold[1]).all()) \
+                if (self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel)) \
                     or self.his_steps >= self.args.max_traj_history_len:
                     self.info['stepping'] = 1.
                     self.info['his_steps'] = self.his_steps
                     break
+                self.prev_obj_vel = obj_vel
         
         # Post-physical step
         reward = self.compute_reward() if self.info['stepping']==1 else 0. # Must compute reward before observation since we use the velocity to compute reward
@@ -276,13 +284,13 @@ class RoboSensaiBullet:
         if self.args.rendering and self.info['stepping']==1:
             print(f"Obj Name: {self.selected_obj_name} | Stable Steps: {self.his_steps}")
             if done and self.info['success'] == 1:
-                print(f"Successfully Place {self.selected_obj_name}! | Stable steps: {self.his_steps}")
+                print(f"Successfully Place {self.success_obj_num[self.cur_stage]} Objects at the stage {self.cur_stage}!")
                 if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
 
         if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
         else: observation = self.last_observation
 
-        # Reset placed object pose | when reset, the placed_obj_poses will be empty
+        # Reset successfully placed object pose
         if self.info['stepping'] == 1.:
             obj_names, obj_poses = dict2list(self.placed_obj_poses)
             for i, obj_name in enumerate(obj_names):
@@ -293,14 +301,9 @@ class RoboSensaiBullet:
 
     def reset(self):
         if self.reset_all:
-            # Place all objects to the prepare area
-            for obj_name in self.obj_name_id.keys():
-                if obj_name == "plane": continue # Don't move plane!!!
-                pu.set_pose(body=self.obj_name_id[obj_name], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
             # Reset Training buffer and update the start observation for the next episode
-            self.reset_buffer()
-            self.update_unplaced_objs()
-            self.update_unquery_scenes()
+            self.reset_env()
+        self.reset_buffer()
         return self.compute_observations()
 
 
@@ -336,7 +339,8 @@ class RoboSensaiBullet:
 
     
     def _init_misc_variables(self):
-        self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [1/240, np.pi/2400] # 1m/s^2 and 18 degree/s^2
+        self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [0.005, np.pi/1800] # 0.5cm/s and 0.1 degree/s
+        self.args.acc_threshold = self.args.acc_threshold if hasattr(self.args, "acc_threshold") else [0.1, np.pi/180] # 0.1m/s^2 and 1degree/s^2
         self.args.max_num_placing_objs = self.args.max_num_placing_objs if hasattr(self.args, "max_num_placing_objs") else [0, 3, 15]
         self.args.max_traj_history_len = self.args.max_traj_history_len if hasattr(self.args, "max_traj_history_len") else 240
         self.args.step_divider = self.args.step_divider if hasattr(self.args, "step_divider") else 6
@@ -346,8 +350,7 @@ class RoboSensaiBullet:
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 4096
-        self.args.max_stage = len(self.args.max_num_placing_objs) - 1 # We start from stage 0 (plane)
-        self.reset_all = True
+        self.args.max_stage = len(self.args.max_num_placing_objs) - 1 # We start from stage 0 (table)
         # Buffer does not need to be reset
         self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0}
 
@@ -360,19 +363,30 @@ class RoboSensaiBullet:
     def reset_buffer(self):
         # Training
         self.moving_steps = 0
-        self.reset_all = False
         # Observations
-        self.obj_done = True
-        self.query_scene_done = True
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
         self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
+        # Misc Info
+        self.success_obj_num[self.cur_stage] = 0 # Reset the success obj num for the next stage
+
+    
+    def reset_env(self):
+        # Place all objects to the prepare area
+        for obj_name in self.obj_name_id.keys():
+            if obj_name == self.default_scene_name: continue # Don't move plane!!!
+            pu.set_pose(body=self.obj_name_id[obj_name], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        self.reset_all = False
         # Scene
-        self.placed_obj_poses = {k:{} for k in self.obj_stage_name_id.keys()}
-        self.placed_obj_poses[0]['plane'] = [[0., 0., 0.], [0., 0., 0., 1]]
         self.cur_stage = 1
+        self.placed_obj_poses = {k:{} for k in self.obj_stage_name_id.keys()}
+        self.placed_obj_poses[0][self.default_scene_name] = deepcopy(self.init_scene_pose)
         self.success_obj_num = {k:0 for k in self.obj_stage_name_id.keys()}
+        self.update_unplaced_objs()
+        self.update_unquery_scenes()
+        self.obj_done = True
+        self.query_scene_done = True
 
     
     def update_unplaced_objs(self, stage=None, num_objs=None):
@@ -412,15 +426,15 @@ class RoboSensaiBullet:
         
         # action = [x, y, z, roll, pitch, yaw]
         scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        placed_bbox = self.last_observation[self.placed_region_slice]
-        half_extents = placed_bbox[7:]
+        placed_qr_region = self.last_observation[self.placed_region_slice]
+        half_extents = placed_qr_region[7:]
         untrans_xyz = action[:3] * (2 * half_extents) - half_extents
-        local_action_xyz = p.multiplyTransforms(placed_bbox[:3], placed_bbox[3:7], untrans_xyz, [0., 0., 0., 1.])[0]
+        local_action_xyz = p.multiplyTransforms(placed_qr_region[:3], placed_qr_region[3:7], untrans_xyz, [0., 0., 0., 1.])[0]
         step_action_xyz = p.multiplyTransforms(scene_obj_pose[0], scene_obj_pose[1], local_action_xyz, [0., 0., 0., 1.])[0]
         step_action_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
 
         if self.args.rendering:
-            world2qr_region = p.multiplyTransforms(*scene_obj_pose, placed_bbox[:3], placed_bbox[3:7])
+            world2qr_region = p.multiplyTransforms(*scene_obj_pose, placed_qr_region[:3], placed_qr_region[3:7])
             if hasattr(self, "last_world2qr_region") and world2qr_region == self.last_world2qr_region: pass
             else:
                 if hasattr(self, "region_vis_id"): p.removeBody(self.region_vis_id, physicsClientId=self.client_id)
@@ -433,19 +447,6 @@ class RoboSensaiBullet:
 
     def compute_observations(self):
         # We need object description (index), bbox, reward (later)
-        # Choose query scene and compute query region
-        if self.query_scene_done:
-            self.query_scene_done = False
-            self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name_id.keys()))
-            self.selected_qr_scene_id = self.obj_name_id[self.selected_qr_scene_name]
-            self.selected_qr_scene_pc = self.obj_name_pc[self.selected_qr_scene_name].copy()
-            self.selected_qr_scene_pc_feature = self.obj_name_pc_feature[self.selected_qr_scene_name].copy()
-            selected_scene_bbox = self.obj_name_axes_bbox[self.selected_qr_scene_name]
-            if self.selected_qr_scene_name == "plane": # Plane needs to use default region to sample
-                self.selected_obj_qr_region = selected_scene_bbox.copy()
-            else:
-                self.selected_obj_qr_region = get_on_bbox(selected_scene_bbox.copy()) # Must copy here! numpy array will share the memory!
-
         # Choose query object
         if self.obj_done:
             self.obj_done = False
@@ -454,11 +455,30 @@ class RoboSensaiBullet:
             self.selected_obj_pc = self.obj_name_pc[self.selected_obj_name].copy()
             self.selected_obj_pc_feature = self.obj_name_pc_feature[self.selected_obj_name].copy()
 
+        # Choose query scene and compute query region
+        if self.query_scene_done:
+            self.query_scene_done = False
+            self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name_id.keys()))
+            self.selected_qr_scene_id = self.obj_name_id[self.selected_qr_scene_name]
+            self.selected_qr_scene_pc = self.obj_name_pc[self.selected_qr_scene_name].copy()
+            self.selected_qr_scene_pc_feature = self.obj_name_pc_feature[self.selected_qr_scene_name].copy()
+            selected_obj_bbox = self.obj_name_axes_bbox[self.selected_obj_name]
+            selected_scene_bbox = self.obj_name_axes_bbox[self.selected_qr_scene_name]
+            print(selected_scene_bbox, self.selected_qr_scene_name)
+            # Plane needs to use default region to sample; needs to set scene_bbox
+            # We only have on and in relation for now. On and in are pre-annotated.
+            if self.valid_place_relation[self.selected_obj_name] == self.ON:
+                max_z_half_extent = selected_obj_bbox[9] # bbox is half extent!
+                self.selcted_qr_region = get_on_bbox(selected_scene_bbox.copy(), z_half_extend=max_z_half_extent)
+            elif self.valid_place_relation[self.selected_obj_name] == self.IN:
+                self.selcted_qr_region = selected_scene_bbox.copy()
+            print(self.selcted_qr_region)
+
         # Convert history to tensor
         his_traj = self.to_numpy(self.traj_history).flatten()
 
         self.last_observation = np.concatenate([self.selected_qr_scene_pc_feature, self.selected_obj_pc_feature, 
-                                                self.selected_obj_qr_region, self.last_raw_action, his_traj])
+                                                self.selcted_qr_region, self.last_raw_action, his_traj])
         
         return self.last_observation
 
@@ -466,7 +486,8 @@ class RoboSensaiBullet:
     def compute_reward(self):
         self.moving_steps += 1
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
-        if self.his_steps <= self.args.max_stable_steps: # Jump to the next object, object is stable within 10 simulation steps
+        if self.his_steps <= self.args.max_stable_steps: 
+            # Jump to the next object, object is stable within 10 simulation steps
             self.obj_done = True; self.moving_steps = 0; self.success_obj_num[self.cur_stage] += 1
             self.unplaced_objs_name_id.pop(self.selected_obj_name)
             # Record the successful object pose
@@ -492,38 +513,40 @@ class RoboSensaiBullet:
         
 
     def compute_done(self):
+        done = False # Not real done, done signal means one training episode is done
         # When all cur stage objects have been placed, move to the next scene, refill all objects
-        done = False
-        if len(self.unplaced_objs_name_id)==0 or self.moving_steps >= self.args.max_trials:
+        if len(self.unplaced_objs_name_id)==0:
             self.unquried_scene_name_id.pop(self.selected_qr_scene_name)
-            self.update_unplaced_objs()
-            self.query_scene_done = True
-            self.reset_all = False # Not real done (reset the query scene and query object)
+            self.query_scene_done = True # Choose new queried scene in the current stage
+            self.update_unplaced_objs()  # Refill all objects
+            self.obj_done = True         # Choose new object in the current stage
+            self.reset_all = False       # Not real done (reset the query scene and query object)
             done = True
+        if self.moving_steps >= self.args.max_trials:
+            self.unquried_scene_name_id.pop(self.selected_qr_scene_name)
+            self.query_scene_done = True # Choose new queried scene in the current stage
+            self.update_unplaced_objs()  # Refill all objects
+            self.obj_done = True         # Choose new object in the current stage
+            self.reset_all = False       # Not real done (reset the query scene and query object)
+            done = True                  # Failed to place the object, reset its pose to the prepare area
+            pu.set_pose(body=self.obj_name_id[self.selected_obj_name], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
         # When all scene have been queried, move to the next stage, refill scene and objects
         # If there is no next stage, then reset everything
         if len(self.unquried_scene_name_id)==0:
             self.cur_stage += 1
-            done = True
             if self.cur_stage > self.args.max_stage or len(self.placed_obj_poses[self.cur_stage-1])==0:
-                self.reset_all = True # Real done (reset the environment)
+                self.reset_all = True        # Real done (reset the environment)
             else:
-                self.update_unplaced_objs()
-                self.update_unquery_scenes()
-
-        # If there is a goal condition
-        # if self.args.max_num_placing_objs is not None:
-        #     if len(self.placed_obj_poses[self.cur_stage]) >= self.args.max_num_placing_objs[self.cur_stage]:
-        #         self.cur_stage += 1
-        #         done = True
-        #         self.reset_all = True
-        #         self.info['success'] = 1.
-        #         self.info['placed_obj_poses'] = self.placed_obj_poses
-
+                self.update_unplaced_objs()  # Update next-stage unplaced objects
+                self.update_unquery_scenes() # Update next-stage unqueried scenes
+            done = True
+        # Record miscs info
         if done:
             self.info['placed_obj_poses'] = self.placed_obj_poses
-            self.info['success_placed_obj_num'] = sum(dict2list(self.success_obj_num)[1]) # Include plane
-            self.success_obj_num[self.cur_stage] = 0 # Reset the success obj num for the next stage
+            self.info['success_placed_obj_num'] = sum(dict2list(self.success_obj_num)[1])
+            self.info['success'] = 0.
+            if self.cur_stage > len(self.args.max_num_placing_objs):
+                self.info['success'] = all([self.success_obj_num[i] >= self.args.max_num_placing_objs[i] for i in range(self.cur_stage-1)])
         return done
         
 
@@ -559,6 +582,25 @@ class RoboSensaiBullet:
         return None
     
 
+    def vel_checker(self, obj_vel):
+        return ((obj_vel[:3].__abs__() < self.args.vel_threshold[0]).all() \
+                    and (obj_vel[3:].__abs__() < self.args.vel_threshold[1]).all())
+
+
+    def acc_checker(self, obj_vel, prev_obj_vel):
+        acc = np.abs((obj_vel - prev_obj_vel) / (1/240))
+        return (acc[:3] < self.args.acc_threshold[0]).all() \
+                    and (acc[3:] < self.args.acc_threshold[1]).all()
+    
+
+    def region2axesbbox(self, region):
+        ## region: [x, y, z, qx, qy, qz, w, half_x, half_y, half_z]
+        region = self.to_numpy(region)
+        lower_bound = region[:3] - region[7:]
+        upper_bound = region[:3] + region[7:]
+        return [lower_bound, upper_bound]
+    
+
     def specify_obj_scale(self, obj_name, default_scaling=1.):
         return 0.2 if self.get_obj_stage(obj_name)==0 else default_scaling
 
@@ -592,13 +634,14 @@ if __name__=="__main__":
     args.default_scaling = 0.5
     args.realtime = True
     args.force_threshold = 20.
-    args.vel_threshold = [1/240, np.pi/2400] # Probably need to compute acceleration threshold!
+    args.vel_threshold = [0.005, np.pi/1800] # This two threshold need to be tuned
+    args.acc_threshold = [0.1, np.pi/180]
     args.eval_result = True
     args.specific_scene = "microwave_0"
 
     env = RoboSensaiBullet(args)
 
-    all_pc = np.concatenate(list(env.obj_name_pc.values()) + [env.default_scene_pc], axis=0)
+    all_pc = np.concatenate(list(env.obj_name_pc.values()) + [env.init_scene_pc], axis=0)
     pu.visualize_pc(all_pc)
 
     while True:
