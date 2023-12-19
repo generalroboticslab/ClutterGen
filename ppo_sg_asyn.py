@@ -36,7 +36,7 @@ def parse_args():
     # RoboSensai Env parameters
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--num_pool_objs', type=int, default=20)
-    parser.add_argument('--max_num_placing_objs', type=int, default=[0, 3, 16], nargs='+') 
+    parser.add_argument('--max_num_placing_objs', type=int, default=[0, 16, 1], nargs='+') 
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')

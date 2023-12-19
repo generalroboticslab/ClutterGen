@@ -1,4 +1,4 @@
-from utils import read_json, dict2list, get_on_bbox, pc_random_downsample
+from utils import read_json, dict2list, get_on_bbox, get_in_bbox, pc_random_downsample
 from torch_utils import tf_apply
 import time
 import os
@@ -60,50 +60,47 @@ class RoboSensaiBullet:
         # self.obj_categories = read_json(f'{self.args.asset_root}/{self.args.object_pool_folder}/obj_categories.json')
         # self.test_obj_categories = read_json(f'{self.args.asset_root}/{self.args.object_pool_folder}/test_obj_categories.json')
         
+        # Right now we only have two stages, object can not appear in both stages! We need to figure out how to deal with this problem
         #   0: "Table"
         self.obj_categories = {
-            1: {
-                # "microwave": 1,
-                # "table": 1,
-                # "table": 2,
-                # "table": 3,
-                # "dishwasher": 3,
-                # "refrigerator": 1,
-                # "trash_can": 1,
-                # "WashingMachine": 1,
-                # "chair": 2,
-                "storage_furniture": 1,
-                # "storage_furniture": 2,
-                # "storage_furniture": 3,
+            1: {"microwave": 1,
+                # "bowl": 1,
+                # "tomato_soup_can": 1,
+                # "master_chef_can": 1,
+                # "pitcher_base": 1,
+                # "cuboid": 1,
+                # "cube_arrow": 1,
+                # "mug": 3,
+                # "bleach_cleanser": 1,
+                # "cracker_box": 1,
+                # "sugar_box": 1,
+                # "lamp": 1,
+                # "power_drill": 1, # Power drill is too difficult to place need 100 steps to be stable
+                # "storage_furniture": 1,
             },
             2: {
                 "ball": 1,
-                "cube": 1,
-                "bowl": 1,
-                "mustard_bottle": 1,
-                "potted_meat_can": 1,
-                "tomato_soup_can": 1,
-                "master_chef_can": 1,
-                "pitcher_base": 1,
-                "pentagram": 1,
-                "cuboid": 1,
-                "cube_arrow": 1,
-                "banana": 1,
-                "mug": 3,
-                "bleach_cleanser": 1,
-                "cracker_box": 1,
-                "sugar_box": 1,
-                # "lamp": 1,
-                # "power_drill": 1, # Power drill is too difficult to place need 100 steps to be stable
+                # "cube": 1,
+                # "mustard_bottle": 1,
+                # "potted_meat_can": 1,
+                # "pentagram": 1,
+                # "banana": 1,
             }
         }
 
         # Preference of placing objects
+        self.obj_scaling = {
+            "microwave": 0.2,
+            "lamp": 0.1,
+        }
+
         self.valid_place_relation = {
-            "microwave": self.IN,
+            "plane": self.ON,
             "table": self.ON,
-            "dishwasher": self.IN,
-            'storage_furniture_0': self.ON,
+            "microwave": self.IN,
+            "bowl": self.IN,
+            "mug": self.IN,
+            "cuboid": self.ON,
         }
 
         obj_names, obj_values = dict2list(self.obj_categories)
@@ -154,7 +151,7 @@ class RoboSensaiBullet:
                 plane_pc_sample_region = self.to_numpy(plane_qr_region_half_extents[:2]+[0.])
                 init_scene_pc.append(self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.default_scene_points, 3)))
             else:
-                object_pc_world_frame = self.get_obj_pc_from_id(id, num_points=self.default_scene_points, use_worldpos=True)
+                object_pc_world_frame = self.get_obj_pc_from_id(id, num_points=self.default_scene_points, use_worldpos=False)
                 init_scene_pc.append(object_pc_world_frame)
         self.init_scene_pose = self.table_pose if self.default_scene_name == "table" else self.plane_pose
         init_scene_half_extents = tableHalfExtents if self.default_scene_name == "table" else planeHalfExtents
@@ -191,8 +188,7 @@ class RoboSensaiBullet:
                 self.obj_name_pc[object_unique_name] = self.get_obj_pc_from_id(object_id, num_points=min(max(256*obj_mesh_num, 1024), 4096), use_worldpos=False)
                 self.obj_name_axes_bbox[object_unique_name] = pu.get_obj_axes_aligned_bbox_from_pc(self.obj_name_pc[object_unique_name])
                 self.obj_stage_name_id[self.get_obj_stage(obj_name)].update({object_unique_name: object_id})
-                if self.get_obj_stage(obj_name) == 1:
-                    pu.change_obj_color(object_id, rgba_color=[0., 0., 0., 0.3], client_id=self.client_id)
+                # TODO: For object who has self.IN relation, set transparence to 0.5
                 if obj_name in self.valid_place_relation.keys():
                     self.scene_obj_valid_place_relation[object_unique_name] = self.valid_place_relation[obj_name]
                 if obj_joints_num > 0: # If the object is not movable, we need to set the mass to 0
@@ -216,6 +212,7 @@ class RoboSensaiBullet:
         self.obj_name_axes_bbox[self.default_scene_name] = self.init_scene_bbox
         self.obj_name_pc_feature[self.default_scene_name] = self.init_scene_pc_feature
         self.obj_stage_name_id.update({0: {self.default_scene_name: self.obj_name_id[self.default_scene_name]}})
+        self.scene_obj_valid_place_relation[self.default_scene_name] = self.valid_place_relation[self.default_scene_name]
 
         assert len(self.args.max_num_placing_objs) == len(self.obj_stage_name_id.keys()), \
             f"Max number of placing objects {len(self.args.max_num_placing_objs)} does not match the number of stages {len(self.obj_stage_name_id.keys())}!"
@@ -408,13 +405,14 @@ class RoboSensaiBullet:
     def update_unquery_scenes(self, stage=None):
         stage = max(self.cur_stage-1, 0) if stage is None else stage
         assert stage in self.placed_obj_poses.keys(), f"stage {stage} is not in the object stage list!"
-        selected_scene_pool = self.placed_obj_poses[stage]
-        assert len(selected_scene_pool) > 0, f"stage {stage} has no objects!"
+        selected_scene_pool_lst = [scene_name for scene_name in self.placed_obj_poses[stage].keys() \
+                                   if scene_name in self.scene_obj_valid_place_relation.keys()]
+        assert len(selected_scene_pool_lst) > 0, f"stage {stage} has no objects!"
 
         if self.args.random_select_placing:
-            unquried_scene_name = self.rng.choice(list(selected_scene_pool.keys()), len(selected_scene_pool), replace=False)
+            unquried_scene_name = self.rng.permutation(selected_scene_pool_lst)
         else:
-            unquried_scene_name = list(selected_scene_pool.keys())
+            unquried_scene_name = selected_scene_pool_lst
         self.unquried_scene_name_id = {obj_name: self.obj_name_id[obj_name] for obj_name in unquried_scene_name}
         
         
@@ -429,7 +427,9 @@ class RoboSensaiBullet:
         placed_qr_region = self.last_observation[self.placed_region_slice]
         half_extents = placed_qr_region[7:]
         untrans_xyz = action[:3] * (2 * half_extents) - half_extents
+        # In the object baseLink frame
         local_action_xyz = p.multiplyTransforms(placed_qr_region[:3], placed_qr_region[3:7], untrans_xyz, [0., 0., 0., 1.])[0]
+        # In the object world frame
         step_action_xyz = p.multiplyTransforms(scene_obj_pose[0], scene_obj_pose[1], local_action_xyz, [0., 0., 0., 1.])[0]
         step_action_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
 
@@ -464,21 +464,20 @@ class RoboSensaiBullet:
             self.selected_qr_scene_pc_feature = self.obj_name_pc_feature[self.selected_qr_scene_name].copy()
             selected_obj_bbox = self.obj_name_axes_bbox[self.selected_obj_name]
             selected_scene_bbox = self.obj_name_axes_bbox[self.selected_qr_scene_name]
-            print(selected_scene_bbox, self.selected_qr_scene_name)
             # Plane needs to use default region to sample; needs to set scene_bbox
             # We only have on and in relation for now. On and in are pre-annotated.
-            if self.valid_place_relation[self.selected_obj_name] == self.ON:
+            if self.scene_obj_valid_place_relation[self.selected_qr_scene_name] == self.ON:
                 max_z_half_extent = selected_obj_bbox[9] # bbox is half extent!
-                self.selcted_qr_region = get_on_bbox(selected_scene_bbox.copy(), z_half_extend=max_z_half_extent)
-            elif self.valid_place_relation[self.selected_obj_name] == self.IN:
-                self.selcted_qr_region = selected_scene_bbox.copy()
-            print(self.selcted_qr_region)
+                self.selected_qr_region = get_on_bbox(selected_scene_bbox.copy(), z_half_extend=max_z_half_extent)
+            elif self.scene_obj_valid_place_relation[self.selected_qr_scene_name] == self.IN:
+                max_z_half_extent = max(selected_obj_bbox[9], selected_scene_bbox[9]) # bbox is half extent!
+                self.selected_qr_region = get_in_bbox(selected_scene_bbox.copy(), z_half_extend=max_z_half_extent)
 
         # Convert history to tensor
         his_traj = self.to_numpy(self.traj_history).flatten()
 
         self.last_observation = np.concatenate([self.selected_qr_scene_pc_feature, self.selected_obj_pc_feature, 
-                                                self.selcted_qr_region, self.last_raw_action, his_traj])
+                                                self.selected_qr_region, self.last_raw_action, his_traj])
         
         return self.last_observation
 
@@ -534,7 +533,10 @@ class RoboSensaiBullet:
         # If there is no next stage, then reset everything
         if len(self.unquried_scene_name_id)==0:
             self.cur_stage += 1
-            if self.cur_stage > self.args.max_stage or len(self.placed_obj_poses[self.cur_stage-1])==0:
+            if self.cur_stage > self.args.max_stage or \
+                len(self.placed_obj_poses[self.cur_stage-1])==0 or \
+                len([scene_name for scene_name in self.placed_obj_poses[self.cur_stage-1].keys() \
+                                   if scene_name in self.scene_obj_valid_place_relation.keys()])==0:
                 self.reset_all = True        # Real done (reset the environment)
             else:
                 self.update_unplaced_objs()  # Update next-stage unplaced objects
@@ -602,7 +604,8 @@ class RoboSensaiBullet:
     
 
     def specify_obj_scale(self, obj_name, default_scaling=1.):
-        return 0.2 if self.get_obj_stage(obj_name)==0 else default_scaling
+        if obj_name in self.obj_scaling.keys(): return self.obj_scaling[obj_name]
+        else: return default_scaling
 
 
     def to_torch(self, x, dtype=None):
