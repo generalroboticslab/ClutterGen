@@ -35,9 +35,9 @@ class Plot_Utils:
         fig, axes = plt.subplots(1, 2, figsize=(13, 6))  # Create a 2-row, 1-column subplot grid
 
         # Plot Reset Success Rate
-        axes[0].set_title("Reset Success Rate Summary", fontsize=16)
+        axes[0].set_title("Scene Generation Success Rate", fontsize=16)
         axes[0].set_xlabel("Number of Objects", fontsize=14)
-        axes[0].set_ylabel("Reset Success Rate", fontsize=14)
+        axes[0].set_ylabel("Average Success Rate", fontsize=14)
 
         trained_obj_label = 'Trained'; trained_obj_label_act = trained_obj_label
         for checkpoint_name in self.data_full.keys():
@@ -60,9 +60,9 @@ class Plot_Utils:
         axes[0].tick_params(axis='both', labelsize=12)
 
         # Plot Episode Steps per Number of Placing Objects
-        axes[1].set_title("Episode Steps per Number of Objects", fontsize=16)
+        axes[1].set_title("Scene Generation Unstable Steps", fontsize=16)
         axes[1].set_xlabel("Number of Objects", fontsize=14)
-        axes[1].set_ylabel("Episode Steps", fontsize=14)
+        axes[1].set_ylabel("Average unstable Steps", fontsize=14)
 
         trained_obj_label_act = trained_obj_label
         for checkpoint_name in self.data_full.keys():
@@ -103,6 +103,6 @@ if __name__ == "__main__":
     plot_utils = Plot_Utils()
     plot_utils.read_file("eval_res/YCB/CSV/YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="10p_best", trained_objs=[1, 5, 10])
     plot_utils.read_file("eval_res/YCB/CSV/YCB_11-28_01:10_FC_FT_Rand_placing_Goal_12_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="12p_best", trained_objs=[1, 5, 10, 12])
-    plot_utils.read_file("eval_res/YCB/CSV/YCB_11-30_21:39_FC_FT_Rand_placing_Goal_16_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="16p_best", trained_objs=[1, 5, 10, 12, 16])
+    # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-30_21:39_FC_FT_Rand_placing_Goal_16_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="16p_best", trained_objs=[1, 5, 10, 12, 16])
     plot_utils.read_file("eval_res/YCB/CSV/EVAL_RandomPolicy_Setup.csv", checkpoint_name="RejectionSampling")
     plot_utils.plot_success_steps()
