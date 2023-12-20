@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='YCB_12-11_23:52_FC_Rand_placing_Goal_[0, 3, 16]_maxstable50_Weight_rewardPobj100.0') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='YCB_12-18_23:52_FC_Rand_placing_Goal_[0, 16, 1]_maxstable50_Weight_rewardPobj100.0') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -195,6 +195,7 @@ if __name__ == "__main__":
     # Evaluate checkpoint before replay
     for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
         envs.env_method('set_args', 'max_num_placing_objs', max_num_placing_objs)
+        envs.env_method('set_env_attr', 'reset_all', True)
 
         num_episodes = 0 
         episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)

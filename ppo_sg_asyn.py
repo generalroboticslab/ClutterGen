@@ -36,7 +36,7 @@ def parse_args():
     # RoboSensai Env parameters
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--num_pool_objs', type=int, default=20)
-    parser.add_argument('--max_num_placing_objs', type=int, default=[0, 16, 1], nargs='+') 
+    parser.add_argument('--max_num_placing_objs', type=int, default=[0, 16, 0], nargs='+') 
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
@@ -117,10 +117,10 @@ def parse_args():
     if args.checkpoint is not None: additional += '_FT'
     additional += '_Rand'
     if args.random_select_pool: additional += '_pool'
-    if args.random_select_placing: additional += '_placing'
+    if args.random_select_placing: additional += '_order'
     additional += '_Goal'
-    if args.max_num_placing_objs: additional += f'_{args.max_num_placing_objs}'
-    if args.max_stable_steps: additional += f'_maxstable{args.max_stable_steps}'
+    if args.max_num_placing_objs: additional += f'_maxStageNum_{"_".join(map(str, args.max_num_placing_objs))}'
+    if args.max_stable_steps: additional += f'_maxStable{args.max_stable_steps}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
     if args.penalty > 0: additional += f'_ori{args.penalty}'

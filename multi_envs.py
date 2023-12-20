@@ -35,6 +35,14 @@ class CustomPyBulletEnv(gym.Env):
     
     def get_args(self, args_name):
         return getattr(self.env.args, args_name)
+    
+
+    def set_env_attr(self, attr_name, attr_value):
+        setattr(self.env, attr_name, attr_value)
+
+    
+    def get_env_attr(self, attr_name):
+        return getattr(self.env, attr_name)
 
 
     def render(self, mode='human'):
