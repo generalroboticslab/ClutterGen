@@ -9,6 +9,8 @@ from collections import defaultdict, deque, namedtuple
 from itertools import product, combinations, count
 import open3d as o3d
 from math import ceil
+import xml.etree.ElementTree as ET
+
 
 INF = np.inf
 PI = np.pi
@@ -1154,6 +1156,7 @@ def get_obj_pc_from_id(obj_id, num_points=1024, use_worldpos=False, rng=None, cl
 def get_obj_axes_aligned_bbox_from_pc(obj_pc):
     o3d_pc = o3d.geometry.PointCloud()
     o3d_pc.points = o3d.utility.Vector3dVector(obj_pc)
+    # Another is get_oriented_bounding_box, but no get_half_extent attributes
     bbox = o3d_pc.get_axis_aligned_bounding_box()
     return np.concatenate([bbox.get_center(), [0., 0., 0., 1.], bbox.get_half_extent()])
 
@@ -1163,6 +1166,30 @@ def visualize_pc(point_cloud_np, zoom=0.8):
     o3d_pc = o3d.geometry.PointCloud()
     o3d_pc.points = o3d.utility.Vector3dVector(point_cloud_np)
     coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+    bbox = o3d_pc.get_axis_aligned_bounding_box(); bbox.color = np.array([0, 0, 0.])
     # front means the direction pointing to the camera (facing the camera), up means the up translation between camera and world coordinate
-    o3d.visualization.draw_geometries([o3d_pc, coord_frame], lookat=[0.0, 0.0, 0.0], 
+    o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox], lookat=[0.0, 0.0, 0.0], 
                                       front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
+    
+
+def modify_specific_link_in_urdf(file_path, new_rpy=[0., 0., 0.], new_scale=1.0, specify_link=None):
+    new_rpy = ' '.join([str(i) for i in new_rpy])
+    new_scale = ' '.join([str(i) for i in [new_scale]*3])
+    
+    # Parse the URDF file
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+
+    # Find the specified link by name
+    for link in root.findall('link'):
+        if link.get('name') == specify_link or specify_link is None:
+            # Modify the origin's xyz attribute in visual and collision tags
+            for origin_tag in link.findall('.//origin'):
+                origin_tag.set('rpy', new_rpy)
+
+            # Modify the scale attribute in the geometry tags
+            for geometry_tag in link.findall('.//geometry/mesh'):
+                geometry_tag.set('scale', new_scale)
+
+    # Write the modified tree back to a file
+    tree.write(file_path, encoding='utf-8', xml_declaration=True)

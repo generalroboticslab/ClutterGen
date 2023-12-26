@@ -45,6 +45,7 @@ def dict2list(diction):
 
 
 def get_on_bbox(bbox, z_half_extend:float):
+    bbox = bbox.copy()
     # center_pos is the relative translation from the object baselink to the center of the object bounding box
     center_pos, half_extents = bbox[:3], bbox[7:10]
     center_pos[2] += half_extents[2] + z_half_extend
@@ -53,7 +54,9 @@ def get_on_bbox(bbox, z_half_extend:float):
     return np.array([*center_pos, *orientation, *half_extents])
 
 
-def get_in_bbox(bbox, z_half_extend:float):
+def get_in_bbox(bbox, z_half_extend:float=None):
+    bbox = bbox.copy()
+    if z_half_extend is None: z_half_extend = bbox[9]
     # center_pos is the relative translation from the object baselink to the center of the object bounding box
     # You need to change the relative translation not the absolute translation (half extent in z-axis)
     center_pos, half_extents = bbox[:3], bbox[7:10]
