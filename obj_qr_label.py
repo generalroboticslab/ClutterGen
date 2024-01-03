@@ -381,7 +381,7 @@ class ObjectLabeler:
         
 
 if __name__ == '__main__':
-    source_folder_path = "assets/union_objects"
+    source_folder_path = "assets/PartNet/partNet_raw"
 
-    labeler = ObjectLabeler(source_folder_path, overwrite=True)
+    labeler = ObjectLabeler(source_folder_path, overwrite=False)
     labeler.start()
