@@ -1172,7 +1172,7 @@ def visualize_pc(point_cloud_np, zoom=0.8):
                                       front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
     
 
-def modify_specific_link_in_urdf(file_path, new_rpy=[0., 0., 0.], new_scale=1.0, specify_link=None):
+def modify_specific_link_in_urdf(file_path, new_rpy=[0., 0., 0.], new_scale=1.0, firstlink=True, specify_link=None):
     new_rpy = ' '.join([str(i) for i in new_rpy])
     new_scale = ' '.join([str(i) for i in [new_scale]*3])
     
@@ -1182,14 +1182,16 @@ def modify_specific_link_in_urdf(file_path, new_rpy=[0., 0., 0.], new_scale=1.0,
 
     # Find the specified link by name
     for link in root.findall('link'):
-        if link.get('name') == specify_link or specify_link is None:
+        if link.get('name') == specify_link or specify_link is None or firstlink:
             # Modify the origin's xyz attribute in visual and collision tags
             for origin_tag in link.findall('.//origin'):
                 origin_tag.set('rpy', new_rpy)
 
-            # Modify the scale attribute in the geometry tags
-            for geometry_tag in link.findall('.//geometry/mesh'):
-                geometry_tag.set('scale', new_scale)
+            # # Modify the scale attribute in the geometry tags
+            # for geometry_tag in link.findall('.//geometry/mesh'):
+            #     geometry_tag.set('scale', new_scale)
+                
+            if firstlink: break
 
     # Write the modified tree back to a file
     tree.write(file_path, encoding='utf-8', xml_declaration=True)

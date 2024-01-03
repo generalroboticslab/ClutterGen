@@ -86,7 +86,7 @@ class RoboSensaiBullet:
                 "banana": 1,
             },
             2: {
-                
+
             }
         }
 
@@ -191,7 +191,7 @@ class RoboSensaiBullet:
                 # TODO: For object who has self.IN relation, set transparence to 0.5
                 if obj_name in self.valid_place_relation.keys():
                     self.scene_obj_valid_place_relation[object_unique_name] = self.valid_place_relation[obj_name]
-                if obj_joints_num > 0: # If the object is not movable, we need to set the mass to 0
+                if obj_joints_num > 0: # If the object is not movable, we need to set the joints to the lower limit
                     joints_limits = np.array([pu.get_joint_limits(object_id, joint_i, client_id=self.client_id) for joint_i in range(obj_joints_num)])
                     pu.set_joint_positions(object_id, list(range(obj_joints_num)), joints_limits[:, 0], client_id=self.client_id)
                     pu.control_joints(object_id, list(range(obj_joints_num)), joints_limits[:, 0], client_id=self.client_id)
@@ -514,6 +514,7 @@ class RoboSensaiBullet:
                 self.selected_qr_scene_pc_feature = self.pc_extractor(self.to_torch(self.selected_qr_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).cpu().numpy()
 
             # pu.visualize_pc(self.selected_qr_scene_pc)
+            # pu.visualize_pc(self.selected_obj_pc)
 
         self.last_reward = vel_reward
 
