@@ -675,15 +675,19 @@ def get_fixed_links(body):
 DynamicsInfo = namedtuple('DynamicsInfo', ['mass', 'lateral_friction',
                                            'local_inertia_diagonal', 'local_inertial_pos', 'local_inertial_orn',
                                            'restitution', 'rolling_friction', 'spinning_friction',
-                                           'contact_damping', 'contact_stiffness'])
+                                           'contact_damping', 'contact_stiffness', 'body_type', 'collision_margin'])
 
 
-def get_dynamics_info(body, link=BASE_LINK):
-    return DynamicsInfo(*p.getDynamicsInfo(body, link))
+def get_dynamics_info(body, link=BASE_LINK, client_id=0):
+    return DynamicsInfo(*p.getDynamicsInfo(body, link, physicsClientId=client_id))
 
 
-def get_mass(body, link=BASE_LINK):
-    return get_dynamics_info(body, link).mass
+def get_mass(body, link=BASE_LINK, client_id=0):
+    return get_dynamics_info(body, link, client_id=client_id).mass
+
+
+def set_mass(body, mass, link=BASE_LINK, client_id=0):
+    p.changeDynamics(body, link, mass=mass, physicsClientId=client_id)
 
 
 def get_joint_inertial_pose(body, joint):

@@ -35,21 +35,30 @@ def parse_args():
 
     # RoboSensai Env parameters
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
-    parser.add_argument('--num_pool_objs', type=int, default=20)
-    parser.add_argument('--max_num_placing_objs', type=int, default=[0, 16, 0], nargs='+') 
+    parser.add_argument('--num_pool_objs', type=int, default=32)
+    parser.add_argument('--num_pool_scenes', type=int, default=5)
+    parser.add_argument('--max_num_placing_objs', type=int, default=16)
+    parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
+    parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--num_episode_to_replace_pool', type=int, default=1000)
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
-    parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
     parser.add_argument("--max_stable_steps", type=int, default=50, help="the maximum steps for the env to be stable considering success")
     parser.add_argument('--reward_pobj', type=float, default=100., help='Position reward weight')
     parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
     parser.add_argument('--vel_reward_scale', type=float, default=0.005, help='scaler for the velocity reward')
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/360], nargs='+')
+    parser.add_argument('--acc_threshold', type=float, default=[0.1, np.pi/36], nargs='+') 
+    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='objects', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='union_objects_train', help="folder path that stores all urdf files")
+    parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
+
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--wandb', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
@@ -96,7 +105,7 @@ def parse_args():
     args = parser.parse_args()
 
     # Training required attributes
-    args.num_steps = args.num_steps * max(args.max_num_placing_objs) # make sure the num_steps is 5 times larger than agent traj length
+    args.num_steps = args.num_steps * args.max_num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
 
@@ -116,11 +125,14 @@ def parse_args():
     else: additional += '_FC'
     if args.checkpoint is not None: additional += '_FT'
     additional += '_Rand'
-    if args.random_select_pool: additional += '_pool'
-    if args.random_select_placing: additional += '_order'
+    if args.random_select_objs_pool: additional += '_ObjPool'
+    if args.random_select_placing: additional += '_ObjPlace'
+    if args.random_select_scene_pool: additional += '_ScenePool'
+    if args.fixed_scene_only: additional += '_FixedScene'
     additional += '_Goal'
-    if args.max_num_placing_objs: additional += f'_maxStageNum_{"_".join(map(str, args.max_num_placing_objs))}'
+    if args.max_num_placing_objs: additional += f'_maxObjNum{args.max_num_placing_objs}'
     if args.max_stable_steps: additional += f'_maxStable{args.max_stable_steps}'
+    if args.max_num_qr_scenes: additional += f'_maxQR{args.max_num_qr_scenes}Scene'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
     if args.penalty > 0: additional += f'_ori{args.penalty}'
@@ -265,6 +277,7 @@ if __name__ == "__main__":
 
     episode_rewards_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
     episode_success_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
+    episode_placed_objs_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
     pos_r_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
     ori_r_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
     act_p_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
@@ -358,8 +371,10 @@ if __name__ == "__main__":
                     update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                     update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
                     update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
-                    success_buf = torch.Tensor(combine_envs_info(infos, 'success_placed_obj_num', terminal_ids)).to(device)
+                    success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
                     update_tensor_buffer(episode_success_box, success_buf)
+                    placed_obj_num_buf = torch.Tensor(combine_envs_info(infos, 'success_placed_obj_num', terminal_ids)).to(device)
+                    update_tensor_buffer(episode_placed_objs_box, placed_obj_num_buf)
 
                     episode_rewards[terminal_index] = 0.
                     episode_pos_rewards[terminal_index] = 0.
@@ -369,6 +384,7 @@ if __name__ == "__main__":
                     episode_pos_r = torch.mean(pos_r_box[-i_episode:]).item()
                     episode_act_p = torch.mean(act_p_box[-i_episode:]).item()
                     episode_success_rate = torch.mean(episode_success_box[-i_episode:]).item()
+                    episode_placed_objs = torch.mean(episode_placed_objs_box[-i_episode:]).item()
 
                     if not args.quiet:
                         print(f"Global Steps:{global_step}/{args.total_timesteps}, Episode:{i_episode}, Success Rate:{episode_success_rate:.2f}, Reward:{episode_reward:.4f}," \
@@ -376,18 +392,19 @@ if __name__ == "__main__":
                     
                     if args.collect_data:
                         if args.wandb:
-                            wandb.log({'episodes': i_episode, 'reward/reward_train': episode_reward, 'reward/reward_pos': episode_pos_r,
-                                    'reward/penalty_act': episode_act_p})
+                            wandb.log({'episodes': i_episode, 'reward/reward_train': episode_reward, 
+                                       'reward/reward_pos': episode_pos_r, 'reward/penalty_act': episode_act_p})
 
                             if i_episode >= args.reward_steps:  # episode success rate
-                                wandb.log({'s_episodes': i_episode - args.reward_steps, 'reward/success_rate': episode_success_rate})
+                                wandb.log({'s_episodes': i_episode - args.reward_steps, 
+                                           'reward/success_rate': episode_success_rate, 
+                                           'reward/num_placed_objs': episode_placed_objs})
 
                         if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
                             best_acc = episode_success_rate;
                             agent.save_checkpoint(folder_path=args.checkpoint_dir,
                                                     folder_name=args.final_name, suffix='best')
-                            # print(f'Now best accuracy is {best_acc * 100}%')
-                            print(f'Now best accuracy is {best_acc} success placed objects')
+                            print(f's_episodes: {i_episode - args.reward_steps} | Now best accuracy is {best_acc * 100:.3f}% | Number of placed objects is {episode_placed_objs:.2f}')
                         if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
                             agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
                                                     suffix=str(i_episode))

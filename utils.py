@@ -46,24 +46,27 @@ def dict2list(diction):
 
 def get_on_bbox(bbox, z_half_extend:float):
     bbox = bbox.copy()
-    # center_pos is the relative translation from the object baselink to the center of the object bounding box
-    center_pos, half_extents = bbox[:3], bbox[7:10]
-    center_pos[2] += half_extents[2] + z_half_extend
-    half_extents[2] = z_half_extend
+    # scene_center_pos is the relative translation from the object baselink to the center of the object bounding box
+    # All bbox given should be in the baselink frame (baselink is at the origin)
+    scene_center_pos, scene_half_extents = bbox[:3], bbox[7:10]
+    scene_center_pos[2] += scene_half_extents[2] + z_half_extend
+    scene_half_extents[2] = z_half_extend
     orientation = bbox[3:7]
-    return np.array([*center_pos, *orientation, *half_extents])
+    return np.array([*scene_center_pos, *orientation, *scene_half_extents])
 
 
 def get_in_bbox(bbox, z_half_extend:float=None):
     bbox = bbox.copy()
     if z_half_extend is None: z_half_extend = bbox[9]
-    # center_pos is the relative translation from the object baselink to the center of the object bounding box
+    # Half extend should not be smaller than the original half extend
+    z_half_extend = max(z_half_extend, bbox[9])
+    # scene_center_pos is the relative translation from the object baselink to the center of the object bounding box
     # You need to change the relative translation not the absolute translation (half extent in z-axis)
-    center_pos, half_extents = bbox[:3], bbox[7:10]
-    center_pos[2] += z_half_extend - half_extents[2]
-    half_extents[2] = z_half_extend
+    scene_center_pos, scene_half_extents = bbox[:3], bbox[7:10]
+    scene_center_pos[2] += z_half_extend - scene_half_extents[2]
+    scene_half_extents[2] = z_half_extend
     orientation = bbox[3:7]
-    return np.array([*center_pos, *orientation, *half_extents])
+    return np.array([*scene_center_pos, *orientation, *scene_half_extents])
 
 
 def pc_random_downsample(pc_array, num_points):

@@ -14,11 +14,11 @@ VelThreshold = [0.005, np.pi]
 AccThreshold = [1., np.pi]
 
 class ObjectLabeler:
-    def __init__(self, source_folder_path, overwrite=False):
+    def __init__(self, source_folder_path, target_folder_name='selected_obj', overwrite=False):
         self.overwrite = overwrite
         self.source_folder_path = source_folder_path
         assert os.path.isdir(self.source_folder_path), f"Source Folder path '{self.source_folder_path}' does not exist."
-        self.target_folder_path = os.path.join(os.path.dirname(self.source_folder_path), 'selected_obj')
+        self.target_folder_path = os.path.join(os.path.dirname(self.source_folder_path), target_folder_name)
         if self.overwrite:
             self.target_folder_path = self.source_folder_path
         os.makedirs(self.target_folder_path, exist_ok=True)
@@ -52,6 +52,9 @@ class ObjectLabeler:
         self.plane_id = p.loadURDF("plane.urdf")
         self.cur_object_id = None
         pu.change_obj_color(self.plane_id, rgba_color=[1., 1., 1., 0.2])
+        tableHalfExtents = [0.4, 0.5, 0.35]
+        tableId = pu.draw_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
+                                   halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 0.3])
         if reset_all:
             self._read_source_folder_path()
             self._init_buttons()
@@ -188,10 +191,10 @@ class ObjectLabeler:
         
         if self.None_button_read != None_button_read:
             self.None_button_read = None_button_read
-            self.meta_data['queried_region'] = 'None'
+            self.meta_data['queried_region'] = None
             if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: p.removeBody(self.queried_region_id)
             self.queried_region_id = None
-            print("The object is labeled as 'None'.")
+            print("The object is labeled as None.")
         
         if self.save_button_read != save_button_read:
             self.save_button_read = save_button_read
@@ -381,7 +384,17 @@ class ObjectLabeler:
         
 
 if __name__ == '__main__':
-    source_folder_path = "assets/PartNet/partNet_raw"
+    Label = "scene"
+    
+    if Label == "obj":
+        source_folder_path = "assets/objaverse/selected_obj"
+        target_folder_name = "selected_obj"
 
-    labeler = ObjectLabeler(source_folder_path, overwrite=False)
-    labeler.start()
+        labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
+        labeler.start()
+    else:
+        source_folder_path = "assets/union_scene"
+        target_folder_name = "selected_scene"
+
+        labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
+        labeler.start()

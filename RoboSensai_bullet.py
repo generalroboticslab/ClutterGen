@@ -26,9 +26,6 @@ from tabulate import tabulate
 
 
 class RoboSensaiBullet:
-    ON = 0
-    IN = 1
-
     def __init__(self, args=None) -> None:
         self.args = args
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -37,9 +34,7 @@ class RoboSensaiBullet:
         self.rng = np.random.default_rng(args.seed if hasattr(args, "seed") else None)
         self._init_simulator()
         self.update_objects_database()
-        self.load_world(num_objects=self.args.num_pool_objs, 
-                        random=self.args.random_select_pool, 
-                        default_scaling=self.args.default_scaling if hasattr(self.args, "default_scaling") else 1.)
+        self.load_world()
         self.reset()
 
 
@@ -51,182 +46,183 @@ class RoboSensaiBullet:
         if not self.args.debug:
             p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=self.client_id)
             p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0, physicsClientId=self.client_id)
-        p.setPhysicsEngineParameter(enableFileCaching=0, physicsClientId=self.client_id)
         p.resetSimulation(physicsClientId=self.client_id)
         p.setGravity(0, 0, -9.8, physicsClientId=self.client_id)
 
 
     def update_objects_database(self):
-        # self.obj_categories = read_json(f'{self.args.asset_root}/{self.args.object_pool_folder}/obj_categories.json')
-        # self.test_obj_categories = read_json(f'{self.args.asset_root}/{self.args.object_pool_folder}/test_obj_categories.json')
-        
         # Right now we only have two stages, object can not appear in both stages! We need to figure out how to deal with this problem
-        #   0: "Table"
-        self.obj_categories = {
-            1: {
-                "microwave": 1,
-                "bowl": 1,
-                "tomato_soup_can": 1,
-                "master_chef_can": 1,
-                "pitcher_base": 1,
-                "cuboid": 1,
-                "cube_arrow": 1,
-                "mug": 3,
-                "bleach_cleanser": 1,
-                "cracker_box": 1,
-                "sugar_box": 1,
-                # "lamp": 1,
-                # "storage_furniture": 1,
-
-                "ball": 1,
-                "cube": 1,
-                "mustard_bottle": 1,
-                "potted_meat_can": 1,
-                "pentagram": 1,
-                "banana": 1,
-            },
-            2: {
-
-            }
-        }
-
-        # Preference of placing objects
-        self.obj_scaling = {
-            "microwave": 0.2,
-        }
-
-        self.valid_place_relation = {
-            "plane": self.ON,
-            "table": self.ON,
-            # "microwave": self.IN,
-            # "bowl": self.IN,
-            # "mug": self.IN,
-            # "cuboid": self.ON,
-        }
-
-        obj_names, obj_values = dict2list(self.obj_categories)
-        self.obj_back_pool_name = np.array(obj_names)
-        self.obj_back_pool_indexes_nums = np.array(obj_values)
+        self.obj_dataset_folder = os.path.join(self.args.asset_root, self.args.object_pool_folder)
+        # 0: "Table", "Bookcase", "Dishwasher", "Microwave", all storage furniture
+        self.obj_uni_names_dataset = {}
+        obj_categories = os.listdir(self.obj_dataset_folder)
+        for cate in obj_categories:
+            obj_folder = os.path.join(self.obj_dataset_folder, cate)
+            obj_indexes = os.listdir(obj_folder)
+            for idx in obj_indexes:
+                obj_uni_name = f"{cate}_{idx}"
+                obj_urdf_path = f"{self.obj_dataset_folder}/{cate}/{idx}/mobility.urdf"
+                obj_label_path = f"{self.obj_dataset_folder}/{cate}/{idx}/label.json"
+                assert os.path.exists(obj_urdf_path), f"Object {obj_uni_name} does not exist! Given path: {obj_urdf_path}"
+                assert os.path.exists(obj_label_path), f"Object {obj_uni_name} does not exist! Given path: {obj_label_path}"
+                self.obj_uni_names_dataset.update({obj_uni_name: {"urdf": obj_urdf_path, "label": read_json(obj_label_path)}})
+        
+        # Load fixed scenes path
+        self.fixed_scene_dataset_folder = os.path.join(self.args.asset_root, self.args.scene_pool_folder)
+        self.scene_uni_names_dataset = {}
+        scene_categories = os.listdir(self.fixed_scene_dataset_folder)
+        for scene in scene_categories:
+            scene_pool_folder = os.path.join(self.fixed_scene_dataset_folder, scene)
+            scene_indexes = os.listdir(scene_pool_folder)
+            for idx in scene_indexes:
+                scene_uni_name = f"{scene}_{idx}"
+                scene_urdf_path = f"{self.fixed_scene_dataset_folder}/{scene}/{idx}/mobility.urdf"
+                scene_label_path = f"{self.fixed_scene_dataset_folder}/{scene}/{idx}/label.json"
+                assert os.path.exists(scene_urdf_path), f"Scene {scene_uni_name} does not exist! Given path: {scene_urdf_path}"
+                assert os.path.exists(scene_label_path), f"Scene {scene_uni_name} does not exist! Given path: {scene_label_path}"
+                self.scene_uni_names_dataset.update({scene_uni_name: {"urdf": scene_urdf_path, "label": read_json(scene_label_path)}})
 
 
-    def _load_default_scene(self):
-        self.default_scene_name = "table"
-        self.default_scene_name_id = {}
+    def load_scenes(self):
+        self.fixed_scene_name_data = {}; self.unquried_scene_name = []
+        self.prepare_area = [[-1100., -1100., 0.], [-1000, -1000, 100]]
         # Plane
-        self.planeId = self.loadURDF("plane.urdf", 
-                                     basePosition=[0, 0, 0.], 
-                                     baseOrientation=p.getQuaternionFromEuler([0, 0, 0]), 
-                                     useFixedBase=True)
-        # self.default_scene_name_id["plane"] = self.planeId
-        self.plane_pose = pu.get_body_pose(self.planeId, client_id=self.client_id)
-        plane_qr_region_half_extents = [1., 1., 1.]
-        plane_qr_region_pos = [0., 0., 0.]
-        plane_qr_region_ori = p.getQuaternionFromEuler([0., 0., 0.])
-        planeHalfExtents = [*plane_qr_region_half_extents[:2], 0.]
-        self.plane_qr_region_np = self.to_numpy([*plane_qr_region_pos, *plane_qr_region_ori, *plane_qr_region_half_extents])
-
-        # Walls
-        # self.wallHalfExtents = [1., 0.05, 0.75]
-        # self.wallxId = pu.create_box_body(position=[-1, 0., self.wallHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., np.pi/2]),
-        #                                   halfExtents=self.wallHalfExtents, rgba_color=[1, 1, 1, 1], mass=0, client_id=self.client_id)
-        # self.wallyId = pu.create_box_body(position=[0., -1, self.wallHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
-        #                                     halfExtents=self.wallHalfExtents, rgba_color=[1, 1, 1, 1], client_id=self.client_id)
+        planeHalfExtents = [1., 1., 0.]
+        planeId = self.loadURDF("plane.urdf", 
+                                basePosition=[0, 0, 0.], 
+                                baseOrientation=p.getQuaternionFromEuler([0, 0, 0]), 
+                                useFixedBase=True)
+        pu.change_obj_color(planeId, rgba_color=[1., 1., 1., 0.2])
+        qr_pose, qr_ori, qr_half_extents = [0., 0., 0.], p.getQuaternionFromEuler([0., 0., 0.]), [1., 1., 1.]
+        plane_pc_sample_region = self.to_numpy(planeHalfExtents)
+        plane_pc = self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_scene_points, 3))
+        plane_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *planeHalfExtents]
+        # self.fixed_scene_name_data["plane"] = {"id": planeId,
+        #                                         "init_pose": [0., 0., 0.],
+        #                                         "bbox": plane_bbox,
+        #                                         "queried_region": "on", 
+        #                                         "pc": plane_pc,
+        #                                         "pc_feature": self.pc_extractor(self.to_torch(plane_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)}
+        
         # Table
-        tableHalfExtents = [0.3, 0.4, 0.2]
-        self.tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
+        tableHalfExtents = [0.4, 0.5, 0.35]
+        tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
                                           halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
-        self.table_pose = pu.get_body_pose(self.tableId, client_id=self.client_id)
-        self.default_scene_name_id["table"] = self.tableId
+        
         # Default region using table position and table half extents
-        table_region_half_extents = [tableHalfExtents[0], tableHalfExtents[1], 0.1]
-        # Keep in mind: our queried region is in the object local frame!!
-        table_region_pos = [0., 0., tableHalfExtents[2]+table_region_half_extents[2]]
-        table_region_ori = p.getQuaternionFromEuler([0., 0., 0.])
-        self.table_qr_region = [*table_region_pos, *table_region_ori, *table_region_half_extents]
-        
-        self.prepare_area = [[-1100., -1100., 0.], [-1000, -1000, 5]]
-        init_scene_pc = []
-        for name, id in self.default_scene_name_id.items():
-            if name == "plane": # Plane needs to use default region to sample
-                plane_pc_sample_region = self.to_numpy(plane_qr_region_half_extents[:2]+[0.])
-                init_scene_pc.append(self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_scene_points, 3)))
-            else:
-                object_pc_world_frame = self.get_obj_pc_from_id(id, num_points=self.args.max_num_scene_points, use_worldpos=False)
-                init_scene_pc.append(object_pc_world_frame)
-        self.init_scene_pose = self.table_pose if self.default_scene_name == "table" else self.plane_pose
-        init_scene_half_extents = tableHalfExtents if self.default_scene_name == "table" else planeHalfExtents
-        self.init_scene_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *init_scene_half_extents]
-        self.init_scene_pc = np.concatenate(init_scene_pc, axis=0)
-        self.init_scene_pc_feature = self.pc_extractor(self.to_torch(self.init_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
+        qr_pose, qr_ori, qr_half_extents = [0., 0., tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*tableHalfExtents[:2], 0.1]
+        table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_scene_points, use_worldpos=False)
+        table_axes_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *tableHalfExtents]
+        self.fixed_scene_name_data["table"] = {"id": tableId,
+                                                "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
+                                                "bbox": table_axes_bbox,
+                                                "queried_region": "on", 
+                                                "pc": table_pc, 
+                                                "pc_feature": self.pc_extractor(self.to_torch(table_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)}
 
-
-    def load_objects(self, num_objects=10, random=True, default_scaling=1., init_region=None):
-        self.obj_name_id = {}; init_region = init_region if init_region is not None else self.table_qr_region
-        self.obj_name_pc = {}; self.obj_name_axes_bbox = {}; self.obj_name_pc_feature = {}; self.obj_stage_name_id = {k:{} for k, v in self.obj_categories.items()}
-        self.scene_obj_valid_place_relation = {}; self.obj_name_joint_limits = {}
-        if random: # Random choose object categories from the pool and their index
-            obj_back_pool_indexes = self.rng.choice(np.arange(len(self.obj_back_pool_name)), num_objects, replace=False)
-            objects_act_pool_name = self.obj_back_pool_name[obj_back_pool_indexes]
-            objects_act_pool_indexes = self.rng.integers(self.obj_back_pool_indexes_nums[obj_back_pool_indexes])
+        # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
+        if self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
+            selected_scene_pool = self.rng.choice(list(self.scene_uni_names_dataset.keys()), min(self.args.num_pool_scenes, len(self.scene_uni_names_dataset)), replace=False).tolist()
         else:
-            objects_act_pool_name = self.obj_back_pool_name[:num_objects]
-            objects_act_pool_indexes = np.array(self.obj_back_pool_indexes_nums, dtype=np.int32)-1 # Index nums start from 1 but index needs to start from 0
+            selected_scene_pool = list(self.scene_uni_names_dataset.keys())[:self.args.num_pool_scenes]
+        for scene_uni_name in selected_scene_pool:
+            scene_urdf_path = self.scene_uni_names_dataset[scene_uni_name]["urdf"]
+            scene_label = self.scene_uni_names_dataset[scene_uni_name]["label"]
+            try:
+                basePosition, baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
+                scene_id = self.loadURDF(scene_urdf_path, basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=scene_label["globalScaling"], useFixedBase=True)
+                scene_mesh_num = pu.get_body_mesh_num(scene_id, client_id=self.client_id)
+                scene_pc = self.get_obj_pc_from_id(scene_id, num_points=min(max(256*scene_mesh_num, 1024), self.args.max_num_scene_points), use_worldpos=False)
+                scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
+                stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
+                assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
+                self.fixed_scene_name_data[scene_uni_name] = {  # Init_pose is floating on the air to avoid rely on the ground
+                                                                "id": scene_id,
+                                                                "init_pose": ([0., 0., stable_init_pos_z+5.], p.getQuaternionFromEuler([0., 0., 0.])), # For training, we hang the object in the air
+                                                                "init_stable_pose": ([0., 0., stable_init_pos_z], p.getQuaternionFromEuler([0., 0., 0.])), # For evaluation, we place the object on the ground
+                                                                "bbox": scene_axes_bbox,
+                                                                "queried_region": scene_label["queried_region"], 
+                                                                "pc": scene_pc,
+                                                                "mass": pu.get_mass(scene_id, client_id=self.client_id),
+                                                            }
+                
+                # Pre-extract the feature for each object and store here 
+                with torch.no_grad():
+                    self.fixed_scene_name_data[scene_uni_name]["pc_feature"] = self.pc_extractor(self.to_torch(scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
+                    
+                # For scene who has "in" relation, set transparence to 0.5
+                if scene_label["queried_region"] == "in":
+                    pu.change_obj_color(scene_id, rgba_color=[0, 0, 0, 0.2], client_id=self.client_id)
+                
+                # If the scene has joints, we need to set the joints to the lower limit
+                self.fixed_scene_name_data[scene_uni_name]["joint_limits"] = self.set_obj_joints_to_lower_limit(scene_id)
+            
+            except p.error as e:
+                print(f"Failed to load scene {scene_uni_name} | Error: {e}")
 
-        for i, obj_name in enumerate(objects_act_pool_name):
-            obj_urdf_file = f"{self.args.asset_root}/{self.args.object_pool_folder}/{obj_name}/{objects_act_pool_indexes[i]}/mobility.urdf"
-            assert os.path.exists(obj_urdf_file), f"Object {obj_name} does not exist! Given path: {obj_urdf_file}"
 
+    def load_objects(self):
+        self.obj_name_data = {}; self.unplaced_objs_name = []; self.queriable_obj_names = [] # The object can be queried or placed
+        if self.args.random_select_objs_pool: # Randomly choose object categories from the pool and their index
+            cate_uni_names = self.rng.choice(list(self.obj_uni_names_dataset.keys()), self.args.num_pool_objs, replace=False).tolist()
+        else:
+            cate_uni_names = list(self.obj_uni_names_dataset.keys())[:self.args.num_pool_objs]
+
+        for i, obj_uni_name in enumerate(cate_uni_names):
+            obj_urdf_path = self.obj_uni_names_dataset[obj_uni_name]["urdf"]
+            obj_label = self.obj_uni_names_dataset[obj_uni_name]["label"]
             try: 
-                obj_globalScaling = self.specify_obj_scale(obj_name, default_scaling=default_scaling)
-                basePosition, baseOrientation = self.rng.uniform(*self.region2axesbbox(init_region)), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
-                object_unique_name = f"{obj_name}_{objects_act_pool_indexes[i]}"
-                object_id = self.loadURDF(f"{self.args.asset_root}/{self.args.object_pool_folder}/{obj_name}/{objects_act_pool_indexes[i]}/mobility.urdf", 
-                                        basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=obj_globalScaling)  # Load an object at position [0, 0, 1]
+                rand_basePosition, rand_baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
+                object_id = self.loadURDF(obj_urdf_path, basePosition=rand_basePosition, baseOrientation=rand_baseOrientation, globalScaling=obj_label["globalScaling"])  # Load an object at position [0, 0, 1]
                 obj_mesh_num = pu.get_body_mesh_num(object_id, client_id=self.client_id)
-                obj_joints_num = pu.get_num_joints(object_id, client_id=self.client_id)
-                self.obj_name_id[object_unique_name] = object_id
-                self.obj_name_pc[object_unique_name] = self.get_obj_pc_from_id(object_id, num_points=min(max(256*obj_mesh_num, 1024), self.args.max_num_scene_points), use_worldpos=False)
-                self.obj_name_axes_bbox[object_unique_name] = pu.get_obj_axes_aligned_bbox_from_pc(self.obj_name_pc[object_unique_name])
-                self.obj_stage_name_id[self.get_obj_stage(obj_name)].update({object_unique_name: object_id})
-                # TODO: For object who has self.IN relation, set transparence to 0.5
-                if obj_name in self.valid_place_relation.keys():
-                    self.scene_obj_valid_place_relation[object_unique_name] = self.valid_place_relation[obj_name]
-                if obj_joints_num > 0: # If the object is not movable, we need to set the joints to the lower limit
-                    joints_limits = np.array([pu.get_joint_limits(object_id, joint_i, client_id=self.client_id) for joint_i in range(obj_joints_num)])
-                    pu.set_joint_positions(object_id, list(range(obj_joints_num)), joints_limits[:, 0], client_id=self.client_id)
-                    pu.control_joints(object_id, list(range(obj_joints_num)), joints_limits[:, 0], client_id=self.client_id)
-                    self.obj_name_joint_limits[object_unique_name] = joints_limits
-            except Exception as e:
-                print(f"Failed to load object {obj_name} | Error: {e}")
-        
-        # Pre-extract the feature for each object and store here 
-        with torch.no_grad():
-            for object_unique_name, obj_pc in self.obj_name_pc.items(): # Extract the feature for each object
-                self.obj_name_pc_feature[object_unique_name] = self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
-        
-        self.num_pool_objs = len(self.obj_name_id)
+                obj_pc = self.get_obj_pc_from_id(object_id, num_points=min(max(256*obj_mesh_num, 1024), self.args.max_num_scene_points), use_worldpos=False)
+                obj_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
+                obj_init_pos_z = obj_axes_bbox[9] - obj_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
+                self.obj_name_data[obj_uni_name] = {
+                                                    "id": object_id,
+                                                    "init_pose": ([0., 0., obj_init_pos_z+5.], p.getQuaternionFromEuler([0., 0., 0.])),
+                                                    "init_stable_pose": ([0., 0., obj_init_pos_z], p.getQuaternionFromEuler([0., 0., 0.])),
+                                                    "bbox": obj_axes_bbox,
+                                                    "queried_region": obj_label["queried_region"], 
+                                                    "pc": obj_pc,
+                                                    "mass": pu.get_mass(object_id, client_id=self.client_id),
+                                                    }
 
-        self.obj_name_id[self.default_scene_name] = self.default_scene_name_id[self.default_scene_name]
-        self.obj_name_pc[self.default_scene_name] = self.init_scene_pc
-        self.obj_name_axes_bbox[self.default_scene_name] = self.init_scene_bbox
-        self.obj_name_pc_feature[self.default_scene_name] = self.init_scene_pc_feature
-        self.obj_stage_name_id.update({0: {self.default_scene_name: self.obj_name_id[self.default_scene_name]}})
-        self.scene_obj_valid_place_relation[self.default_scene_name] = self.valid_place_relation[self.default_scene_name]
+                # Pre-extract the feature for each object and store here 
+                with torch.no_grad():
+                    self.obj_name_data[obj_uni_name]["pc_feature"] = self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
+                
+                # object queried region; This is a dataset bug that some objects are labeled as string "None"
+                if obj_label["queried_region"] != None and obj_label["queried_region"] != "None":
+                    self.queriable_obj_names.append(obj_uni_name)
+                    # For object who has "in" relation, set transparence to 0.5
+                    if obj_label["queried_region"] == "in":
+                        pu.change_obj_color(object_id, rgba_color=[0, 0, 0, 0.5], client_id=self.client_id)
+                
+                # If the object has joints, we need to set the joints to the lower limit
+                self.obj_name_data[obj_uni_name]["joint_limits"] = self.set_obj_joints_to_lower_limit(object_id)
+            
+            except p.error as e:
+                print(f"Failed to load object {obj_uni_name} | Error: {e}")
+        
+        num_queriable_scenes = len(self.queriable_obj_names) + len(self.fixed_scene_name_data.keys()) if not self.args.fixed_scene_only else len(self.fixed_scene_name_data.keys())
+        assert num_queriable_scenes >= self.args.max_num_qr_scenes, f"Only {num_queriable_scenes} scenes are loaded, but we need {self.args.max_num_qr_scenes} scenes!"
+        assert len(self.obj_name_data) >= self.args.max_num_placing_objs, f"Only {len(self.obj_name_data)} objects are loaded, but we need {self.args.max_num_placing_objs} objects!"
 
     
-    def load_world(self, num_objects=10, random=True, default_scaling=0.5):
+    def load_world(self):
         self._init_pc_extractor()
         self._init_misc_variables()
         self._init_obs_act_space()
-        self._load_default_scene()
-        self.load_objects(num_objects=num_objects, random=random, default_scaling=default_scaling)
-        self.reset_all = True
+        self.load_scenes()
+        self.load_objects()
 
 
     def post_checker(self, verbose=False):
         self.failed_objs = []; headers = ["Type", "Env ID", "Name", "ID", "Value"]
 
-        for obj_name, obj_id in self.obj_name_id.items():
+        for obj_name in self.obj_name_data.key():
+            obj_id = self.obj_name_data[obj_name]["id"]
             obj_vel = pu.getObjVelocity(obj_id, client_id=self.client_id)
             if not self.vel_checker(obj_vel):
                 self.failed_objs.append(["VEL_FAIL", self.client_id, obj_name, obj_id, obj_vel])
@@ -235,6 +231,135 @@ class RoboSensaiBullet:
             # Generate the table and print it; Needs 0.0013s to generate one table
             self.check_table = tabulate(self.failed_objs, headers, tablefmt="pretty")
             print(self.check_table)
+
+
+    #########################################
+    ######### Training FUnctions ############
+    #########################################
+
+    def _init_obs_act_space(self):
+        # Observation space: [scene_pc_feature, obj_pc_feature, bbox, action, history (hitory_len * (obj_pos + obj_vel)))]
+        scene_ft_dim = 1024; obj_ft_dim = 1024; qr_region_dim = 10; action_dim = 6; history_dim = self.args.max_traj_history_len * (6 + 7)
+        self.observation_shape = (1, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + history_dim)
+        # Action space: [x, y, z, roll, pitch, yaw]
+        self.action_shape = (1, 6)
+        # slice
+        self.act_scene_feature_slice = slice(0, scene_ft_dim)
+        self.selected_obj_feature_slice = slice(self.act_scene_feature_slice.stop, self.act_scene_feature_slice.stop+obj_ft_dim)
+        self.placed_region_slice = slice(self.selected_obj_feature_slice.stop, self.selected_obj_feature_slice.stop+qr_region_dim)
+        self.last_action_slice = slice(self.placed_region_slice.stop, self.placed_region_slice.stop+qr_region_dim+action_dim)
+        self.traj_history_slice = slice(self.last_action_slice.stop, self.last_action_slice.stop+self.args.max_traj_history_len*(6+7))
+
+    
+    def _init_misc_variables(self):
+        self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [0.005, np.pi/360] # 0.5cm/s and 0.1 degree/s
+        self.args.acc_threshold = self.args.acc_threshold if hasattr(self.args, "acc_threshold") else [0.1, np.pi/36] # 0.1m/s^2 and 1degree/s^2
+        self.args.max_num_placing_objs = self.args.max_num_placing_objs if hasattr(self.args, "max_num_placing_objs") else 16
+        self.args.max_traj_history_len = self.args.max_traj_history_len if hasattr(self.args, "max_traj_history_len") else 240
+        self.args.step_divider = self.args.step_divider if hasattr(self.args, "step_divider") else 6
+        self.args.reward_pobj = self.args.reward_pobj if hasattr(self.args, "reward_pobj") else 10
+        self.args.vel_reward_scale = self.args.vel_reward_scale if hasattr(self.args, "vel_reward_scale") else 0.005
+        self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
+        self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
+        self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
+        self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
+        # Buffer does not need to be reset
+        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 'scene_obj_success_num': {}}
+        self.num_episode = 0
+
+    
+    def _init_pc_extractor(self):
+        self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
+        self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
+
+    
+    def reset_env(self):
+        # Place all objects to the prepare area
+        for obj_name in self.obj_name_data.keys():
+            pu.set_pose(body=self.obj_name_data[obj_name]["id"], 
+                pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        
+        # Place all scenes to the prepare area
+        for scene_name in self.fixed_scene_name_data.keys():
+            pu.set_pose(body=self.fixed_scene_name_data[scene_name]["id"], 
+                pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        
+        # Scene
+        self.placed_obj_poses = {}
+        self.success_obj_num = 0
+        if len(self.unquried_scene_name) == 0: 
+            self.update_unquery_scenes()
+        self.obj_done = True
+        self.query_scene_done = True
+
+        # Training
+        self.cur_trial = 0
+        # Observations
+        self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
+        self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
+        # Rewards
+        self.accm_vel_reward = 0.
+
+    
+    def update_unplaced_objs(self):
+        # You can use unplaced_objs to decide how many objs should be placed on the scene
+        selected_obj_pool = list(self.obj_name_data.keys())
+        self.unplaced_objs_name = []
+        while True:
+            candidate_obj_name = self.rng.choice(selected_obj_pool) if self.args.random_select_placing else selected_obj_pool[0]
+            selected_obj_pool.remove(candidate_obj_name)
+            if candidate_obj_name == self.selected_qr_scene_name: continue
+
+            # Use scene bbox and obj bbox to do a simple filtering (especially for the "in" relation)
+            candidate_obj_bbox = self.obj_name_data[candidate_obj_name]["bbox"]
+            if self.selected_qr_scene_region == "in": # obj bbox dimension should be smaller than scene bbox dimension
+                # XYZ dimension should be smaller than scene dimension
+                if all([candidate_obj_bbox[i]<self.selected_qr_scene_bbox[i] for i in range(7, 10)]):
+                    self.unplaced_objs_name.append(candidate_obj_name)
+            elif self.selected_qr_scene_region == "on":
+                # XY dimension should be smaller than scene dimension
+                if all([candidate_obj_bbox[i]<self.selected_qr_scene_bbox[i] for i in range(7, 9)]):
+                    self.unplaced_objs_name.append(candidate_obj_name)
+            else:
+                raise NotImplementedError(f"Scene region {self.selected_qr_scene_region} is not implemented!")
+            
+            if len(self.unplaced_objs_name) >= self.args.max_num_placing_objs or len(selected_obj_pool)==0: break
+
+
+    def update_unquery_scenes(self):
+        self.unquried_scene_name = list(self.fixed_scene_name_data.keys())
+        if not self.args.fixed_scene_only:
+            self.unquried_scene_name.extend(self.queriable_obj_names)
+        self.unquried_scene_name = self.unquried_scene_name[:self.args.max_num_qr_scenes]
+        
+        
+    def convert_actions(self, action):
+        # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
+        action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
+        action[3:5] = 0. # No x,y rotation
+        self.last_raw_action = action.copy()
+        
+        # action = [x, y, z, roll, pitch, yaw]
+        scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        placed_qr_region = self.last_observation[self.placed_region_slice]
+        half_extents = placed_qr_region[7:]
+        untrans_xyz = action[:3] * (2 * half_extents) - half_extents
+        # In the qr_scene baseLink frame
+        local_action_xyz = p.multiplyTransforms(placed_qr_region[:3], placed_qr_region[3:7], untrans_xyz, [0., 0., 0., 1.])[0]
+        # In the simulator world frame
+        step_action_xyz = p.multiplyTransforms(scene_obj_pose[0], scene_obj_pose[1], local_action_xyz, [0., 0., 0., 1.])[0]
+        step_action_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
+
+        if self.args.rendering:
+            world2qr_region = p.multiplyTransforms(*scene_obj_pose, placed_qr_region[:3], placed_qr_region[3:7])
+            if hasattr(self, "last_world2qr_region") and world2qr_region == self.last_world2qr_region: pass
+            else:
+                if hasattr(self, "region_vis_id"): p.removeBody(self.region_vis_id, physicsClientId=self.client_id)
+                self.region_vis_id = pu.draw_box_body(position=world2qr_region[0], orientation=world2qr_region[1],
+                                                      halfExtents=half_extents, rgba_color=[1, 0, 0, 0.3], client_id=self.client_id)
+                self.last_world2qr_region = world2qr_region
+
+        return step_action_xyz, step_action_quat
 
 
     def step(self, action):
@@ -271,13 +396,13 @@ class RoboSensaiBullet:
                 self.prev_obj_vel = obj_vel
         
         # Post-physical step
-        reward = self.compute_reward() if self.info['stepping']==1 else 0. # Must compute reward before observation since we use the velocity to compute reward
+        reward = self.compute_reward() if self.info['stepping']==1 else 0. # Must compute reward before observation since the velocity will be reset in the observaion. Only stepping environment will be recorded
         done = self.compute_done() if self.info['stepping']==1 else False
         # Success Visualization here since observation needs to be reset. Only for evaluation!
         if self.args.rendering and self.info['stepping']==1:
-            print(f"Obj Name: {self.selected_obj_name} | Stable Steps: {self.his_steps}")
+            print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
             if done and self.info['success'] == 1:
-                print(f"Successfully Place {self.success_obj_num[self.cur_stage]} Objects at the stage {self.cur_stage}!")
+                print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
                 if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
 
         if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
@@ -287,200 +412,65 @@ class RoboSensaiBullet:
         if self.info['stepping'] == 1.:
             obj_names, obj_poses = dict2list(self.placed_obj_poses)
             for i, obj_name in enumerate(obj_names):
-                pu.set_pose(self.obj_name_id[obj_name], obj_poses[i], client_id=self.client_id)
+                pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
 
         return observation, reward, done, self.info
 
 
     def reset(self):
-        if self.reset_all:
-            # Reset Training buffer and update the start observation for the next episode
-            self.reset_env()
-        self.reset_buffer()
+        # Since we can not load all of the scenes and objects at one time for training, we need to reset the environment at the certain number of episodes for training.
+        if self.num_episode > self.args.num_episode_to_replace_pool:
+            p.resetSimulation(physicsClientId=self.client_id)
+            p.setGravity(0, 0, -9.8, physicsClientId=self.client_id)
+            self.load_scenes()
+            self.load_objects()
+        self.reset_env()
         return self.compute_observations()
 
-
-    def step_manual(self):
-        with keyboard.Events() as events:
-            while True:
-                key = None
-                event = events.get(0.0001)
-                if event is not None:
-                    if isinstance(event, events.Press) and hasattr(event.key, 'char'):
-                        key = event.key.char
-                if key == 's':
-                    self.simstep()
-                    self.post_checker(verbose=True)
-
-
-    #########################################
-    ######### Training FUnctions ############
-    #########################################
-
-    def _init_obs_act_space(self):
-        # Observation space: [scene_pc_feature, obj_pc_feature, bbox, action, history (hitory_len * (obj_pos + obj_vel)))]
-        scene_ft_dim = 1024; obj_ft_dim = 1024; qr_region_dim = 10; action_dim = 6; history_dim = self.args.max_traj_history_len * (6 + 7)
-        self.observation_shape = (1, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + history_dim)
-        # Action space: [x, y, z, roll, pitch, yaw]
-        self.action_shape = (1, 6)
-        # slice
-        self.act_scene_feature_slice = slice(0, scene_ft_dim)
-        self.selected_obj_feature_slice = slice(self.act_scene_feature_slice.stop, self.act_scene_feature_slice.stop+obj_ft_dim)
-        self.placed_region_slice = slice(self.selected_obj_feature_slice.stop, self.selected_obj_feature_slice.stop+qr_region_dim)
-        self.last_action_slice = slice(self.placed_region_slice.stop, self.placed_region_slice.stop+qr_region_dim+action_dim)
-        self.traj_history_slice = slice(self.last_action_slice.stop, self.last_action_slice.stop+self.args.max_traj_history_len*(6+7))
-
     
-    def _init_misc_variables(self):
-        self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [0.005, np.pi/1800] # 0.5cm/s and 0.1 degree/s
-        self.args.acc_threshold = self.args.acc_threshold if hasattr(self.args, "acc_threshold") else [0.1, np.pi/180] # 0.1m/s^2 and 1degree/s^2
-        self.args.max_num_placing_objs = self.args.max_num_placing_objs if hasattr(self.args, "max_num_placing_objs") else [0, 3, 15]
-        self.args.max_traj_history_len = self.args.max_traj_history_len if hasattr(self.args, "max_traj_history_len") else 240
-        self.args.step_divider = self.args.step_divider if hasattr(self.args, "step_divider") else 6
-        self.args.reward_pobj = self.args.reward_pobj if hasattr(self.args, "reward_pobj") else 10
-        self.args.vel_reward_scale = self.args.vel_reward_scale if hasattr(self.args, "vel_reward_scale") else 0.005
-        self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
-        self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
-        self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
-        self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
-        self.args.max_stage = len(self.args.max_num_placing_objs) - 1 # We start from stage 0 (table)
-        # Buffer does not need to be reset
-        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0}
-
-    
-    def _init_pc_extractor(self):
-        self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
-        self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
-
-
-    def reset_buffer(self):
-        # Training
-        self.moving_steps = 0
-        # Observations
-        self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
-        self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
-        # Rewards
-        self.accm_vel_reward = 0.
-        # Misc Info
-        self.success_obj_num[self.cur_stage] = 0 # Reset the success obj num for the next stage
-
-    
-    def reset_env(self):
-        # Place all objects to the prepare area
-        for obj_name in self.obj_name_id.keys():
-            if obj_name == self.default_scene_name: continue # Don't move plane!!!
-            pu.set_pose(body=self.obj_name_id[obj_name], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
-        self.reset_all = False
-        
-        # Object
-        assert len(self.args.max_num_placing_objs) == len(self.obj_stage_name_id.keys()), \
-            f"Max number of placing objects {len(self.args.max_num_placing_objs)} does not match the number of stages {len(self.obj_stage_name_id.keys())}!"
-        self.args.max_num_placing_objs = [min(self.args.max_num_placing_objs[i], len(self.obj_stage_name_id[i])) for i in range(len(self.args.max_num_placing_objs))]
-
-        # Scene
-        self.cur_stage = 1
-        self.placed_obj_poses = {k:{} for k in self.obj_stage_name_id.keys()}
-        self.placed_obj_poses[0][self.default_scene_name] = deepcopy(self.init_scene_pose)
-        self.success_obj_num = {k:0 for k in self.obj_stage_name_id.keys()}
-        self.update_unplaced_objs()
-        self.update_unquery_scenes()
-        self.obj_done = True
-        self.query_scene_done = True
-
-    
-    def update_unplaced_objs(self, stage=None, num_objs=None):
-        # You can use unplaced_objs to decide how many objs should be placed on the scene
-        stage = self.cur_stage if stage is None else stage
-        if stage not in self.obj_stage_name_id.keys(): 
-            self.unplaced_objs_name_id = {}; return
-        selected_obj_pool = self.obj_stage_name_id[stage]
-        if len(selected_obj_pool) == 0:
-            self.unplaced_objs_name_id = {}; return
-        
-        num_objs = min(num_objs, self.args.max_num_placing_objs[stage], len(selected_obj_pool)) if num_objs is not None \
-                   else min(self.args.max_num_placing_objs[stage], len(selected_obj_pool))
-
-        if self.args.random_select_placing:
-            unplaced_objs_name = self.rng.choice(list(selected_obj_pool.keys()), num_objs, replace=False)
-        else:
-            unplaced_objs_name = list(selected_obj_pool.keys())[:num_objs]
-        self.unplaced_objs_name_id = {obj_name: self.obj_name_id[obj_name] for obj_name in unplaced_objs_name}
-
-
-    def update_unquery_scenes(self, stage=None):
-        stage = max(self.cur_stage-1, 0) if stage is None else stage
-        if stage not in self.obj_stage_name_id.keys(): 
-            self.unquried_scene_name_id = {}; return
-        selected_scene_pool_lst = [scene_name for scene_name in self.placed_obj_poses[stage].keys() \
-                                   if scene_name in self.scene_obj_valid_place_relation.keys()]
-        if len(selected_scene_pool_lst) == 0:
-            self.unquried_scene_name_id = {}; return
-
-        if self.args.random_select_placing:
-            unquried_scene_name = self.rng.permutation(selected_scene_pool_lst)
-        else:
-            unquried_scene_name = selected_scene_pool_lst
-        self.unquried_scene_name_id = {obj_name: self.obj_name_id[obj_name] for obj_name in unquried_scene_name}
-        
-        
-    def convert_actions(self, action):
-        # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
-        action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
-        action[3:5] = 0. # No x,y rotation
-        self.last_raw_action = action.copy()
-        
-        # action = [x, y, z, roll, pitch, yaw]
-        scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        placed_qr_region = self.last_observation[self.placed_region_slice]
-        half_extents = placed_qr_region[7:]
-        untrans_xyz = action[:3] * (2 * half_extents) - half_extents
-        # In the qr_scene baseLink frame
-        local_action_xyz = p.multiplyTransforms(placed_qr_region[:3], placed_qr_region[3:7], untrans_xyz, [0., 0., 0., 1.])[0]
-        # In the simulator world frame
-        step_action_xyz = p.multiplyTransforms(scene_obj_pose[0], scene_obj_pose[1], local_action_xyz, [0., 0., 0., 1.])[0]
-        step_action_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
-
-        if self.args.rendering:
-            world2qr_region = p.multiplyTransforms(*scene_obj_pose, placed_qr_region[:3], placed_qr_region[3:7])
-            if hasattr(self, "last_world2qr_region") and world2qr_region == self.last_world2qr_region: pass
-            else:
-                if hasattr(self, "region_vis_id"): p.removeBody(self.region_vis_id, physicsClientId=self.client_id)
-                self.region_vis_id = pu.draw_box_body(position=world2qr_region[0], orientation=world2qr_region[1],
-                                                      halfExtents=half_extents, rgba_color=[1, 0, 0, 0.3], client_id=self.client_id)
-                self.last_world2qr_region = world2qr_region
-
-        return step_action_xyz, step_action_quat
-
-
     def compute_observations(self):
+        # Choose query scene 
+        if self.query_scene_done:
+            self.query_scene_done = False
+            while True:
+                self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name))
+                self.scene_name_data = self.obj_name_data if self.selected_qr_scene_name in self.obj_name_data.keys() else self.fixed_scene_name_data
+                self.selected_qr_scene_id = self.scene_name_data[self.selected_qr_scene_name]["id"]
+                self.selected_qr_scene_pc = self.scene_name_data[self.selected_qr_scene_name]["pc"].copy()
+                self.selected_qr_scene_pc_feature = self.scene_name_data[self.selected_qr_scene_name]["pc_feature"].copy()
+                self.selected_qr_scene_bbox = self.scene_name_data[self.selected_qr_scene_name]["bbox"]
+                self.selected_qr_scene_region = self.scene_name_data[self.selected_qr_scene_name]["queried_region"]
+                self.tallest_placed_half_z_extend = 0.
+                self.scene_init_stable_pose = self.scene_name_data[self.selected_qr_scene_name]["init_pose"]
+                pu.set_pose(body=self.selected_qr_scene_id, pose=self.scene_init_stable_pose, client_id=self.client_id) # Reset the pose of the scene
+                pu.set_mass(self.selected_qr_scene_id, mass=0., client_id=self.client_id) # Set the scene mass to 0
+
+                self.update_unplaced_objs() # Refill all objects based on the new selected scene when the queried scene changed
+                if len(self.unplaced_objs_name) > 0: break
+                else: # This scene has no objects to place based on the naive filtering, remove it from the unquery scene list
+                    self.unquried_scene_name.remove(self.selected_qr_scene_name)
+                    if len(self.unquried_scene_name) == 0: self.update_unquery_scenes()
+            
         # We need object description (index), bbox, reward (later)
         # Choose query object
         if self.obj_done:
             self.obj_done = False
-            self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name_id.keys()))
-            self.selected_obj_id = self.obj_name_id[self.selected_obj_name]
-            self.selected_obj_pc = self.obj_name_pc[self.selected_obj_name].copy()
-            self.selected_obj_pc_feature = self.obj_name_pc_feature[self.selected_obj_name].copy()
+            self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name))
+            self.selected_obj_id = self.obj_name_data[self.selected_obj_name]["id"]
+            self.selected_obj_pc = self.obj_name_data[self.selected_obj_name]["pc"].copy()
+            self.selected_obj_pc_feature = self.obj_name_data[self.selected_obj_name]["pc_feature"].copy()
+            self.selected_obj_bbox = self.obj_name_data[self.selected_obj_name]["bbox"]
+            pu.set_mass(self.selected_obj_id, self.obj_name_data[self.selected_obj_name]["mass"], client_id=self.client_id)
 
-        # Choose query scene 
-        if self.query_scene_done:
-            self.query_scene_done = False
-            self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name_id.keys()))
-            self.selected_qr_scene_id = self.obj_name_id[self.selected_qr_scene_name]
-            self.selected_qr_scene_pc = self.obj_name_pc[self.selected_qr_scene_name].copy()
-            self.selected_qr_scene_pc_feature = self.obj_name_pc_feature[self.selected_qr_scene_name].copy()
-        
-        # Compute query region based on the selected object and scene
-        selected_obj_bbox = self.obj_name_axes_bbox[self.selected_obj_name]
-        selected_scene_bbox = self.obj_name_axes_bbox[self.selected_qr_scene_name]
-        # Plane needs to use default region to sample; needs to set scene_bbox
-        # We only have on and in relation for now. On and in are pre-annotated.
-        if self.scene_obj_valid_place_relation[self.selected_qr_scene_name] == self.ON:
-            max_z_half_extent = selected_obj_bbox[9] # bbox is half extent!
-            self.selected_qr_region = get_on_bbox(selected_scene_bbox.copy(), z_half_extend=max_z_half_extent)
-        elif self.scene_obj_valid_place_relation[self.selected_qr_scene_name] == self.IN:
-            max_z_half_extent = max(selected_obj_bbox[9], selected_scene_bbox[9]) # bbox is half extent!
-            self.selected_qr_region = get_in_bbox(selected_scene_bbox.copy(), z_half_extend=max_z_half_extent)
+        # Compute query region area based on the selected object and scene
+        if self.selected_qr_scene_region == "on":
+            max_z_half_extent = self.tallest_placed_half_z_extend + self.selected_obj_bbox[9] # If on, bbox is half extent + tallest placed obj half extent (equivalent to the current scene bbox).
+            self.selected_qr_region = get_on_bbox(self.selected_qr_scene_bbox.copy(), z_half_extend=max_z_half_extent)
+        elif self.selected_qr_scene_region == "in":
+            max_z_half_extent = self.selected_obj_bbox[9] # max z-half extend is half extent of the object! we can not handle the case that if some objects already placed on the scene and we want to stack on them.
+            self.selected_qr_region = get_in_bbox(self.selected_qr_scene_bbox.copy(), z_half_extend=max_z_half_extent)
+        else:
+            raise NotImplementedError(f"Object {self.selected_qr_scene_name} Queried region {self.selected_qr_scene_region} is not implemented!")
 
         # Convert history to tensor
         his_traj = self.to_numpy(self.traj_history).flatten()
@@ -492,16 +482,16 @@ class RoboSensaiBullet:
 
 
     def compute_reward(self):
-        self.moving_steps += 1
+        self.cur_trial += 1
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
         if self.his_steps <= self.args.max_stable_steps: 
             # Jump to the next object, object is stable within 10 simulation steps
-            self.obj_done = True; self.moving_steps = 0; self.success_obj_num[self.cur_stage] += 1
-            self.unplaced_objs_name_id.pop(self.selected_obj_name)
+            self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
+            self.unplaced_objs_name.remove(self.selected_obj_name)
             # Record the successful object pose
             selected_obj_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-            self.placed_obj_poses[self.cur_stage][self.selected_obj_name] = selected_obj_pose
-            vel_reward += len(self.placed_obj_poses[self.cur_stage]) * self.args.reward_pobj
+            self.placed_obj_poses[self.selected_obj_name] = selected_obj_pose
+            vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
             # Update the scene observation | transform the selected object point cloud to world frame using the current pose
             scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
             scene_obj2_selected_obj_pose = p.multiplyTransforms(*p.invertTransform(*scene_obj_pose), selected_obj_pose[0], selected_obj_pose[1])
@@ -509,6 +499,7 @@ class RoboSensaiBullet:
             # transformed_selected_obj_pc = tf_apply(self.to_torch(selected_obj_pose[1]), self.to_torch(selected_obj_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
             self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
+            self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
             # Run one inference needs ~0.5s!
             with torch.no_grad():
                 self.selected_qr_scene_pc_feature = self.pc_extractor(self.to_torch(self.selected_qr_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).cpu().numpy()
@@ -524,39 +515,47 @@ class RoboSensaiBullet:
     def compute_done(self):
         done = False # Not real done, done signal means one training episode is done
         # When all cur stage objects have been placed, move to the next scene, refill all objects
-        if len(self.unplaced_objs_name_id)==0 or self.moving_steps >= self.args.max_trials:
-            self.unquried_scene_name_id.pop(self.selected_qr_scene_name)
+        if len(self.unplaced_objs_name)==0 or self.cur_trial >= self.args.max_trials:
+            self.unquried_scene_name.remove(self.selected_qr_scene_name)
+            pu.set_pose(body=self.selected_qr_scene_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id) # Reset the pose of the scene
             self.query_scene_done = True # Choose new queried scene in the current stage
-            self.update_unplaced_objs()  # Refill all objects
             self.obj_done = True         # Choose new object in the current stage
-            self.reset_all = False       # Not real done (reset the query scene and query object)
             done = True
-            if self.moving_steps >= self.args.max_trials:# Failed to place the object, reset its pose to the prepare area
-                pu.set_pose(body=self.obj_name_id[self.selected_obj_name], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)              
-            
-        # When all scene have been queried, move to the next stage, refill scene and objects
-        # If there is no next stage (no next stage placed objs or no next stage queried scene), then reset everything
-        if len(self.unquried_scene_name_id)==0:
-            self.cur_stage += 1
-            self.update_unplaced_objs()  # Update next-stage unplaced objects
-            self.update_unquery_scenes() # Update next-stage unqueried scenes
-            done = True
-            if len(self.unplaced_objs_name_id)==0 or len(self.unquried_scene_name_id)==0:
-                self.reset_all = True    # Real done (reset the whole environment)
+            if self.cur_trial >= self.args.max_trials:# Failed to place the object, reset its pose to the prepare area
+                pu.set_pose(body=self.obj_name_data[self.selected_obj_name]["id"], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)              
         
         # Record miscs info
         if done:
+            self.num_episode += 1
             self.info['placed_obj_poses'] = self.placed_obj_poses
-            self.info['success_placed_obj_num'] = sum(dict2list(self.success_obj_num)[1])
-            self.info['success'] = 0.
-            if self.cur_stage > len(self.args.max_num_placing_objs):
-                self.info['success'] = all([self.success_obj_num[i] >= self.args.max_num_placing_objs[i] for i in range(self.cur_stage-1)])
+            self.info['success_placed_obj_num'] = self.success_obj_num
+
+            if self.selected_qr_scene_name not in self.info['scene_obj_success_num'].keys():
+                self.info['scene_obj_success_num'][self.selected_qr_scene_name] = []
+            self.append_item(self.info['scene_obj_success_num'][self.selected_qr_scene_name], self.success_obj_num, max_len=100)
+            if self.success_obj_num >= self.args.max_num_placing_objs:
+                self.info['success'] = 1.
+            else:
+                self.info['success'] = 0.
         return done
         
 
     ######################################
     ######### Utils FUnctions ############
     ######################################
+
+    def step_manual(self):
+        with keyboard.Events() as events:
+            while True:
+                key = None
+                event = events.get(0.0001)
+                if event is not None:
+                    if isinstance(event, events.Press) and hasattr(event.key, 'char'):
+                        key = event.key.char
+                if key == 's':
+                    self.simstep()
+                    self.post_checker(verbose=True)
+
 
     def simstep(self, freeze_time=1/240):
         for i in range(ceil(freeze_time * 240)):
@@ -584,6 +583,15 @@ class RoboSensaiBullet:
         for stage, obj_names in self.obj_categories.items():
             if obj_name in obj_names.keys(): return stage
         return None
+    
+
+    def set_obj_joints_to_lower_limit(self, obj_id):
+        joints_num = pu.get_num_joints(obj_id, client_id=self.client_id)
+        if joints_num > 0:
+            joints_limits = np.array([pu.get_joint_limits(obj_id, joint_i, client_id=self.client_id) for joint_i in range(joints_num)])
+            pu.set_joint_positions(obj_id, list(range(joints_num)), joints_limits[:, 0], client_id=self.client_id)
+            pu.control_joints(obj_id, list(range(joints_num)), joints_limits[:, 0], client_id=self.client_id)
+            return joints_limits
     
 
     def vel_checker(self, obj_vel):
@@ -620,6 +628,12 @@ class RoboSensaiBullet:
         return np.array(x, dtype=dtype)
     
 
+    def append_item(self, lst, item, max_len=100):
+        lst.append(item)
+        if len(lst) > max_len: lst.pop(0)
+        return lst
+    
+
     def close(self):
         p.disconnect(physicsClientId=self.client_id)
     
@@ -631,22 +645,32 @@ if __name__=="__main__":
     args.rendering = True
     args.debug = False
     args.asset_root = "assets"
-    args.object_pool_folder = "objects"
-    args.num_pool_objs = 100
-    args.max_num_placing_objs = [0, 3, 16]
-    args.random_select_pool = False
-    args.random_select_placing = True
+    args.object_pool_folder = "union_objects_train"
+    args.scene_pool_folder = "union_scene"
+    args.num_pool_objs = 5
+    args.num_pool_scenes = 5
+    args.random_select_objs_pool = True
+    args.random_select_scene_pool = True
+    args.random_select_placing = False
+    args.fixed_scene_only = False
+    args.num_episode_to_replace_pool = 1000
+    args.max_num_placing_objs = 5
+    args.max_num_qr_scenes = 5
     args.default_scaling = 0.5
     args.realtime = True
     args.force_threshold = 20.
-    args.vel_threshold = [0.005, np.pi/1800] # This two threshold need to be tuned
-    args.acc_threshold = [0.1, np.pi/180]
+    # Original threshold:
+    # args.vel_threshold = [0.005, np.pi/1800] # This two threshold need to be tuned
+    # args.acc_threshold = [0.1, np.pi/180]
+    args.vel_threshold = [0.005, np.pi/180] # This two threshold need to be tuned
+    args.acc_threshold = [0.1, np.pi/18]
     args.eval_result = True
+
     args.specific_scene = "microwave_0"
 
     env = RoboSensaiBullet(args)
 
-    all_pc = np.concatenate(list(env.obj_name_pc.values()) + [env.init_scene_pc], axis=0)
+    all_pc = np.concatenate([env.obj_name_data[name]["pc"] for name in env.obj_name_data] + [env.fixed_scene_name_data[name]["pc"] for name in env.fixed_scene_name_data], axis=0)
     pu.visualize_pc(all_pc)
 
     while True:
