@@ -420,7 +420,7 @@ class RoboSensaiBullet:
 
     def reset(self):
         # Since we can not load all of the scenes and objects at one time for training, we need to reset the environment at the certain number of episodes for training.
-        if self.num_episode > self.args.num_episode_to_replace_pool:
+        if self.num_episode >= self.args.num_episode_to_replace_pool:
             self.num_episode = 0 # Reset the episode counter!!
             p.resetSimulation(physicsClientId=self.client_id)
             p.setGravity(0, 0, -9.8, physicsClientId=self.client_id)
