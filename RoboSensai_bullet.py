@@ -405,7 +405,8 @@ class RoboSensaiBullet:
                 print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
                 if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
 
-        if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() # This point should be considered as the start of the episode!
+        # This point should be considered as the start of the episode! Stablebaseline3 will automatically reset the environment when done is True; Therefore this will introduce reset twice but we can not avoid it.
+        if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() 
         else: observation = self.last_observation
 
         # Reset successfully placed object pose
@@ -420,6 +421,7 @@ class RoboSensaiBullet:
     def reset(self):
         # Since we can not load all of the scenes and objects at one time for training, we need to reset the environment at the certain number of episodes for training.
         if self.num_episode > self.args.num_episode_to_replace_pool:
+            self.num_episode = 0 # Reset the episode counter!!
             p.resetSimulation(physicsClientId=self.client_id)
             p.setGravity(0, 0, -9.8, physicsClientId=self.client_id)
             self.load_scenes()

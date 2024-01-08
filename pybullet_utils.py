@@ -1140,6 +1140,7 @@ def get_link_pc_from_id(obj_id, link_index=-1, min_num_points=1024, use_worldpos
     return np.array(link_pc)
 
 
+# TODO: We need to sample each link's point cloud based on the size of the mesh! It is meaningless to oversampling each link with same amount of points then downsampling!
 def get_obj_pc_from_id(obj_id, num_points=1024, use_worldpos=False, rng=None, client_id=0):
     # Set all joints to the lower limit before getting bbox and pc; Assumption is lower joints means the object is in the most compact shape!
     obj_joints_num = get_num_joints(obj_id, client_id=client_id)
