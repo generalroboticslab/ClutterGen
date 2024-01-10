@@ -234,7 +234,7 @@ class RoboSensaiBullet:
 
 
     #########################################
-    ######### Training FUnctions ############
+    ######### Training Functions ############
     #########################################
 
     def _init_obs_act_space(self):
