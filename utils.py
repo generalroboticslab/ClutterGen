@@ -4,6 +4,7 @@ import os
 import csv
 import pprint
 import numpy as np
+import torch
 
 
 
@@ -74,3 +75,17 @@ def pc_random_downsample(pc_array, num_points):
     num_points = min(num_points, pc_array.shape[0])
     idx = np.random.choice(pc_array.shape[0], num_points, replace=False)
     return pc_array[idx]
+
+
+def inverse_sigmoid(x):
+    return torch.log(x / (1 - x + 1e-10))
+    
+
+def create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[5]*6):
+    assert len(action_ranges) == len(num_steps), "action_ranges and num_steps must have the same length"
+    action_steps = [torch.linspace(start, end, num_steps[j]) for j, (start, end) in enumerate(action_ranges)]
+    # Use torch.meshgrid with explicit indexing argument
+    meshgrid_tensors = torch.meshgrid(*action_steps, indexing='ij')
+    # Stack the meshgrid tensors along a new dimension to get the final meshgrid tensor
+    meshgrid_tensor = torch.stack(meshgrid_tensors, dim=-1)
+    return meshgrid_tensor

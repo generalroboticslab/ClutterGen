@@ -43,6 +43,10 @@ class CustomPyBulletEnv(gym.Env):
     
     def get_env_attr(self, attr_name):
         return getattr(self.env, attr_name)
+    
+
+    def visualize_actor_prob(self, raw_actions, act_log_prob):
+        return self.env.visualize_actor_prob(raw_actions, act_log_prob)
 
 
     def render(self, mode='human'):

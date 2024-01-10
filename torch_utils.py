@@ -190,6 +190,12 @@ def quat_from_euler_xyz(roll, pitch, yaw): # Is actually zyx?
     return torch.stack([qx, qy, qz, qw], dim=-1)
 
 
+def quat_from_euler(euler):
+    # xyz
+    roll, pitch, yaw = euler[..., 0], euler[..., 1], euler[..., 2]
+    return quat_from_euler_xyz(roll, pitch, yaw)
+
+
 @torch.jit.script
 def torch_rand_float(lower, upper, shape, device):
     # type: (float, float, Tuple[int, int], str) -> Tensor

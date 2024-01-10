@@ -182,125 +182,128 @@ tippe_top = """
 
 
 # URDF to PointsCloud
-# import pybullet_utils as pu
-# import open3d as o3d
-# client_id = p.connect(p.GUI)
-# p.setAdditionalSearchPath(pybullet_data.getDataPath())
-# p.loadURDF("plane.urdf")
-# p.setGravity(0, 0, -9.8)
-# obj_id = p.loadURDF("/home/grl/Downloads/models/005_tomato_soup_can/mobility.urdf", basePosition=[0, 0, 0.], useFixedBase=True, globalScaling=1.)
-
-# world2baselink = pu.get_link_pose(obj_id, -1)
-# num_links = pu.get_num_links(obj_id)
-# whole_pc = []
-
-# for link_id in range(-1, num_links):
-#     link_pc_world = pu.get_link_pc_from_id(obj_id, link_id, min_num_points=1024, use_worldpos=False, client_id=client_id)
-#     whole_pc.extend(link_pc_world)
-
-# whole_pc = np.array(whole_pc)
-# print(whole_pc.shape)
-# whole_pc = pu.get_obj_pc_from_id(obj_id, num_points=20000, use_worldpos=False, client_id=client_id)
-# print(whole_pc.shape)
-# o3d_pc = o3d.geometry.PointCloud()
-# o3d_pc.points = o3d.utility.Vector3dVector(whole_pc)
-# bbox = o3d_pc.get_axis_aligned_bounding_box()
-# bbox.color = np.array([0, 0, 0.])
-# print(bbox.get_center(), bbox.get_half_extent())
-# coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-# # coord_frame2 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=world2link[0])
-# o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
-
-
-
-import pybullet as p
-import pybullet_data
 import pybullet_utils as pu
-import os
+import open3d as o3d
+client_id = p.connect(p.GUI)
+p.setAdditionalSearchPath(pybullet_data.getDataPath())
+p.loadURDF("plane.urdf")
+p.setGravity(0, 0, -9.8)
+obj_id = p.loadURDF("assets/union_objects_test/AlarmClock/1/mobility.urdf", basePosition=[0, 0, 0.], useFixedBase=True, globalScaling=1.)
+
+world2baselink = pu.get_link_pose(obj_id, -1)
+num_links = pu.get_num_links(obj_id)
+whole_pc = []
+
+for link_id in range(-1, num_links):
+    link_pc_world = pu.get_link_pc_from_id(obj_id, link_id, min_num_points=1024, use_worldpos=False, client_id=client_id)
+    whole_pc.extend(link_pc_world)
+
+whole_pc = np.array(whole_pc)
+print(whole_pc.shape)
+whole_pc = pu.get_obj_pc_from_id(obj_id, num_points=20000, use_worldpos=False, client_id=client_id)
+print(whole_pc.shape)
+o3d_pc = o3d.geometry.PointCloud()
+o3d_pc.points = o3d.utility.Vector3dVector(whole_pc)
+bbox = o3d_pc.get_axis_aligned_bounding_box()
+bbox.color = np.array([0, 0, 0.])
+print(bbox.get_center(), bbox.get_half_extent())
+coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+# coord_frame2 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=world2link[0])
+o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
 
 
-def load_urdf_and_get_bbox(urdf_file, label_file):
-    """
-    Load a URDF file and return its bounding box dimensions.
-    """
-    globalScaling = 1.
-    if os.path.exists(label_file):
-      obj_label = read_json(label_file)
-      globalScaling = obj_label["globalScaling"]
-    obj_id = p.loadURDF(urdf_file, useFixedBase=False, globalScaling=globalScaling)
-    obj_pc = pu.get_obj_pc_from_id(obj_id)
-    obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
 
-    obj_joints_num = pu.get_num_joints(obj_id)
-    if obj_joints_num > 0: # If the object is not movable, we need to control its joints to make it movable below each reload urdf!
-        joints_limits = np.array([pu.get_joint_limits(obj_id, joint_i) for joint_i in range(obj_joints_num)])
-        pu.set_joint_positions(obj_id, list(range(obj_joints_num)), joints_limits[:, 0])
-        pu.control_joints(obj_id, list(range(obj_joints_num)), joints_limits[:, 0])
-    return obj_id, obj_bbox
+# import pybullet as p
+# import pybullet_data
+# import pybullet_utils as pu
+# import os
 
 
-def main(urdf_files):
-    # Start PyBullet
-    p.connect(p.GUI)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    p.setGravity(0, 0, -10)
-    plane_id = p.loadURDF("plane.urdf")
-    pu.change_obj_color(plane_id, rgba_color=[1., 1., 1., 0.2])
+# def load_urdf_and_get_bbox(urdf_file, label_file):
+#     """
+#     Load a URDF file and return its bounding box dimensions.
+#     """
+#     globalScaling = 1.
+#     if os.path.exists(label_file):
+#       obj_label = read_json(label_file)
+#       globalScaling = obj_label["globalScaling"]
+#     obj_id = p.loadURDF(urdf_file, useFixedBase=False, globalScaling=globalScaling)
+#     obj_pc = pu.get_obj_pc_from_id(obj_id)
+#     obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
+
+#     obj_joints_num = pu.get_num_joints(obj_id)
+#     if obj_joints_num > 0: # If the object is not movable, we need to control its joints to make it movable below each reload urdf!
+#         joints_limits = np.array([pu.get_joint_limits(obj_id, joint_i) for joint_i in range(obj_joints_num)])
+#         pu.set_joint_positions(obj_id, list(range(obj_joints_num)), joints_limits[:, 0])
+#         pu.control_joints(obj_id, list(range(obj_joints_num)), joints_limits[:, 0])
+#     return obj_id, obj_bbox
+
+
+# def main(urdf_files):
+#     # Start PyBullet
+#     p.connect(p.GUI)
+#     p.setAdditionalSearchPath(pybullet_data.getDataPath())
+#     p.setGravity(0, 0, -10)
+#     plane_id = p.loadURDF("plane.urdf")
+#     pu.change_obj_color(plane_id, rgba_color=[1., 1., 1., 0.2])
     
-    # Load table URDF (adjust the path to your table URDF)
-    tableHalfExtents = [1.1, 3, 0.2]
-    tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
-                                          halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 0.5], mass=0.)
+#     # Load table URDF (adjust the path to your table URDF)
+#     tableHalfExtents = [1.1, 1.5, 0.2]
+#     tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
+#                                           halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 0.5], mass=0.)
 
-    # Initialize variables for object placement
-    current_x, current_y = -tableHalfExtents[0], -tableHalfExtents[1]
-    max_row_height = 0
+#     # Initialize variables for object placement
+#     current_x, current_y = -tableHalfExtents[0], -tableHalfExtents[1]
+#     max_row_height = 0
 
-    for i, urdf_file in enumerate(urdf_files):
-        # Load URDF and get its bounding box size
-        label_file = urdf_file.replace("mobility.urdf", "label.json")
-        obj_id, bbox = load_urdf_and_get_bbox(urdf_file, label_file)
-        obj_size = [v*2 for v in bbox[-3:]]
+#     for i, urdf_file in enumerate(urdf_files):
+#         # Load URDF and get its bounding box size
+#         label_file = urdf_file.replace("mobility.urdf", "label.json")
+#         obj_id, bbox = load_urdf_and_get_bbox(urdf_file, label_file)
+#         obj_size = [v*2 for v in bbox[-3:]]
         
-        # Check if the object fits in the current row, else move to next column
-        if current_x + obj_size[0] > tableHalfExtents[0]:
-            current_x = -tableHalfExtents[0]
-            current_y += max_row_height
-            max_row_height = 0
+#         # Check if the object fits in the current row, else move to next column
+#         if current_x + obj_size[0] > tableHalfExtents[0]:
+#             current_x = -tableHalfExtents[0]
+#             current_y += max_row_height
+#             max_row_height = 0
 
-        # Update the maximum height of the current row
-        max_row_height = max(max_row_height, obj_size[1])
+#         # Update the maximum height of the current row
+#         max_row_height = max(max_row_height, obj_size[1])
 
-        # Check if the object fits in the current column, else skip or handle appropriately
-        if current_y + obj_size[1] > tableHalfExtents[1]:
-            print(f"Not enough space for object {urdf_file}")
-            continue
+#         # Check if the object fits in the current column, else skip or handle appropriately
+#         if current_y + obj_size[1] > tableHalfExtents[1]:
+#             print(f"Not enough space for object {urdf_file}")
+#             continue
 
-        # Place the object
-        pu.set_pose(obj_id, ([current_x + obj_size[0]/2, current_y + obj_size[1]/2, obj_size[2]/2+tableHalfExtents[2]*2], [0, 0, 0, 1]))
+#         # Place the object
+#         pu.set_pose(obj_id, ([current_x + obj_size[0]/2, current_y + obj_size[1]/2, obj_size[2]/2+tableHalfExtents[2]*2], [0, 0, 0, 1]))
 
-        # Update the x-coordinate for the next object
-        current_x += obj_size[0]
+#         # Update the x-coordinate for the next object
+#         current_x += obj_size[0]
 
-    # Keep the simulation running
-    p.setRealTimeSimulation(1)
-    input("Press Enter to exit...")  # Wait for user input to exit
-    p.disconnect()
+#     # Keep the simulation running
+#     p.setRealTimeSimulation(1)
+#     input("Press Enter to exit...")  # Wait for user input to exit
+#     p.disconnect()
 
 
-urdf_files = []
-# List of URDF files to load
-obj_source_folder = "assets/objaverse/selected_obj"
-obj_categories = os.listdir(obj_source_folder)
-for obj_category in obj_categories:
-    obj_category_folder = os.path.join(obj_source_folder, obj_category)
-    obj_instances = os.listdir(obj_category_folder)
-    for obj_instance in obj_instances:
-        obj_instance_folder = os.path.join(obj_category_folder, obj_instance)
-        obj_urdf = os.path.join(obj_instance_folder, "mobility.urdf")
-        urdf_files.append(obj_urdf)
+# urdf_files = []
+# # List of URDF files to load
+# obj_source_folder = "assets/union_objects"
+# obj_categories = os.listdir(obj_source_folder)
+# for obj_category in obj_categories:
+#     obj_category_folder = os.path.join(obj_source_folder, obj_category)
+#     obj_instances = os.listdir(obj_category_folder)
+#     for obj_instance in obj_instances:
+#         obj_instance_folder = os.path.join(obj_category_folder, obj_instance)
+#         obj_urdf = os.path.join(obj_instance_folder, "mobility.urdf")
+#         urdf_files.append(obj_urdf)
 
-urdf_files = np.random.choice(urdf_files, 50, replace=False)
-print(f"Number of objects to load: {len(urdf_files)}")
-# Run the main function
-main(urdf_files)
+# urdf_files = np.random.choice(urdf_files, 50, replace=False)
+# print(f"Number of objects to load: {len(urdf_files)}")
+# # Run the main function
+# main(urdf_files)
+
+from utils import read_json
+aa = read_json("assets/union_objects/Scissors/7/label.json")
