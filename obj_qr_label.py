@@ -10,8 +10,8 @@ from utils import get_on_bbox, get_in_bbox
 import time
 
 
-VelThreshold = [0.005, np.pi]
-AccThreshold = [1., np.pi]
+VelThreshold = [0.005, np.pi/360]
+AccThreshold = [0.5, np.pi]
 
 class ObjectLabeler:
     def __init__(self, source_folder_path, target_folder_name='selected_obj', overwrite=False):
@@ -384,7 +384,7 @@ class ObjectLabeler:
         
 
 if __name__ == '__main__':
-    Label = "scene"
+    Label = "obj"
     
     if Label == "obj":
         source_folder_path = "assets/objaverse/selected_obj"
