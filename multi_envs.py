@@ -12,8 +12,8 @@ class CustomPyBulletEnv(gym.Env):
         self.env = RoboSensaiBullet(args)
         
         # Define your action and observation spaces (FC)
-        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.env.action_shape[1],), dtype=np.float32)
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(np.prod(self.env.observation_shape[1:]), ), dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.env.action_shape[1], ), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=self.env.raw_observation_shape[1:], dtype=np.float32)
 
 
     def reset(self, seed=None):

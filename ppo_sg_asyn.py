@@ -211,24 +211,25 @@ if __name__ == "__main__":
 
     # ALGO Logic: Storage setup
     # Temp storage
-    obs_asy = torch.zeros((args.num_steps, args.num_envs) + temp_env.observation_shape[1:], dtype=tensor_dtype).to(device)
+    obs_asy = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
     actions_asy = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=tensor_dtype).to(device)
     logprobs_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     rewards_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     dones_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     values_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
 
-    obs_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + temp_env.observation_shape[1:], dtype=tensor_dtype).to(device)
+    obs_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
     actions_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + temp_env.action_shape[1:], dtype=tensor_dtype).to(device)
     logprobs_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
     rewards_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
     dones_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
     values_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
-    next_obs_buf = torch.zeros((2 * args.num_envs, ) + temp_env.observation_shape[1:], dtype=tensor_dtype).to(device)
+    next_obs_buf = torch.zeros((2 * args.num_envs, ) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
     next_done_buf = torch.zeros(2 * args.num_envs, dtype=tensor_dtype).to(device)
 
-    print(f"Observation Shape: {temp_env.observation_shape}")
-    obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.observation_shape[1:], dtype=tensor_dtype).to(device)
+    print(f"Raw Observation Shape: {temp_env.raw_observation_shape}")
+    print(f"Post Observation Shape: {temp_env.post_observation_shape}")
+    obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=tensor_dtype).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
@@ -454,7 +455,7 @@ if __name__ == "__main__":
                 advantages = returns - values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + temp_env.observation_shape[1:])
+        b_obs = obs.reshape((-1,) + temp_env.raw_observation_shape[1:])
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + temp_env.action_shape[1:])
         b_advantages = advantages.reshape(-1)

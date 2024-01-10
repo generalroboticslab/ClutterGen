@@ -240,16 +240,21 @@ class RoboSensaiBullet:
 
     def _init_obs_act_space(self):
         # Observation space: [scene_pc_feature, obj_pc_feature, bbox, action, history (hitory_len * (obj_pos + obj_vel)))]
-        scene_ft_dim = 1024; obj_ft_dim = 1024; qr_region_dim = 10; action_dim = 6; history_dim = self.args.max_traj_history_len * (6 + 7)
-        self.observation_shape = (1, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + history_dim)
+        scene_ft_dim = 1024; obj_ft_dim = 1024; qr_region_dim = 10; action_dim = 6; 
+        history_dim_raw = self.args.max_traj_history_len*(6+7); self.history_dim_post = 512
+        # 1 is the env number to align with the isaacgym env
+        self.raw_observation_shape = (1, self.args.sequence_len, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + history_dim_raw)
+        self.post_observation_shape = (1, self.args.sequence_len, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + self.history_dim_post)
         # Action space: [x, y, z, roll, pitch, yaw]
         self.action_shape = (1, 6)
+        # trajectory shape
+        self.traj_history_shape = (self.args.max_traj_history_len, 6+7) # obj_pos dimension + obj_vel dimension
         # slice
         self.act_scene_feature_slice = slice(0, scene_ft_dim)
         self.selected_obj_feature_slice = slice(self.act_scene_feature_slice.stop, self.act_scene_feature_slice.stop+obj_ft_dim)
         self.placed_region_slice = slice(self.selected_obj_feature_slice.stop, self.selected_obj_feature_slice.stop+qr_region_dim)
-        self.last_action_slice = slice(self.placed_region_slice.stop, self.placed_region_slice.stop+qr_region_dim+action_dim)
-        self.traj_history_slice = slice(self.last_action_slice.stop, self.last_action_slice.stop+self.args.max_traj_history_len*(6+7))
+        self.last_action_slice = slice(self.placed_region_slice.stop, self.placed_region_slice.stop+action_dim)
+        self.traj_history_slice = slice(self.last_action_slice.stop, self.last_action_slice.stop+history_dim_raw)
 
     
     def _init_misc_variables(self):
@@ -298,6 +303,7 @@ class RoboSensaiBullet:
         # Observations
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
         self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
+        self.last_observation = np.zeros(self.raw_observation_shape[1:], dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
 
@@ -328,7 +334,7 @@ class RoboSensaiBullet:
 
 
     def update_unquery_scenes(self):
-        self.unquried_scene_name = list(self.fixed_scene_name_data.keys())
+        self.unquried_scene_name = []
         if not self.args.fixed_scene_only:
             self.unquried_scene_name.extend(self.queriable_obj_names)
         self.unquried_scene_name = self.unquried_scene_name[:self.args.max_num_qr_scenes]
@@ -342,7 +348,7 @@ class RoboSensaiBullet:
         
         # action = [x, y, z, roll, pitch, yaw]
         scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        placed_qr_region = self.last_observation[self.placed_region_slice]
+        placed_qr_region = self.selected_qr_region
         half_extents = placed_qr_region[7:]
         untrans_xyz = action[:3] * (2 * half_extents) - half_extents
         # In the qr_scene baseLink frame
@@ -479,9 +485,10 @@ class RoboSensaiBullet:
 
         # Convert history to tensor
         his_traj = self.to_numpy(self.traj_history).flatten()
-
-        self.last_observation = np.concatenate([self.selected_qr_scene_pc_feature, self.selected_obj_pc_feature, 
-                                                self.selected_qr_region, self.last_raw_action, his_traj])
+        cur_observation = np.concatenate([self.selected_qr_scene_pc_feature, self.selected_obj_pc_feature, 
+                                           self.selected_qr_region, self.last_raw_action, his_traj])
+        # Update the last observation; pop the first observation and append the last observation
+        self.last_observation = np.concatenate([self.last_observation[1:, :], np.expand_dims(cur_observation, axis=0)])
         
         return self.last_observation
 
@@ -554,7 +561,7 @@ class RoboSensaiBullet:
         # action = [x, y, z, roll, pitch, yaw]
         scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
         scene_obj_pos_tensor, scene_obj_ori_tensor = self.to_torch(scene_obj_pose[0]), self.to_torch(scene_obj_pose[1])
-        placed_qr_region = self.to_torch(self.last_observation[self.placed_region_slice])
+        placed_qr_region = self.to_torch(self.selected_qr_region)
         half_extents = placed_qr_region[7:]
         untrans_xyz = action[..., :3] * (2 * half_extents) - half_extents
         # In the qr_scene baseLink frame
@@ -710,8 +717,8 @@ if __name__=="__main__":
     args.asset_root = "assets"
     args.object_pool_folder = "union_objects_train"
     args.scene_pool_folder = "union_scene"
-    args.num_pool_objs = 5
-    args.num_pool_scenes = 5
+    args.num_pool_objs = 32
+    args.num_pool_scenes = 0
     args.random_select_objs_pool = True
     args.random_select_scene_pool = True
     args.random_select_placing = False
@@ -719,6 +726,7 @@ if __name__=="__main__":
     args.num_episode_to_replace_pool = 1000
     args.max_num_placing_objs = 5
     args.max_num_qr_scenes = 5
+    args.sequence_len = 1
     args.default_scaling = 0.5
     args.realtime = True
     args.force_threshold = 20.
