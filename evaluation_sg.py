@@ -27,7 +27,7 @@ def get_args():
     parser = argparse.ArgumentParser(description='Evaluate Handem Pushing Experiment')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument('--object_pool_name', type=str, default='YCB', help="Object Pool. Ex: YCB, Partnet")
+    parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
