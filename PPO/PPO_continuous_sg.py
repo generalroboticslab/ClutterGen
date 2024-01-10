@@ -101,7 +101,6 @@ class Agent(nn.Module):
             self.actor.append(layer_init(nn.Linear(self.hidden_size, self.action_logits_num), std=0.01))
             self.actor = self.actor.to(self.device)
 
-        # Not train standard deviation, but only use linear schedular
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.action_shape)).to(self.device), requires_grad=True) # is_leaf problem for nn.parameters/must set to() within it
 
         self.to(self.envs.tensor_dtype)
@@ -140,7 +139,7 @@ class Agent(nn.Module):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         action = action_mean if self.deterministic else probs.sample()
-        return action
+        return action, probs
 
 
     def set_mode(self, mode='train'):

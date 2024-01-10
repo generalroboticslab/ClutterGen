@@ -23,6 +23,7 @@ from PointNet_Model.pointnet2_cls_ssg import get_model
 
 # Visualization
 from tabulate import tabulate
+from torch_utils import tf_combine, quat_from_euler
 
 
 class RoboSensaiBullet:
@@ -356,7 +357,7 @@ class RoboSensaiBullet:
             else:
                 if hasattr(self, "region_vis_id"): p.removeBody(self.region_vis_id, physicsClientId=self.client_id)
                 self.region_vis_id = pu.draw_box_body(position=world2qr_region[0], orientation=world2qr_region[1],
-                                                      halfExtents=half_extents, rgba_color=[1, 0, 0, 0.3], client_id=self.client_id)
+                                                      halfExtents=half_extents, rgba_color=[1, 0, 0, 0.1], client_id=self.client_id)
                 self.last_world2qr_region = world2qr_region
 
         return step_action_xyz, step_action_quat
@@ -434,6 +435,8 @@ class RoboSensaiBullet:
         # Choose query scene 
         if self.query_scene_done:
             self.query_scene_done = False
+            if hasattr(self, "selected_qr_scene_id"): # Move the previous scene to the prepare area
+                pu.set_pose(body=self.selected_qr_scene_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id) # Reset the pose of the scene
             while True:
                 self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name))
                 self.scene_name_data = self.obj_name_data if self.selected_qr_scene_name in self.obj_name_data.keys() else self.fixed_scene_name_data
@@ -519,7 +522,6 @@ class RoboSensaiBullet:
         # When all cur stage objects have been placed, move to the next scene, refill all objects
         if len(self.unplaced_objs_name)==0 or self.cur_trial >= self.args.max_trials:
             self.unquried_scene_name.remove(self.selected_qr_scene_name)
-            pu.set_pose(body=self.selected_qr_scene_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id) # Reset the pose of the scene
             self.query_scene_done = True # Choose new queried scene in the current stage
             self.obj_done = True         # Choose new object in the current stage
             done = True
@@ -542,6 +544,65 @@ class RoboSensaiBullet:
         return done
         
 
+    ######################################
+    ####### Evaluation Functions #########
+    ######################################
+    def visualize_actor_prob(self, raw_actions, act_log_prob):
+        # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
+        action = raw_actions.sigmoid() # Map action to (0, 1)
+        action[..., 3:5] = 0. # No x,y rotation
+        # action = [x, y, z, roll, pitch, yaw]
+        scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        scene_obj_pos_tensor, scene_obj_ori_tensor = self.to_torch(scene_obj_pose[0]), self.to_torch(scene_obj_pose[1])
+        placed_qr_region = self.to_torch(self.last_observation[self.placed_region_slice])
+        half_extents = placed_qr_region[7:]
+        untrans_xyz = action[..., :3] * (2 * half_extents) - half_extents
+        # In the qr_scene baseLink frame
+        untrans_xyz_shape_head = untrans_xyz.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
+        placed_qr_region_xyz, placed_qr_region_quat = placed_qr_region[:3].repeat(*untrans_xyz_shape_head, 1), placed_qr_region[3:7].repeat(*untrans_xyz_shape_head, 1)
+        local_action_xyz = tf_combine(placed_qr_region_quat, placed_qr_region_xyz, self.to_torch([0., 0., 0., 1.]).repeat(*untrans_xyz_shape_head, 1), untrans_xyz)[1]
+        # In the simulator world frame
+        local_action_xyz_shape_head = local_action_xyz.shape[:-1]
+        scene_obj_pos_tensor, scene_obj_ori_tensor = scene_obj_pos_tensor.repeat(*local_action_xyz_shape_head, 1), scene_obj_ori_tensor.repeat(*local_action_xyz_shape_head, 1)
+        step_action_xyz = tf_combine(scene_obj_ori_tensor, scene_obj_pos_tensor, self.to_torch([0., 0., 0., 1.]).repeat(*local_action_xyz_shape_head, 1), local_action_xyz)[1]
+        # Convert Rotation to Quaternion
+        step_action_euler = action[..., 3:] * 2*np.pi
+        step_action_quat = quat_from_euler((action[..., 3:] * 2*np.pi))
+
+        xyz_act_prob = act_log_prob[..., :3].sum(-1).exp()
+        xyzr_act_prob = (act_log_prob[..., :3].sum(-1) + act_log_prob[..., 5]).exp()
+        used_act_prob = xyz_act_prob # or xyzr_act_prob
+        # Compute each voxel size
+        voxel_half_x = (half_extents[0] / (action.shape[0]-1)).item() # We have num_steps -1 intervals
+        voxel_half_y = (half_extents[1] / (action.shape[1]-1)).item()
+        voxel_half_z = (half_extents[2] / (action.shape[2]-1)).item()
+
+        if self.args.rendering:
+            # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
+            step_action_xyz_i = step_action_xyz[:, :, :, 0, 0, 0].view(-1, 3)
+            step_action_quat_i = step_action_quat[:, :, :, 0, 0, 0].view(-1, 4)
+            step_euler_i = step_action_euler[:, :, :, 0, 0, 0].view(-1, 3)
+            used_act_prob_i = used_act_prob[:, :, :, 0, 0, 0].view(-1, 1)
+            print(f"Euler Angle: {step_euler_i.unique(dim=0)}")
+            # Normalize the prob sum to 1
+            used_act_prob_i = used_act_prob_i / (used_act_prob_i.sum() + 1e-10)
+            # Strenthen the range to [0, 1.] to strengthen the color
+            used_act_prob_i = (used_act_prob_i - used_act_prob_i.min()) / (used_act_prob_i.max() - used_act_prob_i.min() + 1e-10)
+            
+            if hasattr(self, "act_vs_box_ids"): 
+                [p.removeBody(act_vs_box_id, physicsClientId=self.client_id) for act_vs_box_id in self.act_vs_box_ids]
+            
+            self.act_vs_box_ids = []
+            for j in range(step_action_xyz_i.shape[0]):
+                # Use Yellow color
+                if torch.isclose(used_act_prob_i[j], torch.zeros_like(used_act_prob_i[j])): continue
+                rgba_color = [1, 1, 0, used_act_prob_i[j].item()]
+                act_vs_box_id = pu.draw_box_body(step_action_xyz_i[j].cpu().numpy(), 
+                                                halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
+                                                client_id=self.client_id, rgba_color=rgba_color)
+                self.act_vs_box_ids.append(act_vs_box_id)
+            time.sleep(3.)
+    
     ######################################
     ######### Utils FUnctions ############
     ######################################

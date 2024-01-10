@@ -28,13 +28,12 @@ def parse_args():
     
     # Env hyper parameters
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True) # https://docs.python.org/3/library/argparse.html#:~:text=%27%3F%27.%20One%20argument,to%20illustrate%20this%3A
-    parser.add_argument('--object_pool_name', type=str, default='YCB', help="Target object to be grasped. Ex: cube")
+    parser.add_argument('--object_pool_name', type=str, default='Union', help="Target object to be grasped. Ex: cube")
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
-    # RoboSensai Env parameters
-    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
+    # RoboSensai Env parameters (dataset)
     parser.add_argument('--num_pool_objs', type=int, default=32)
     parser.add_argument('--num_pool_scenes', type=int, default=0)
     parser.add_argument('--max_num_placing_objs', type=int, default=16)
@@ -44,6 +43,8 @@ def parse_args():
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=1000)
+    # RoboSensai Env parameters (training)
+    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument("--max_stable_steps", type=int, default=50, help="the maximum steps for the env to be stable considering success")

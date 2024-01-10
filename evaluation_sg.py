@@ -31,17 +31,17 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='YCB_12-18_23:52_FC_Rand_placing_Goal_[0, 16, 1]_maxstable50_Weight_rewardPobj100.0') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='YCB_01-08_16:43_FC_Rand_ObjPool_ObjPlace_FixedScene_Goal_maxObjNum5_maxStable50_maxQR1Scene_Weight_rewardPobj100.0') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
     parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
-
     parser.add_argument('--num_trials', type=int, default=10000)  # database length if have
-    parser.add_argument('--use_benchmark', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--save_to_assets', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--generate_benchmark', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+    parser.add_argument('--save_to_assets', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+    parser.add_argument('--use_benchmark', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     
     parser.add_argument('--draw_contact', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
@@ -75,11 +75,20 @@ def get_args():
 
     # RoboSensai Bullet parameters
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='objects', help="folder path that stores all urdf files")
-    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='random select objects from the pool')
-    parser.add_argument('--num_pool_objs', type=int, default=20)  # database length if have
-    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=[[0, 3, 10]], help='Nested list argument')
+    parser.add_argument('--object_pool_folder', type=str, default='union_objects_test', help="folder path that stores all urdf files")
+    parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
     parser.add_argument('--specific_scene', type=str, default=None)
+
+    parser.add_argument('--num_pool_objs', type=int, default=32)
+    parser.add_argument('--num_pool_scenes', type=int, default=0)
+    parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
+    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=list(range(5, 17)), help='A list of max num of placing objs')
+    parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--num_episode_to_replace_pool', type=int, default=200)
+    parser.add_argument('--critic_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
 
     eval_args = parser.parse_args()
@@ -101,6 +110,9 @@ def get_args():
     if eval_args.real: eval_args.collect_data = False
     # Draw contact should under the rendering situation
     if eval_args.rendering is False: eval_args.draw_contact = False
+    # Critic visualize should under the 1 env rendering situation
+    if eval_args.critic_visualize:
+        assert eval_args.num_envs == 1, "Only support 1 env for critic visualization for now"
     
     # create result folder
     eval_args.save_dir = os.path.join(eval_args.save_dir, eval_args.object_pool_name)
@@ -184,7 +196,7 @@ if __name__ == "__main__":
     ################ create world and scene set up ##################
     # Create the gym environment
     envs = create_multi_envs(eval_args, 'forkserver')
-    # torch.manual_seed(eval_args.seed); np.random.seed(eval_args.seed); random.seed(eval_args.seed)
+    torch.manual_seed(eval_args.seed); np.random.seed(eval_args.seed); random.seed(eval_args.seed)
 
     # Agent
     agent = None
@@ -195,7 +207,6 @@ if __name__ == "__main__":
     # Evaluate checkpoint before replay
     for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
         envs.env_method('set_args', 'max_num_placing_objs', max_num_placing_objs)
-        envs.env_method('set_env_attr', 'reset_all', True)
 
         num_episodes = 0 
         episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
@@ -216,8 +227,14 @@ if __name__ == "__main__":
                 action = (torch.rand((eval_args.num_envs, envs.tempENV.action_shape[1]), device=device) * 2 - 1) * 5
             else:
                 with torch.no_grad():
-                    action = agent.select_action(state)
-
+                    action, probs = agent.select_action(state)
+                    if eval_args.critic_visualize and envs.env_method('get_env_attr', "info")[0]['stepping']==1:
+                        act_sig_grid_tensor = create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[5]*6).to(device)
+                        raw_actions = inverse_sigmoid(act_sig_grid_tensor)
+                        action_log_prob = probs.log_prob(raw_actions)
+                        print(f"Mean and Std: {probs.mean}, {probs.stddev}")
+                        envs.env_method('visualize_actor_prob', raw_actions, action_log_prob)
+                        
             next_state, reward, done, infos = envs.step(action)
 
             next_state, done = torch.Tensor(next_state).to(device), torch.Tensor(done).to(device)
@@ -247,7 +264,7 @@ if __name__ == "__main__":
                 print(print_info)
                 
                 episode_rewards[terminal_index] = 0.
-                    
+                
         episode_reward = torch.mean(episode_rewards_box).item()
         success_rate = torch.mean(episode_success_box).item()
         unstable_steps = torch.mean(episode_timesteps).item()
@@ -269,10 +286,3 @@ if __name__ == "__main__":
 
     print('Process Over')
     envs.close()
-
-
-# for i in range(1, 10001, 1000):
-#     new_state = torch.rand((i, 10, 19), device='cuda')
-#     start_time = time.time()
-#     cc = agent.get_action_and_value(new_state)
-#     print(f"Number of obs: {i} / Time: {time.time() - start_time}")
