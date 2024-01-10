@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
     parser.add_argument('--vel_reward_scale', type=float, default=0.005, help='scaler for the velocity reward')
     parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/360], nargs='+')
-    parser.add_argument('--acc_threshold', type=float, default=[0.1, np.pi/36], nargs='+') 
+    parser.add_argument('--acc_threshold', type=float, default=[0.5, np.pi], nargs='+') 
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
 
     # I/O hyper parameter
@@ -197,7 +197,7 @@ if __name__ == "__main__":
 
     # env and scene setup; TODO Input the aruments into HandemEnv
     # envs = RoboSensaiBullet(args=args)
-    envs = create_multi_envs(args, 'forkserver')
+    envs = create_multi_envs(args, 'spawn')
     temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
     agent = Agent(temp_env).to(device)
     if args.checkpoint is not None:

@@ -123,9 +123,9 @@ class RoboSensaiBullet:
 
         # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
         if self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
-            selected_scene_pool = self.rng.choice(list(self.scene_uni_names_dataset.keys()), min(self.args.num_pool_scenes, len(self.scene_uni_names_dataset)), replace=False).tolist()
+            selected_scene_pool = self.rng.choice(list(self.scene_uni_names_dataset.keys()), min(self.args.num_pool_scenes-1, len(self.scene_uni_names_dataset)), replace=False).tolist()
         else:
-            selected_scene_pool = list(self.scene_uni_names_dataset.keys())[:self.args.num_pool_scenes]
+            selected_scene_pool = list(self.scene_uni_names_dataset.keys())[:self.args.num_pool_scenes-1]
         for scene_uni_name in selected_scene_pool:
             scene_urdf_path = self.scene_uni_names_dataset[scene_uni_name]["urdf"]
             scene_label = self.scene_uni_names_dataset[scene_uni_name]["label"]
@@ -720,7 +720,7 @@ if __name__=="__main__":
     args.num_pool_objs = 32
     args.num_pool_scenes = 0
     args.random_select_objs_pool = True
-    args.random_select_scene_pool = True
+    args.random_select_scene_pool = False
     args.random_select_placing = False
     args.fixed_scene_only = False
     args.num_episode_to_replace_pool = 1000
