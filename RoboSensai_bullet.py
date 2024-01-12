@@ -266,6 +266,7 @@ class RoboSensaiBullet:
         self.args.reward_pobj = self.args.reward_pobj if hasattr(self.args, "reward_pobj") else 10
         self.args.vel_reward_scale = self.args.vel_reward_scale if hasattr(self.args, "vel_reward_scale") else 0.005
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
+        self.args.min_continue_stable_steps = self.args.min_continue_stable_steps if hasattr(self.args, "min_continue_stable_steps") else 20
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
@@ -334,7 +335,7 @@ class RoboSensaiBullet:
 
 
     def update_unquery_scenes(self):
-        self.unquried_scene_name = []
+        self.unquried_scene_name = list(self.fixed_scene_name_data.keys())
         if not self.args.fixed_scene_only:
             self.unquried_scene_name.extend(self.queriable_obj_names)
         self.unquried_scene_name = self.unquried_scene_name[:self.args.max_num_qr_scenes]
@@ -378,6 +379,7 @@ class RoboSensaiBullet:
             self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
             self.accm_vel_reward = 0.
             self.his_steps = 0
+            self.continue_stable_steps = 0
             self.info['stepping'] = 0.
             self.info['his_steps'] = 0
         
@@ -395,11 +397,19 @@ class RoboSensaiBullet:
                 self.accm_vel_reward += -obj_vel[:].__abs__().sum()
                 # Jump out if the object is not moving (in the future, we might need to add acceleration checker)
                 self.his_steps += 1
-                if (self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel)) \
-                    or self.his_steps >= self.args.max_traj_history_len:
+                if (self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel)):
+                    self.continue_stable_steps += 1
+                    if self.continue_stable_steps >= self.args.min_continue_stable_steps: 
+                        self.info['stepping'] = 1.
+                        self.info['his_steps'] = self.his_steps
+                        break
+                else: self.continue_stable_steps = 0
+
+                if self.his_steps >= self.args.max_traj_history_len:
                     self.info['stepping'] = 1.
                     self.info['his_steps'] = self.his_steps
                     break
+
                 self.prev_obj_vel = obj_vel
         
         # Post-physical step
@@ -718,14 +728,14 @@ if __name__=="__main__":
     args.object_pool_folder = "union_objects_train"
     args.scene_pool_folder = "union_scene"
     args.num_pool_objs = 32
-    args.num_pool_scenes = 0
-    args.random_select_objs_pool = True
+    args.num_pool_scenes = 1
+    args.random_select_objs_pool = False
     args.random_select_scene_pool = False
     args.random_select_placing = False
-    args.fixed_scene_only = False
+    args.fixed_scene_only = True
     args.num_episode_to_replace_pool = 1000
     args.max_num_placing_objs = 5
-    args.max_num_qr_scenes = 5
+    args.max_num_qr_scenes = 1
     args.sequence_len = 1
     args.default_scaling = 0.5
     args.realtime = True

@@ -11,7 +11,9 @@ import time
 
 
 VelThreshold = [0.005, np.pi/360]
-AccThreshold = [0.5, np.pi]
+AccThreshold = [1., np.pi]
+ContinuousStableSteps = 20
+
 
 class ObjectLabeler:
     def __init__(self, source_folder_path, target_folder_name='selected_obj', overwrite=False):
@@ -115,10 +117,14 @@ class ObjectLabeler:
 
         
     def load_cur_obj_and_pc(self):
+        if hasattr(self, "cur_object_id") and self.cur_object_id is not None: 
+            p.removeBody(self.cur_object_id); self.cur_object_id = None
+        if hasattr(self, "queried_region_id") and self.queried_region_id is not None: 
+            p.removeBody(self.queried_region_id); self.queried_region_id = None
+
         try:
-            new_object_id = p.loadURDF(self.cur_obj_urdf_path, basePosition=[0, 0, 0.], globalScaling=self.meta_data["globalScaling"])
-            if hasattr(self, "cur_object_id") and self.cur_object_id is not None: p.removeBody(self.cur_object_id)
-            self.cur_object_id = new_object_id
+            self.cur_object_id = p.loadURDF(self.cur_obj_urdf_path, basePosition=[0, 0, 0.], globalScaling=self.meta_data["globalScaling"])
+            print(f"Current object id: {self.cur_object_id}.")
             self.cur_obj_pc = pu.get_obj_pc_from_id(self.cur_object_id)
             self.cur_obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(self.cur_obj_pc)
             
@@ -129,8 +135,15 @@ class ObjectLabeler:
                 pu.set_joint_positions(self.cur_object_id, list(range(obj_joints_num)), joints_limits[:, 0])
                 pu.control_joints(self.cur_object_id, list(range(obj_joints_num)), joints_limits[:, 0])
 
-            print(f"Current category: {self.category_lst[self.cur_cate_index]}; Current cur_object_id: {self.cur_obj_index}")
-        except Exception as e:
+            if self.meta_data["queried_region"] == "on":
+                queried_region = get_on_bbox(self.cur_obj_bbox, 0.1)
+                self.queried_region_id = pu.draw_box_body(queried_region[:3], queried_region[3:7], queried_region[7:], rgba_color=[1, 0, 0, 0.5])
+            elif self.meta_data["queried_region"] == "in":
+                queried_region = get_in_bbox(self.cur_obj_bbox)
+                self.queried_region_id = pu.draw_box_body(queried_region[:3], queried_region[3:7], queried_region[7:], rgba_color=[1, 0, 0, 0.5])
+
+            print(f"Current category / index: {self.category_lst[self.cur_cate_index]} / {self.cur_obj_index}; Object id: {self.cur_object_id}; Current qr region: {self.meta_data['queried_region']}.")
+        except p.error as e:
             print(f"Failed to load {self.cur_obj_urdf_path}. Error: {e}")
 
 
@@ -175,8 +188,10 @@ class ObjectLabeler:
             self.cur_obj_pc = pu.get_obj_pc_from_id(self.cur_object_id)
             self.cur_obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(self.cur_obj_pc)
             queried_region = get_on_bbox(self.cur_obj_bbox, 0.1)
-            if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: p.removeBody(self.queried_region_id)
+            if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: 
+                p.removeBody(self.queried_region_id); self.queried_region_id = None
             self.queried_region_id = pu.draw_box_body(queried_region[:3], queried_region[3:7], queried_region[7:], rgba_color=[1, 0, 0, 0.5])
+            print(self.queried_region_id)
             print("The object is labeled as 'on'.")
         
         if self.in_button_read != in_button_read:
@@ -185,14 +200,16 @@ class ObjectLabeler:
             self.cur_obj_pc = pu.get_obj_pc_from_id(self.cur_object_id)
             self.cur_obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(self.cur_obj_pc)
             queried_region = get_in_bbox(self.cur_obj_bbox)
-            if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: p.removeBody(self.queried_region_id)
+            if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: 
+                p.removeBody(self.queried_region_id); self.queried_region_id = None
             self.queried_region_id = pu.draw_box_body(queried_region[:3], queried_region[3:7], queried_region[7:], rgba_color=[1, 0, 0, 0.5])
             print("The object is labeled as 'in'.")
         
         if self.None_button_read != None_button_read:
             self.None_button_read = None_button_read
             self.meta_data['queried_region'] = None
-            if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: p.removeBody(self.queried_region_id)
+            if hasattr(self, 'queried_region_id') and self.queried_region_id is not None: 
+                p.removeBody(self.queried_region_id); self.queried_region_id = None
             self.queried_region_id = None
             print("The object is labeled as None.")
         
@@ -301,15 +318,19 @@ class ObjectLabeler:
                     pu.set_pose(self.cur_object_id, (self.placement_pos_world2base, p.getQuaternionFromEuler(self.cur_rpy)))
                     p.changeDynamics(self.cur_object_id, -1, mass=0.1)
                     self.prev_obj_vel = pu.getObjVelocity(self.cur_object_id, to_array=True)
-                    first_stable = False
+                    first_stable = False; continue_stable_steps = 0
                     for i in range(240):
                         p.stepSimulation()
                         obj_vel = pu.getObjVelocity(self.cur_object_id, to_array=True)
                         if (self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel)):
-                            if not first_stable:  
-                                first_stable = True
-                                print(f"Stable Steps: {i}.")
-                            # break
+                            continue_stable_steps += 1
+                            if continue_stable_steps > ContinuousStableSteps and not first_stable:
+                                if not first_stable:  
+                                    first_stable = True
+                                    print(f"Stable Steps: {i-ContinuousStableSteps}.")
+                                # break
+                        else:
+                            continue_stable_steps = 0
                         time.sleep(1./240.)
                     p.changeDynamics(self.cur_object_id, -1, mass=0.)
                     pu.set_pose(self.cur_object_id, ([0, 0, 0.], p.getQuaternionFromEuler(self.cur_rpy)))
@@ -387,7 +408,7 @@ if __name__ == '__main__':
     Label = "obj"
     
     if Label == "obj":
-        source_folder_path = "assets/objaverse/selected_obj"
+        source_folder_path = "assets/union_objects"
         target_folder_name = "selected_obj"
 
         labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)

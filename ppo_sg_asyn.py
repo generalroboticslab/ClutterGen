@@ -48,11 +48,12 @@ def parse_args():
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument("--max_stable_steps", type=int, default=50, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
     parser.add_argument('--reward_pobj', type=float, default=100., help='Position reward weight')
     parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
     parser.add_argument('--vel_reward_scale', type=float, default=0.005, help='scaler for the velocity reward')
     parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/360], nargs='+')
-    parser.add_argument('--acc_threshold', type=float, default=[0.5, np.pi], nargs='+') 
+    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
 
     # I/O hyper parameter
