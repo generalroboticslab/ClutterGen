@@ -10,6 +10,7 @@ import os
 import random
 import time
 from distutils.util import strtobool
+from tabulate import tabulate
 
 from RoboSensai_bullet import *
 from PPO.PPO_continuous_sg import *
@@ -34,15 +35,18 @@ def parse_args():
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
     # RoboSensai Env parameters (dataset)
-    parser.add_argument('--num_pool_objs', type=int, default=32)
-    parser.add_argument('--num_pool_scenes', type=int, default=0)
+    parser.add_argument('--num_pool_objs', type=int, default=200)
+    parser.add_argument('--num_pool_scenes', type=int, default=1)
     parser.add_argument('--max_num_placing_objs', type=int, default=16)
     parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--num_episode_to_replace_pool', type=int, default=1000)
+    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
+    parser.add_argument('--max_num_urdf_points', type=int, default=2048)
+    parser.add_argument('--max_num_scene_points', type=int, default=10240)
     # RoboSensai Env parameters (training)
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
@@ -70,9 +74,13 @@ def parse_args():
     parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
     parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--num_linear", type=int, default=3, help="the K epochs to update the policy")
+    parser.add_argument("--num_transf", type=int, default=3, help="the K epochs to update the policy")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--pc_batchsize", type=int, default=20, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--use_relu", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Use Relu or tanh.")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -84,7 +92,7 @@ def parse_args():
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--target-kl", type=float, default=1.5, help="the target KL divergence threshold")
     parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Using deterministic policy instead of normal")
     parser.add_argument('--eval', type=bool, default=False, help='Evaluates a policy a policy every 10 episode (default: True)')
     parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor for reward (default: 0.95)')
@@ -126,15 +134,22 @@ def parse_args():
     elif args.use_transformer: additional += '_Transformer'
     else: additional += '_FC'
     if args.checkpoint is not None: additional += '_FT'
+    if args.use_relu: additional += '_Relu'
+    else: additional += '_Tanh'
     additional += '_Rand'
     if args.random_select_objs_pool: additional += '_ObjPool'
     if args.random_select_placing: additional += '_ObjPlace'
     if args.random_select_scene_pool: additional += '_ScenePool'
-    if args.fixed_scene_only: additional += '_FixedScene'
+    if not args.fixed_scene_only: additional += '_unFixedScene'
+    if args.fixed_qr_region: additional += '_QRRegion'
     additional += '_Goal'
     if args.max_num_placing_objs: additional += f'_maxObjNum{args.max_num_placing_objs}'
+    if args.num_pool_objs: additional += f'_maxPool{args.num_pool_objs}'
+    if args.num_pool_scenes: additional += f'_maxScene{args.num_pool_scenes}'
     if args.max_stable_steps: additional += f'_maxStable{args.max_stable_steps}'
+    if args.min_continue_stable_steps: additional += f'_contStable{args.min_continue_stable_steps}'
     if args.max_num_qr_scenes: additional += f'_maxQR{args.max_num_qr_scenes}Scene'
+    if args.num_episode_to_replace_pool: additional += f'_Epis2Replace{args.num_episode_to_replace_pool}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
     if args.penalty > 0: additional += f'_ori{args.penalty}'
@@ -212,25 +227,58 @@ if __name__ == "__main__":
 
     # ALGO Logic: Storage setup
     # Temp storage
-    obs_asy = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
+    seq_obs_asy = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
+    scene_ft_obs_asy = torch.zeros((args.num_steps, args.num_envs) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    obj_ft_obs_asy = torch.zeros((args.num_steps, args.num_envs) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
     actions_asy = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=tensor_dtype).to(device)
     logprobs_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     rewards_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     dones_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     values_asy = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
 
-    obs_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
+    seq_obs_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
+    scene_ft_obs_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    obj_ft_obs_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
     actions_buf = torch.zeros((args.num_steps, 2 * args.num_envs) + temp_env.action_shape[1:], dtype=tensor_dtype).to(device)
     logprobs_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
     rewards_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
     dones_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
     values_buf = torch.zeros((args.num_steps, 2 * args.num_envs), dtype=tensor_dtype).to(device)
-    next_obs_buf = torch.zeros((2 * args.num_envs, ) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
+    # Next storage; These are used to compute the advantages.
+    next_seq_obs_buf = torch.zeros((2 * args.num_envs, ) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
+    next_scene_ft_obs_buf = torch.zeros((2 * args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    next_obj_ft_obs_buf = torch.zeros((2 * args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
     next_done_buf = torch.zeros(2 * args.num_envs, dtype=tensor_dtype).to(device)
 
-    print(f"Raw Observation Shape: {temp_env.raw_observation_shape}")
-    print(f"Post Observation Shape: {temp_env.post_observation_shape}")
-    obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_observation_shape[1:], dtype=tensor_dtype).to(device)
+    # Assuming you have these variables from your environment
+    raw_obs_shape_data = [
+        ["Raw Observation Shape", ""],
+        ["Name", "Shape"],
+        ["Raw Observation Shape", temp_env.raw_act_hist_qr_obs_shape],
+        ["QR Region Dim", temp_env.qr_region_dim],
+        ["Action Dim", temp_env.action_dim],
+        ["Traj History Dim", temp_env.traj_hist_dim],
+        ["Scene PC Dim", f"(3, {args.max_num_scene_points})"],
+        ["Obj PC Dim", f"(3, {args.max_num_urdf_points})"],
+        ["Sequence Length", f"{args.sequence_len}"]
+    ]
+    
+    post_obs_shape_data = [
+        ["Post Observation Shape", ""],
+        ["Name", "Shape"],
+        ["Post Observation Shape", temp_env.post_observation_shape],
+        ["Scene Feature Dim", temp_env.scene_ft_dim],
+        ["Obj Feature Dim", temp_env.obj_ft_dim],
+        ["Seq Obs ft Dim", temp_env.seq_info_ft_dim]
+    ]
+
+    print(tabulate(raw_obs_shape_data, headers="firstrow", tablefmt="grid"))
+    print(tabulate(post_obs_shape_data, headers="firstrow", tablefmt="grid"))
+
+    # PPO agent training data buffer (allocate earlier here; it will be overwritten later)
+    seq_obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
+    scene_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    obj_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=tensor_dtype).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
@@ -240,7 +288,11 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs = torch.Tensor(envs.reset()).to(device)
+    next_seq_obs = torch.Tensor(envs.reset()).to(device)
+    # Scene and obj feature tensor are keeping updated inplace
+    next_scene_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    next_obj_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
+    agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, envs.reset_infos, use_mask=True)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size  # ?? same as episodes? No!! episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
     # Asynchronous requirements Flagss
@@ -298,9 +350,9 @@ if __name__ == "__main__":
             optimizer.param_groups[0]["lr"] = lrnow
 
         # Sequence completed monitor; clear buffer
-        obs_buf.zero_(); actions_buf.zero_(); logprobs_buf.zero_(); \
-        rewards_buf.zero_(); dones_buf.zero_(); values_buf.zero_(); \
-        next_obs_buf.zero_(); next_done_buf.zero_()
+        seq_obs_buf.zero_(); scene_ft_obs_buf.zero_(); obj_ft_obs_buf.zero_(); \
+        actions_buf.zero_(); logprobs_buf.zero_(); rewards_buf.zero_(); dones_buf.zero_(); values_buf.zero_(); 
+        next_seq_obs_buf.zero_(); next_scene_ft_obs_buf.zero_(); next_obj_ft_obs_buf.zero_(); next_done_buf.zero_();
         
         completed_seq_num = 0
         while completed_seq_num < args.num_envs:
@@ -310,52 +362,62 @@ if __name__ == "__main__":
             if len(step_env_id) > 0:
                 global_step += next_step_env_idx.sum()
                 step_env_steps = env_step_idx[step_env_id]
-                obs_asy[step_env_steps, step_env_id] = next_obs[step_env_id]
+                seq_obs_asy[step_env_steps, step_env_id] = next_seq_obs[step_env_id]
+                scene_ft_obs_asy[step_env_steps, step_env_id] = next_scene_ft_obs[step_env_id]
+                obj_ft_obs_asy[step_env_steps, step_env_id] = next_obj_ft_obs[step_env_id]
                 dones_asy[step_env_steps, step_env_id] = next_done[step_env_id]
 
                 ## ----- ALGO LOGIC: action logic ----- ##
                 ## if not expert_action, normal training; Otherwise use only expert actions
-                # transfer discrete actions to real actions; TODO: Logical problem about next_obs (terminal observation to query step action for the first action)
+                # transfer discrete actions to real actions; TODO: Logical problem about next_seq_obs (terminal observation to query step action for the first action)
                 if args.random_policy:
                     step_action = (torch.rand((args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 5
                 else:
                     with torch.no_grad():
-                        step_action, logprob, _, value = agent.get_action_and_value(next_obs)
-                        values_asy[step_env_steps, step_env_id] = value.flatten()[step_env_id]
-                    actions_asy[step_env_steps, step_env_id] = step_action[step_env_id].to(tensor_dtype)
-                    logprobs_asy[step_env_steps, step_env_id] = logprob[step_env_id]
+                        sub_step_action, sub_logprob, _, sub_value = agent.get_action_and_value([next_seq_obs[step_env_id], next_scene_ft_obs[step_env_id], next_obj_ft_obs[step_env_id]])
+                        step_action[step_env_id] = sub_step_action
+                        values_asy[step_env_steps, step_env_id] = sub_value.flatten()
+                    actions_asy[step_env_steps, step_env_id] = sub_step_action.to(tensor_dtype)
+                    logprobs_asy[step_env_steps, step_env_id] = sub_logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, done, infos = envs.step(step_action)
+            next_seq_obs, reward, done, infos = envs.step(step_action)
+            agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
             # Update step environment index
             next_step_env_idx = torch.Tensor(combine_envs_info(infos, 'stepping')).to(device)
             step_env_id = next_step_env_idx.nonzero().squeeze(dim=-1)
 
             if len(step_env_id) > 0:
                 # Transfer to tensor
-                next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+                next_seq_obs, next_done = torch.Tensor(next_seq_obs).to(device), torch.Tensor(done).to(device)
                 rewards = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
                 # Record rewards and add env_step
                 reward_step_env_steps = env_step_idx[step_env_id]
                 rewards_asy[reward_step_env_steps, step_env_id] = rewards[step_env_id]
                 env_step_idx[step_env_id] += 1
 
-                # copy buffer to real obs and clean the buffer; completed_seq_env_ids is a subset of step_env_id, so next_obs and next_done must be real next
+                # copy buffer to real seq_obs and clean the buffer; completed_seq_env_ids is a subset of step_env_id, so next_seq_obs and next_done must be real next
                 completed_seq_env_ids = (env_step_idx >= args.num_steps).nonzero().squeeze(dim=-1)
                 if len(completed_seq_env_ids) > 0:
                     next_completed_seq_num = completed_seq_num + len(completed_seq_env_ids)
-                    obs_buf[:, completed_seq_num:next_completed_seq_num] = obs_asy[:, completed_seq_env_ids]
+                    seq_obs_buf[:, completed_seq_num:next_completed_seq_num] = seq_obs_asy[:, completed_seq_env_ids]
+                    scene_ft_obs_buf[:, completed_seq_num:next_completed_seq_num] = scene_ft_obs_asy[:, completed_seq_env_ids]
+                    obj_ft_obs_buf[:, completed_seq_num:next_completed_seq_num] = obj_ft_obs_asy[:, completed_seq_env_ids]
                     actions_buf[:, completed_seq_num:next_completed_seq_num] = actions_asy[:, completed_seq_env_ids]
                     logprobs_buf[:, completed_seq_num:next_completed_seq_num] = logprobs_asy[:, completed_seq_env_ids]
                     rewards_buf[:, completed_seq_num:next_completed_seq_num] = rewards_asy[:, completed_seq_env_ids]
                     dones_buf[:, completed_seq_num:next_completed_seq_num] = dones_asy[:, completed_seq_env_ids]
                     values_buf[:, completed_seq_num:next_completed_seq_num] = values_asy[:, completed_seq_env_ids]
-                    next_obs_buf[completed_seq_num:next_completed_seq_num] = next_obs[completed_seq_env_ids]
+                    next_seq_obs_buf[completed_seq_num:next_completed_seq_num] = next_seq_obs[completed_seq_env_ids]
+                    next_scene_ft_obs_buf[completed_seq_num:next_completed_seq_num] = next_scene_ft_obs[completed_seq_env_ids]
+                    next_obj_ft_obs_buf[completed_seq_num:next_completed_seq_num] = next_obj_ft_obs[completed_seq_env_ids]
                     next_done_buf[completed_seq_num:next_completed_seq_num] = next_done[completed_seq_env_ids]
                     
                     completed_seq_num = next_completed_seq_num
                     env_step_idx[completed_seq_env_ids] = 0
-                    obs_asy[:, completed_seq_env_ids] = 0.
+                    seq_obs_asy[:, completed_seq_env_ids] = 0.
+                    scene_ft_obs_asy[:, completed_seq_env_ids] = 0.
+                    obj_ft_obs_asy[:, completed_seq_env_ids] = 0.
                     actions_asy[:, completed_seq_env_ids] = 0.
                     logprobs_asy[:, completed_seq_env_ids] = 0.
                     rewards_asy[:, completed_seq_env_ids] = 0.
@@ -417,19 +479,23 @@ if __name__ == "__main__":
         ####----- force action to test variance; Skip the training process ----####
         if args.random_policy: continue
 
-        obs = obs_buf[:, :completed_seq_num]
+        seq_obs = seq_obs_buf[:, :completed_seq_num]
+        scene_ft_obs = scene_ft_obs_buf[:, :completed_seq_num]
+        obj_ft_obs = obj_ft_obs_buf[:, :completed_seq_num]
         actions = actions_buf[:, :completed_seq_num]
         logprobs = logprobs_buf[:, :completed_seq_num]
         rewards = rewards_buf[:, :completed_seq_num]
         dones = dones_buf[:, :completed_seq_num]
         values = values_buf[:, :completed_seq_num]
-        # next_obs and next_done are used for next roll-out, we can not overwrite them, they are also not real next_obs and next_done for asyn trajectories!
-        next_asyn_obs = next_obs_buf[:completed_seq_num]
+        # next_seq_obs and next_done are used for next roll-out, we can not overwrite them, they are also not real next_seq_obs and next_done for asyn trajectories!
+        next_asyn_seq_obs = next_seq_obs_buf[:completed_seq_num]
+        next_asyn_scene_ft_obs = next_scene_ft_obs_buf[:completed_seq_num]
+        next_asyn_obj_ft_obs = next_obj_ft_obs_buf[:completed_seq_num]
         next_asyn_done = next_done_buf[:completed_seq_num]
 
         ####----- Compute advantage for each state in the markov chain ----####
         with torch.no_grad():
-            next_value = agent.get_value(next_asyn_obs).reshape(1, -1)
+            next_value = agent.get_value([next_asyn_seq_obs, next_asyn_scene_ft_obs, next_asyn_obj_ft_obs]).reshape(1, -1)
             if args.gae:
                 advantages = torch.zeros_like(rewards).to(device)
                 lastgaelam = 0
@@ -456,7 +522,9 @@ if __name__ == "__main__":
                 advantages = returns - values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + temp_env.raw_observation_shape[1:])
+        b_seq_obs = seq_obs.reshape((-1,) + temp_env.raw_act_hist_qr_obs_shape[1:])
+        b_scene_ft_obs = scene_ft_obs.reshape((-1,) + (temp_env.scene_ft_dim, ))
+        b_obj_ft_obs = obj_ft_obs.reshape((-1,) + (temp_env.obj_ft_dim, ))
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + temp_env.action_shape[1:])
         b_advantages = advantages.reshape(-1)
@@ -471,7 +539,7 @@ if __name__ == "__main__":
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value([b_seq_obs[mb_inds], b_scene_ft_obs[mb_inds], b_obj_ft_obs[mb_inds]], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -480,6 +548,9 @@ if __name__ == "__main__":
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
                     clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                    if args.target_kl is not None:
+                        if approx_kl > args.target_kl:
+                            continue
 
                 mb_advantages = b_advantages[mb_inds]
                 if args.norm_adv:
@@ -513,9 +584,6 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
-            if args.target_kl is not None:
-                if approx_kl > args.target_kl:
-                    break
 
         # To float32 is because it does support for bfloat16 to numpy
         y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()

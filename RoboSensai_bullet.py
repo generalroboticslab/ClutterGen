@@ -96,14 +96,13 @@ class RoboSensaiBullet:
         pu.change_obj_color(planeId, rgba_color=[1., 1., 1., 0.2])
         qr_pose, qr_ori, qr_half_extents = [0., 0., 0.], p.getQuaternionFromEuler([0., 0., 0.]), [1., 1., 1.]
         plane_pc_sample_region = self.to_numpy(planeHalfExtents)
-        plane_pc = self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_scene_points, 3))
+        plane_pc = self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_urdf_points, 3))
         plane_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *planeHalfExtents]
         # self.fixed_scene_name_data["plane"] = {"id": planeId,
         #                                         "init_pose": [0., 0., 0.],
         #                                         "bbox": plane_bbox,
         #                                         "queried_region": "on", 
         #                                         "pc": plane_pc,
-        #                                         "pc_feature": self.pc_extractor(self.to_torch(plane_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)}
         
         # Table
         tableHalfExtents = [0.4, 0.5, 0.35]
@@ -112,18 +111,18 @@ class RoboSensaiBullet:
         
         # Default region using table position and table half extents
         qr_pose, qr_ori, qr_half_extents = [0., 0., tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*tableHalfExtents[:2], 0.1]
-        table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_scene_points, use_worldpos=False)
+        table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_urdf_points, use_worldpos=False)
         table_axes_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *tableHalfExtents]
         self.fixed_scene_name_data["table"] = {"id": tableId,
                                                 "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
                                                 "bbox": table_axes_bbox,
                                                 "queried_region": "on", 
-                                                "pc": table_pc, 
-                                                "pc_feature": self.pc_extractor(self.to_torch(table_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)}
-
+                                                "pc": table_pc
+                                              }
         # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
         if self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
             selected_scene_pool = self.rng.choice(list(self.scene_uni_names_dataset.keys()), min(self.args.num_pool_scenes-1, len(self.scene_uni_names_dataset)), replace=False).tolist()
+            if self.args.num_pool_scenes > len(self.scene_uni_names_dataset): print(f"WARNING: Only {len(self.scene_uni_names_dataset)} scenes are loaded!")
         else:
             selected_scene_pool = list(self.scene_uni_names_dataset.keys())[:self.args.num_pool_scenes-1]
         for scene_uni_name in selected_scene_pool:
@@ -133,7 +132,7 @@ class RoboSensaiBullet:
                 basePosition, baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
                 scene_id = self.loadURDF(scene_urdf_path, basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=scene_label["globalScaling"], useFixedBase=True)
                 scene_mesh_num = pu.get_body_mesh_num(scene_id, client_id=self.client_id)
-                scene_pc = self.get_obj_pc_from_id(scene_id, num_points=min(max(256*scene_mesh_num, 1024), self.args.max_num_scene_points), use_worldpos=False)
+                scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
                 scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
@@ -147,10 +146,6 @@ class RoboSensaiBullet:
                                                                 "mass": pu.get_mass(scene_id, client_id=self.client_id),
                                                             }
                 
-                # Pre-extract the feature for each object and store here 
-                with torch.no_grad():
-                    self.fixed_scene_name_data[scene_uni_name]["pc_feature"] = self.pc_extractor(self.to_torch(scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
-                    
                 # For scene who has "in" relation, set transparence to 0.5
                 if scene_label["queried_region"] == "in":
                     pu.change_obj_color(scene_id, rgba_color=[0, 0, 0, 0.2], client_id=self.client_id)
@@ -165,7 +160,8 @@ class RoboSensaiBullet:
     def load_objects(self):
         self.obj_name_data = {}; self.unplaced_objs_name = []; self.queriable_obj_names = [] # The object can be queried or placed
         if self.args.random_select_objs_pool: # Randomly choose object categories from the pool and their index
-            cate_uni_names = self.rng.choice(list(self.obj_uni_names_dataset.keys()), self.args.num_pool_objs, replace=False).tolist()
+            cate_uni_names = self.rng.choice(list(self.obj_uni_names_dataset.keys()), min(self.args.num_pool_objs, len(self.obj_uni_names_dataset)), replace=False).tolist()
+            if self.args.num_pool_objs > len(self.obj_uni_names_dataset): print(f"WARNING: Only {len(self.obj_uni_names_dataset)} objects are loaded!")
         else:
             cate_uni_names = list(self.obj_uni_names_dataset.keys())[:self.args.num_pool_objs]
 
@@ -176,7 +172,7 @@ class RoboSensaiBullet:
                 rand_basePosition, rand_baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
                 object_id = self.loadURDF(obj_urdf_path, basePosition=rand_basePosition, baseOrientation=rand_baseOrientation, globalScaling=obj_label["globalScaling"])  # Load an object at position [0, 0, 1]
                 obj_mesh_num = pu.get_body_mesh_num(object_id, client_id=self.client_id)
-                obj_pc = self.get_obj_pc_from_id(object_id, num_points=min(max(256*obj_mesh_num, 1024), self.args.max_num_scene_points), use_worldpos=False)
+                obj_pc = self.get_obj_pc_from_id(object_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
                 obj_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
                 obj_init_pos_z = obj_axes_bbox[9] - obj_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 self.obj_name_data[obj_uni_name] = {
@@ -189,10 +185,6 @@ class RoboSensaiBullet:
                                                     "mass": pu.get_mass(object_id, client_id=self.client_id),
                                                     }
 
-                # Pre-extract the feature for each object and store here 
-                with torch.no_grad():
-                    self.obj_name_data[obj_uni_name]["pc_feature"] = self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().cpu().numpy().astype(self.numpy_dtype)
-                
                 # object queried region; This is a dataset bug that some objects are labeled as string "None"
                 if obj_label["queried_region"] != None and obj_label["queried_region"] != "None":
                     self.queriable_obj_names.append(obj_uni_name)
@@ -212,7 +204,6 @@ class RoboSensaiBullet:
 
     
     def load_world(self):
-        self._init_pc_extractor()
         self._init_misc_variables()
         self._init_obs_act_space()
         self.load_scenes()
@@ -240,21 +231,23 @@ class RoboSensaiBullet:
 
     def _init_obs_act_space(self):
         # Observation space: [scene_pc_feature, obj_pc_feature, bbox, action, history (hitory_len * (obj_pos + obj_vel)))]
-        scene_ft_dim = 1024; obj_ft_dim = 1024; qr_region_dim = 10; action_dim = 6; 
-        history_dim_raw = self.args.max_traj_history_len*(6+7); self.history_dim_post = 512
         # 1 is the env number to align with the isaacgym env
-        self.raw_observation_shape = (1, self.args.sequence_len, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + history_dim_raw)
-        self.post_observation_shape = (1, self.args.sequence_len, scene_ft_dim + obj_ft_dim + qr_region_dim + action_dim + self.history_dim_post)
+        # We have two kinds of observation: seq_obs [qr_region, prev_action, obj_sim_history]; pc_obs [scene_pc, obj_pc]
+        self.qr_region_dim = 10; self.action_dim = 6; self.traj_hist_dim = self.args.max_traj_history_len*(6+7)
+        self.history_ft_dim = 512; self.qr_region_ft_dim = 256; self.action_ft_dim = 256
+        self.scene_ft_dim = 1024; self.obj_ft_dim = 1024; self.seq_info_ft_dim = 2048
+        self.raw_act_hist_qr_obs_shape = (1, self.args.sequence_len, self.qr_region_dim + self.action_dim + self.traj_hist_dim)
+        self.post_act_hist_qr_ft_shape = (1, self.args.sequence_len, self.qr_region_ft_dim + self.action_ft_dim + self.history_ft_dim)
+        self.post_observation_shape = (1, self.seq_info_ft_dim + self.scene_ft_dim + self.obj_ft_dim)
+        
         # Action space: [x, y, z, roll, pitch, yaw]
         self.action_shape = (1, 6)
         # trajectory shape
         self.traj_history_shape = (self.args.max_traj_history_len, 6+7) # obj_pos dimension + obj_vel dimension
         # slice
-        self.act_scene_feature_slice = slice(0, scene_ft_dim)
-        self.selected_obj_feature_slice = slice(self.act_scene_feature_slice.stop, self.act_scene_feature_slice.stop+obj_ft_dim)
-        self.placed_region_slice = slice(self.selected_obj_feature_slice.stop, self.selected_obj_feature_slice.stop+qr_region_dim)
-        self.last_action_slice = slice(self.placed_region_slice.stop, self.placed_region_slice.stop+action_dim)
-        self.traj_history_slice = slice(self.last_action_slice.stop, self.last_action_slice.stop+history_dim_raw)
+        self.qr_region_slice = slice(0, self.qr_region_dim)
+        self.action_slice = slice(self.qr_region_slice.stop, self.qr_region_slice.stop+self.action_dim)
+        self.traj_history_slice = slice(self.action_slice.stop, self.action_slice.stop+self.traj_hist_dim)
 
     
     def _init_misc_variables(self):
@@ -269,15 +262,13 @@ class RoboSensaiBullet:
         self.args.min_continue_stable_steps = self.args.min_continue_stable_steps if hasattr(self.args, "min_continue_stable_steps") else 20
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
+        self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
+        self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
         # Buffer does not need to be reset
-        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 'scene_obj_success_num': {}}
+        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
         self.num_episode = 0
-
-    
-    def _init_pc_extractor(self):
-        self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
-        self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
+        self.default_qr_region_z = 0.5
 
     
     def reset_env(self):
@@ -296,15 +287,15 @@ class RoboSensaiBullet:
         self.success_obj_num = 0
         if len(self.unquried_scene_name) == 0: 
             self.update_unquery_scenes()
-        self.obj_done = True
         self.query_scene_done = True
+        self.obj_done = True
 
         # Training
         self.cur_trial = 0
         # Observations
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
         self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
-        self.last_observation = np.zeros(self.raw_observation_shape[1:], dtype=self.numpy_dtype)
+        self.last_seq_obs = np.zeros(self.raw_act_hist_qr_obs_shape[1:], dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
 
@@ -382,6 +373,7 @@ class RoboSensaiBullet:
             self.continue_stable_steps = 0
             self.info['stepping'] = 0.
             self.info['his_steps'] = 0
+            self.info['pc_change_indicator'] = 0.
         
         # stepping == 0 means previous action is still running, we need to wait until the object is stable
         # In-pysical step
@@ -424,7 +416,7 @@ class RoboSensaiBullet:
 
         # This point should be considered as the start of the episode! Stablebaseline3 will automatically reset the environment when done is True; Therefore this will introduce reset twice but we can not avoid it.
         if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() 
-        else: observation = self.last_observation
+        else: observation = self.last_seq_obs
 
         # Reset successfully placed object pose
         if self.info['stepping'] == 1.:
@@ -458,7 +450,6 @@ class RoboSensaiBullet:
                 self.scene_name_data = self.obj_name_data if self.selected_qr_scene_name in self.obj_name_data.keys() else self.fixed_scene_name_data
                 self.selected_qr_scene_id = self.scene_name_data[self.selected_qr_scene_name]["id"]
                 self.selected_qr_scene_pc = self.scene_name_data[self.selected_qr_scene_name]["pc"].copy()
-                self.selected_qr_scene_pc_feature = self.scene_name_data[self.selected_qr_scene_name]["pc_feature"].copy()
                 self.selected_qr_scene_bbox = self.scene_name_data[self.selected_qr_scene_name]["bbox"]
                 self.selected_qr_scene_region = self.scene_name_data[self.selected_qr_scene_name]["queried_region"]
                 self.tallest_placed_half_z_extend = 0.
@@ -479,13 +470,14 @@ class RoboSensaiBullet:
             self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name))
             self.selected_obj_id = self.obj_name_data[self.selected_obj_name]["id"]
             self.selected_obj_pc = self.obj_name_data[self.selected_obj_name]["pc"].copy()
-            self.selected_obj_pc_feature = self.obj_name_data[self.selected_obj_name]["pc_feature"].copy()
             self.selected_obj_bbox = self.obj_name_data[self.selected_obj_name]["bbox"]
             pu.set_mass(self.selected_obj_id, self.obj_name_data[self.selected_obj_name]["mass"], client_id=self.client_id)
+            self.info['pc_change_indicator'] = 1.
 
         # Compute query region area based on the selected object and scene
         if self.selected_qr_scene_region == "on":
             max_z_half_extent = self.tallest_placed_half_z_extend + self.selected_obj_bbox[9] # If on, bbox is half extent + tallest placed obj half extent (equivalent to the current scene bbox).
+            if self.args.fixed_qr_region: max_z_half_extent = self.default_qr_region_z
             self.selected_qr_region = get_on_bbox(self.selected_qr_scene_bbox.copy(), z_half_extend=max_z_half_extent)
         elif self.selected_qr_scene_region == "in":
             max_z_half_extent = self.selected_obj_bbox[9] # max z-half extend is half extent of the object! we can not handle the case that if some objects already placed on the scene and we want to stack on them.
@@ -493,14 +485,15 @@ class RoboSensaiBullet:
         else:
             raise NotImplementedError(f"Object {self.selected_qr_scene_name} Queried region {self.selected_qr_scene_region} is not implemented!")
 
-        # Convert history to tensor
+        # Update the queried scene points cloud
+        self.info["selected_qr_scene_pc"] = self.selected_qr_scene_pc
+        self.info["selected_obj_pc"] = self.selected_obj_pc
+        # Update the sequence observation | pop the first observation and append the last observation
         his_traj = self.to_numpy(self.traj_history).flatten()
-        cur_observation = np.concatenate([self.selected_qr_scene_pc_feature, self.selected_obj_pc_feature, 
-                                           self.selected_qr_region, self.last_raw_action, his_traj])
-        # Update the last observation; pop the first observation and append the last observation
-        self.last_observation = np.concatenate([self.last_observation[1:, :], np.expand_dims(cur_observation, axis=0)])
+        cur_seq_obs = np.concatenate([self.selected_qr_region, self.last_raw_action, his_traj])
+        self.last_seq_obs = np.concatenate([self.last_seq_obs[1:, :], np.expand_dims(cur_seq_obs, axis=0)])
         
-        return self.last_observation
+        return self.last_seq_obs
 
 
     def compute_reward(self):
@@ -523,8 +516,6 @@ class RoboSensaiBullet:
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
             self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
             # Run one inference needs ~0.5s!
-            with torch.no_grad():
-                self.selected_qr_scene_pc_feature = self.pc_extractor(self.to_torch(self.selected_qr_scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).cpu().numpy()
 
             # pu.visualize_pc(self.selected_qr_scene_pc)
             # pu.visualize_pc(self.selected_obj_pc)

@@ -71,10 +71,18 @@ def get_in_bbox(bbox, z_half_extend:float=None):
 
 
 def pc_random_downsample(pc_array, num_points):
-    """ Randomly downsample a point cloud """
-    num_points = min(num_points, pc_array.shape[0])
-    idx = np.random.choice(pc_array.shape[0], num_points, replace=False)
-    return pc_array[idx]
+    """ Randomly downsample a point cloud
+        if num_points >= pc_array.shape[0], pad the point cloud with zeros 
+        Args:
+        pc_array: (N, 3) numpy array
+        num_points: int
+    """
+    if num_points >= pc_array.shape[0]: 
+        pc_array = np.concatenate([pc_array, np.zeros((num_points - pc_array.shape[0], 3))], axis=0)
+        return pc_array
+    else:
+        idx = np.random.choice(pc_array.shape[0], num_points, replace=False)
+        return pc_array[idx]
 
 
 def inverse_sigmoid(x):
@@ -89,3 +97,12 @@ def create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[5]*6):
     # Stack the meshgrid tensors along a new dimension to get the final meshgrid tensor
     meshgrid_tensor = torch.stack(meshgrid_tensors, dim=-1)
     return meshgrid_tensor
+
+
+def tensor_memory_in_mb(tensor):
+    # Calculate the memory occupied by the tensor
+    num_elements = tensor.numel()
+    element_size = tensor.element_size()
+    total_memory_bytes = num_elements * element_size
+    total_memory_mb = total_memory_bytes / (1024 ** 2)  # Convert bytes to MB
+    return total_memory_mb

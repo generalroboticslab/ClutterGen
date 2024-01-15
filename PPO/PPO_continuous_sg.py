@@ -13,6 +13,9 @@ from torch.distributions.categorical import Categorical
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
 
+# PointNet
+from PointNet_Model.pointnet2_cls_ssg import get_model
+
 import copy
 import math
 
@@ -30,11 +33,13 @@ class LSTM_Linear(nn.Module):
     def __init__(self, input_size, hidden_size, num_lstm_layers, num_linear_layers, output_size, batch_first=True, init_std=0.01):
         super().__init__()
         self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_lstm_layers, batch_first=batch_first)
-        self.linear = nn.Sequential()
-        for _ in range(num_linear_layers-1):
-            self.linear.append(layer_init(nn.Linear(hidden_size, hidden_size)))
-            self.linear.append(nn.Tanh())
-        self.linear.append(layer_init(nn.Linear(hidden_size, output_size), std=init_std))
+        self.linear = MLP(
+            input_size=hidden_size,
+            hidden_size=hidden_size,
+            output_size=output_size,
+            num_layers=num_linear_layers,
+            init_std=init_std
+        )
 
     def forward(self, x):
         sequence_features, (hn, cn) = self.lstm(x) # hn -> hidden state; cn -> cell state
@@ -43,9 +48,10 @@ class LSTM_Linear(nn.Module):
     
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
+    def __init__(self, d_model, max_len=5000, batch_first=True):
+        super().__init__()
         # Pad d_model to be even if it's odd
+        self.batch_first = batch_first
         self.pad = (d_model % 2 != 0)
         if self.pad:
             d_model += 1
@@ -55,44 +61,61 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        pe = pe.unsqueeze(0)
+        if not batch_first: # (batch_size, seq_len, d_model) -> (seq_len, batch_size, d_model)
+            pe = pe.transpose(0, 1)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
         if self.pad:
-            # Pad the input with zeros on the last dimension
+            # Pad the input with zeros on the last dimension to make it even
             zero_padding = torch.zeros((x.size(0), x.size(1), 1), device=x.device)
             x = torch.cat((x, zero_padding), dim=-1)
 
-        x = x + self.pe[:x.size(0), :]
+        if self.batch_first: x = x + self.pe[:, :x.size(1)]
+        else: x = x + self.pe[:x.size(0), :]
 
         if self.pad:
-            # Remove the padding after adding the positional encoding
+            # Remove the padded 0 after adding the positional encoding
             x = x[..., :-1]
         return x
 
 
 class Transfromer_Linear(nn.Module):
-    def __init__(self, input_size, hidden_size, sequence_len, num_transf_layers, num_linear_layers, output_size, batch_first=True, init_std=0.01) -> None:
+    def __init__(self, input_size, hidden_size, num_transf_layers, num_linear_layers, output_size, batch_first=True, init_std=0.01) -> None:
         super().__init__()
-        self.positional_encoding = PositionalEncoding(input_size)
+        self.positional_encoding = PositionalEncoding(input_size, batch_first=batch_first)
         transformer_layer = nn.TransformerEncoderLayer(d_model=input_size, nhead=1, dim_feedforward=hidden_size, batch_first=batch_first)
         self.transformer = nn.TransformerEncoder(transformer_layer, num_layers=num_transf_layers, norm=nn.LayerNorm(input_size))
-        self.lienar = nn.Sequential()
-
-        input_shape = input_size
-        for i in range(num_linear_layers-1):
-            input_shape = input_size if i==0 else hidden_size
-            self.lienar.append(layer_init(nn.Linear(input_shape, hidden_size)))
-            self.lienar.append(nn.Tanh())
-        self.lienar.append(layer_init(nn.Linear(input_shape, output_size), std=init_std))
+        self.linear = MLP(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            output_size=output_size,
+            num_layers=num_linear_layers,
+            init_std=init_std
+        )
     
     def forward(self, x):
         x = self.positional_encoding(x)
         embeddings = self.transformer(x)
-        last_embedding = embeddings[:, -1, :]
-        output = self.lienar(last_embedding)
+        last_embedding = embeddings[:, -1, :] # only use the last layer output
+        output = self.linear(last_embedding)
         return output
+    
+
+class MLP(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=False, init_std=1., auto_flatten=False):
+        super().__init__()
+        self.activation = nn.ReLU() if use_relu else nn.Tanh()
+        self.mlp = nn.Sequential() if not auto_flatten else nn.Sequential(AutoFlatten())
+        for i in range(num_layers-1):
+            input_shape = input_size if i==0 else hidden_size
+            self.mlp.append(layer_init(nn.Linear(input_shape, hidden_size)))
+            self.mlp.append(self.activation)
+        self.mlp.append(layer_init(nn.Linear(hidden_size, output_size), std=init_std))
+    
+    def forward(self, x):
+        return self.mlp(x)
     
 
 class AutoFlatten(nn.Module):
@@ -110,62 +133,145 @@ class Agent(nn.Module):
         self.envs = envs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_transformer = envs.args.use_transformer
-        self.lstm_layers = 1; self.linear_layers = 4
+        self.num_linear_layers = envs.args.num_linear_layers if hasattr(envs.args, 'num_linear_layers') else 3
+        self.num_transf_layers = envs.args.num_transf_layers if hasattr(envs.args, 'num_transf_layers') else 3
+        self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
         self.deterministic = envs.args.deterministic
         self.hidden_size = envs.args.hidden_size
         self.action_logits_num = envs.action_shape[1] * 2 # 2 for mean and std
         
-        # The encoder for the history trajectory observation
-        self.traj_hist_slice = envs.traj_history_slice
-        self.traj_hist_shape = envs.traj_history_shape
+        # PointNet
+        self.pc_batchsize = envs.args.pc_batchsize
+        self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
+        self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
 
-        self.traj_hist_encoder = Transfromer_Linear(input_size=envs.traj_history_shape[1], hidden_size=self.hidden_size, sequence_len=envs.traj_history_shape[0], num_transf_layers=1,
-                                             num_linear_layers=self.linear_layers, output_size=envs.history_dim_post, batch_first=True, init_std=1.0)
-        
+        self.act_encoder = nn.Sequential(
+            layer_init(nn.Linear(envs.action_dim, envs.action_ft_dim)),
+            self.activation,
+        ).to(self.device)
+
+        self.qr_region_encoder = nn.Sequential(
+            layer_init(nn.Linear(envs.qr_region_dim, envs.qr_region_ft_dim)),
+            self.activation,
+        ).to(self.device)
+
+        # Trajectory history encoder and Large sequence observation encoder
         if self.use_transformer:
-            self.critic = Transfromer_Linear(input_size=envs.post_observation_shape[2], hidden_size=self.hidden_size, sequence_len=envs.post_observation_shape[1], num_transf_layers=1,
-                                             num_linear_layers=self.linear_layers, output_size=1, batch_first=True, init_std=1.0).to(self.device)
-            self.actor = Transfromer_Linear(input_size=envs.post_observation_shape[2], hidden_size=self.hidden_size, sequence_len=envs.post_observation_shape[1], num_transf_layers=1,
-                                             num_linear_layers=self.linear_layers, output_size=self.action_logits_num, batch_first=True, init_std=0.01).to(self.device)
-        
+            self.traj_hist_encoder = Transfromer_Linear(
+                input_size=envs.traj_history_shape[1], 
+                hidden_size=self.hidden_size, 
+                num_transf_layers=self.num_transf_layers,
+                num_linear_layers=self.num_linear_layers, 
+                output_size=envs.history_ft_dim, 
+                batch_first=True, 
+                init_std=1.0
+            ).to(self.device)
+            self.seq_obs_encoder = Transfromer_Linear(
+                input_size=envs.post_act_hist_qr_ft_shape[2], 
+                hidden_size=self.hidden_size, 
+                num_transf_layers=self.num_transf_layers,
+                num_linear_layers=self.num_linear_layers, 
+                output_size=envs.seq_info_ft_dim, 
+                batch_first=True, 
+                init_std=1.0
+            ).to(self.device)
+            
         else:
-            # Use MLP
-            self.critic = nn.Sequential(AutoFlatten())
-            for i in range(self.linear_layers):
-                input_size = np.prod(envs.post_observation_shape[1:]) if i==0 else self.hidden_size
-                self.critic.append(layer_init(nn.Linear(input_size, self.hidden_size)))
-                self.critic.append(nn.Tanh())
-            self.critic.append(layer_init(nn.Linear(self.hidden_size, 1), std=1.0))
-            self.critic = self.critic.to(self.device)
+            self.traj_hist_encoder = MLP(
+                input_size=np.prod(envs.traj_history_shape), 
+                hidden_size=self.hidden_size, 
+                output_size=envs.history_ft_dim, 
+                num_layers=self.num_linear_layers+self.num_transf_layers, 
+                use_relu=envs.args.use_relu,
+                init_std=1.0, auto_flatten=True
+            ).to(self.device)
+            self.seq_obs_encoder = MLP(
+                input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
+                hidden_size=self.hidden_size, 
+                output_size=envs.seq_info_ft_dim, 
+                num_layers=self.num_linear_layers+self.num_transf_layers, 
+                use_relu=envs.args.use_relu,
+                init_std=1.0, auto_flatten=True
+            ).to(self.device)
+        
+        # Use MLP for the critic and actor
+        self.critic = MLP(
+            input_size=envs.post_observation_shape[1],
+            hidden_size=self.hidden_size,
+            output_size=1,
+            num_layers=self.num_linear_layers,
+            use_relu=envs.args.use_relu,
+            init_std=1.0,
+        ).to(self.device)
+        self.actor = MLP(
+            input_size=envs.post_observation_shape[1],
+            hidden_size=self.hidden_size,
+            output_size=self.action_logits_num,
+            num_layers=self.num_linear_layers,
+            use_relu=envs.args.use_relu,
+            init_std=0.01,
+        ).to(self.device)
 
-            self.actor = nn.Sequential(AutoFlatten())
-            for i in range(self.linear_layers):
-                input_size = np.prod(envs.post_observation_shape[1:]) if i==0 else self.hidden_size
-                self.actor.append(layer_init(nn.Linear(input_size, self.hidden_size)))
-                self.actor.append(nn.Tanh())
-            self.actor.append(layer_init(nn.Linear(self.hidden_size, self.action_logits_num), std=0.01))
-            self.actor = self.actor.to(self.device)
-
-        self.to(self.envs.tensor_dtype)
+        self.to(envs.tensor_dtype)
 
     
-    def preprocess_traj(self, x):
-        x = x.to(self.device) if x.device != self.device else x
-        traj_history = x[:, :, self.traj_hist_slice].view(-1, *self.traj_hist_shape)
-        traj_hist_features = self.traj_hist_encoder(traj_history)
-        traj_hist_features = traj_hist_features.view(*x.shape[:2], self.envs.history_dim_post)
-        post_obs = torch.cat([x[:, :, :self.traj_hist_slice.start], traj_hist_features], dim=-1)
-        return post_obs
+    def seq_obs_ft_extract(self, seq_obs):
+        seq_obs = seq_obs.to(self.device) if seq_obs.device != self.device else seq_obs
+        qr_region_hist = seq_obs[:, :, self.envs.qr_region_slice]
+        act_hist = seq_obs[:, :, self.envs.action_slice]
+        traj_history = seq_obs[:, :, self.envs.traj_history_slice].view(-1, *self.envs.traj_history_shape)
+        qr_region_hist_ft = self.qr_region_encoder(qr_region_hist)
+        act_hist_ft = self.act_encoder(act_hist)
+        traj_hist_ft = self.traj_hist_encoder(traj_history)
+        traj_hist_ft = traj_hist_ft.view(*seq_obs.shape[:2], self.envs.history_ft_dim)
+        seq_obs_embedding = torch.cat([qr_region_hist_ft, act_hist_ft, traj_hist_ft], dim=-1)
+        seq_obs_ft = self.seq_obs_encoder(seq_obs_embedding)
+        return seq_obs_ft
     
 
-    def get_value(self, x):
-        x = self.preprocess_traj(x)
+    def preprocess_pc_update_tensor(self, all_envs_scene_ft_tensor, all_envs_obj_ft_tensor, infos, use_mask=False):
+        scene_pc_buf = []; obj_pc_buf = []; update_env_ids = []
+        for i, info in enumerate(infos):
+            if use_mask:
+                indicator = info["pc_change_indicator"]
+                if not indicator: continue
+            update_env_ids.append(i)
+            scene_pc_buf.append(np.expand_dims(info["selected_qr_scene_pc"], axis=0))
+            obj_pc_buf.append(np.expand_dims(info["selected_obj_pc"], axis=0))
+        if len(update_env_ids) == 0: return
+        
+        update_env_ids = np.array(update_env_ids)
+        scene_pc_buf, obj_pc_buf = np.concatenate(scene_pc_buf, axis=0), np.concatenate(obj_pc_buf, axis=0)
+        # PC-Net Points xyz: input points position data, [B, C, N]
+        # While our pc input is [B, N, C] so we need transpose
+        # Batch operation to increase the maximum environments
+        for i in range(0, len(update_env_ids), self.pc_batchsize):
+            with torch.no_grad():
+                update_env_ids_minibatch = update_env_ids[i:i+self.pc_batchsize]
+                scene_pc_minibatch = torch.Tensor(scene_pc_buf[i:i+self.pc_batchsize]).to(self.device).transpose(1, 2)
+                obj_pc_minibatch = torch.Tensor(obj_pc_buf[i:i+self.pc_batchsize]).to(self.device).transpose(1, 2)
+                scene_pc_ft = self.pc_extractor(scene_pc_minibatch)
+                obj_pc_ft = self.pc_extractor(obj_pc_minibatch)
+                all_envs_scene_ft_tensor[update_env_ids_minibatch] = scene_pc_ft
+                all_envs_obj_ft_tensor[update_env_ids_minibatch] = obj_pc_ft
+
+
+    def get_value(self, obs_tuple):
+        for i in range(len(obs_tuple)):
+            obs_tuple[i] = obs_tuple[i].to(self.device) if obs_tuple[i].device != self.device else obs_tuple[i]
+        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_tuple
+        seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
+        x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
         return self.critic(x)
 
 
-    def get_action_and_value(self, x, action=None):
-        x = x.to(self.device) if x.device != self.device else x  # size([num_envs, sequence_len, state_dim])
-        x = self.preprocess_traj(x)
+    def get_action_and_value(self, obs_tuple, action=None):
+        for i in range(len(obs_tuple)):
+            obs_tuple[i] = obs_tuple[i].to(self.device) if obs_tuple[i].device != self.device else obs_tuple[i]
+        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_tuple
+        seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
+        # We currently use cat to combine all features; Later we can try to use attention to combine them
+        x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
         output = self.actor(x)
         action_mean, action_log_std = output.chunk(2, -1)
         action_std = action_log_std.exp()
@@ -175,9 +281,12 @@ class Agent(nn.Module):
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
     
 
-    def select_action(self, x):
-        x = x.to(self.device) if x.device != self.device else x
-        x = self.preprocess_traj(x)
+    def select_action(self, obs_tuple):
+        for i in range(len(obs_tuple)):
+            obs_tuple[i] = obs_tuple[i].to(self.device) if obs_tuple[i].device != self.device else obs_tuple[i]
+        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_tuple
+        seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
+        x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
         output = self.actor(x)
         action_mean, action_log_std = output.chunk(2, -1)
         action_std = action_log_std.exp()
