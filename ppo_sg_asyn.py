@@ -21,6 +21,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from multi_envs import *
+from utils import *
 
 
 def parse_args():
@@ -384,7 +385,7 @@ if __name__ == "__main__":
             next_seq_obs, reward, done, infos = envs.step(step_action)
             agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
             # Update step environment index
-            next_step_env_idx = torch.Tensor(combine_envs_info(infos, 'stepping')).to(device)
+            next_step_env_idx = torch.Tensor(combine_envs_float_info2list(infos, 'stepping')).to(device)
             step_env_id = next_step_env_idx.nonzero().squeeze(dim=-1)
 
             if len(step_env_id) > 0:
@@ -436,9 +437,9 @@ if __name__ == "__main__":
                     update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                     update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
                     update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
-                    success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
+                    success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
                     update_tensor_buffer(episode_success_box, success_buf)
-                    placed_obj_num_buf = torch.Tensor(combine_envs_info(infos, 'success_placed_obj_num', terminal_ids)).to(device)
+                    placed_obj_num_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success_placed_obj_num', terminal_ids)).to(device)
                     update_tensor_buffer(episode_placed_objs_box, placed_obj_num_buf)
 
                     episode_rewards[terminal_index] = 0.
@@ -453,7 +454,7 @@ if __name__ == "__main__":
 
                     if not args.quiet:
                         print(f"Global Steps:{global_step}/{args.total_timesteps}, Episode:{i_episode}, Success Rate:{episode_success_rate:.2f}, Reward:{episode_reward:.4f}," \
-                            f"Pos Reward: {episode_pos_r:.4f}, Act Penalty: {episode_act_p:.4f}")
+                              f"Pos Reward: {episode_pos_r:.4f}, Act Penalty: {episode_act_p:.4f}")
                     
                     if args.collect_data:
                         if args.wandb:
@@ -474,6 +475,15 @@ if __name__ == "__main__":
                             agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
                                                     suffix=str(i_episode))
                             mile_stone = i_episode
+                            
+                        # Save success rate and placed objects number
+                        meta_data = {
+                            "episode": i_episode,
+                            "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                            "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                        }
+                        save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
+
 
 
         ####----- force action to test variance; Skip the training process ----####

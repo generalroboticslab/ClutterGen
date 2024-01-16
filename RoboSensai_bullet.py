@@ -266,7 +266,8 @@ class RoboSensaiBullet:
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
         self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
         # Buffer does not need to be reset
-        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
+        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 
+                     'obj_success_rate': {}, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
         self.num_episode = 0
         self.default_qr_region_z = 0.5
 
@@ -500,9 +501,13 @@ class RoboSensaiBullet:
         self.cur_trial += 1
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
         if self.his_steps <= self.args.max_stable_steps: 
-            # Jump to the next object, object is stable within 10 simulation steps
+            # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
             self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
             self.unplaced_objs_name.remove(self.selected_obj_name)
+            # Update the placement success rate of each object
+            self.update_running_avg(record_dict=self.info['obj_success_rate'],
+                                    key_name=self.selected_obj_name,
+                                    new_value=1.)
             # Record the successful object pose
             selected_obj_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
             self.placed_obj_poses[self.selected_obj_name] = selected_obj_pose
@@ -533,18 +538,25 @@ class RoboSensaiBullet:
             self.query_scene_done = True # Choose new queried scene in the current stage
             self.obj_done = True         # Choose new object in the current stage
             done = True
-            if self.cur_trial >= self.args.max_trials:# Failed to place the object, reset its pose to the prepare area
-                pu.set_pose(body=self.obj_name_data[self.selected_obj_name]["id"], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)              
+            if self.cur_trial >= self.args.max_trials:
+                # Failed to place the object, reset its pose to the prepare area
+                pu.set_pose(body=self.obj_name_data[self.selected_obj_name]["id"], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+                # record the object placement failure
+                self.update_running_avg(record_dict=self.info['obj_success_rate'],
+                                        key_name=self.selected_obj_name,
+                                        new_value=0.)        
         
         # Record miscs info
         if done:
             self.num_episode += 1
             self.info['placed_obj_poses'] = self.placed_obj_poses
             self.info['success_placed_obj_num'] = self.success_obj_num
-
-            if self.selected_qr_scene_name not in self.info['scene_obj_success_num'].keys():
-                self.info['scene_obj_success_num'][self.selected_qr_scene_name] = []
-            self.append_item(self.info['scene_obj_success_num'][self.selected_qr_scene_name], self.success_obj_num, max_len=100)
+                                    
+            # Record the success number if objects successfully placed in one scene
+            self.update_running_avg(record_dict=self.info['scene_obj_success_num'], 
+                                    key_name=self.selected_qr_scene_name, 
+                                    new_value=self.success_obj_num)
+            
             if self.success_obj_num >= self.args.max_num_placing_objs:
                 self.info['success'] = 1.
             else:
@@ -698,6 +710,14 @@ class RoboSensaiBullet:
         dtype = dtype if dtype is not None else self.numpy_dtype
         return np.array(x, dtype=dtype)
     
+
+    def update_running_avg(self, record_dict, key_name, new_value):
+        if key_name not in record_dict.keys(): 
+            record_dict[key_name] = [0., 0]
+        avg_value, num = record_dict[key_name]
+        record_dict[key_name] = [(avg_value * num + new_value) / (num + 1), num + 1]
+        return record_dict
+
 
     def append_item(self, lst, item, max_len=100):
         lst.append(item)

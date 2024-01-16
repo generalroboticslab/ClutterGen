@@ -251,12 +251,12 @@ if __name__ == "__main__":
                 terminal_ids = terminal_index.nonzero().flatten()
 
                 update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
-                success_buf = torch.Tensor(combine_envs_info(infos, 'success', terminal_ids)).to(device)
+                success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
                 update_tensor_buffer(episode_success_box, success_buf)
-                steps_buf = torch.Tensor(combine_envs_info(infos, 'his_steps', terminal_ids)).to(device)
+                steps_buf = torch.Tensor(combine_envs_float_info2list(infos, 'his_steps', terminal_ids)).to(device)
                 update_tensor_buffer(episode_timesteps, steps_buf)
                 success_ids = terminal_ids[success_buf.to(torch.bool)]
-                success_scene_cfg.extend(combine_envs_info(infos, 'placed_obj_poses', success_ids))
+                success_scene_cfg.extend(combine_envs_float_info2list(infos, 'placed_obj_poses', success_ids))
 
                 print_info = f"Episodes: {num_episodes}" + f" / Total Success: {episode_success_box.sum().item()}" 
                 if eval_args.num_envs == 1:
