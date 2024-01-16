@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='YCB_01-08_16:43_FC_Rand_ObjPool_ObjPlace_FixedScene_Goal_maxObjNum5_maxStable50_maxQR1Scene_Weight_rewardPobj100.0') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_01-15_21:48_Transformer_Tanh_Rand_ObjPlace_QRRegion_Goal_maxObjNum1_maxPool240_maxScene1_maxStable50_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -39,6 +39,7 @@ def get_args():
     parser.add_argument('--num_trials', type=int, default=10000)  # database length if have
 
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+    parser.add_argument('--heuristic_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--generate_benchmark', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--save_to_assets', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--use_benchmark', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -80,14 +81,16 @@ def get_args():
     parser.add_argument('--specific_scene', type=str, default=None)
 
     parser.add_argument('--num_pool_objs', type=int, default=32)
-    parser.add_argument('--num_pool_scenes', type=int, default=0)
+    parser.add_argument('--num_pool_scenes', type=int, default=1)
     parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
-    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=list(range(5, 17)), help='A list of max num of placing objs')
+    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=list(range(1, 2)), help='A list of max num of placing objs')
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--seq_select_placing', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--num_episode_to_replace_pool', type=int, default=200)
+    parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--critic_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
 
@@ -121,18 +124,18 @@ def get_args():
 
     # assign an uniform name
     ckeckpoint_index = ''
-    if eval_args.random_policy: eval_args.final_name = f'EVAL_RandomPolicy'
-    else: ckeckpoint_index = '_EVAL' + eval_args.index_episode 
+    if eval_args.random_policy: eval_args.final_name = f'EVAL_RandPolicy'
+    elif eval_args.heuristic_policy: eval_args.final_name = f'EVAL_HeurPolicy'
+    else: ckeckpoint_index = '_EVAL_' + eval_args.index_episode 
     
-    eval_args.scene_suffix = '_Setup'
-    if eval_args.specific_scene is not None: eval_args.scene_suffix += f'_fix_{eval_args.specific_scene}'
-    temp_filename = eval_args.final_name + ckeckpoint_index + eval_args.scene_suffix
+    obj_range = f'_objRange_{min(eval_args.max_num_placing_objs_lst)}_{max(eval_args.max_num_placing_objs_lst)}'
+    temp_filename = eval_args.final_name + ckeckpoint_index + obj_range
     
     maximum_name_len = 250
     if len(temp_filename) > maximum_name_len: # since the name too long error, I need to shorten the training name 
         shorten_name_range = len(temp_filename) - maximum_name_len
         eval_args.final_name = eval_args.final_name[:-shorten_name_range]
-    eval_args.final_name = eval_args.final_name + ckeckpoint_index + eval_args.scene_suffix
+    eval_args.final_name = eval_args.final_name + ckeckpoint_index + obj_range
 
     # Generate benchmark table does not use collect_data
     if eval_args.generate_benchmark: 
@@ -195,12 +198,13 @@ if __name__ == "__main__":
 
     ################ create world and scene set up ##################
     # Create the gym environment
-    envs = create_multi_envs(eval_args, 'forkserver')
+    envs = create_multi_envs(eval_args, 'spawn')
+    temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
     torch.manual_seed(eval_args.seed); np.random.seed(eval_args.seed); random.seed(eval_args.seed)
 
     # Agent
     agent = None
-    if eval_args.eval_result and not eval_args.random_policy:
+    if eval_args.eval_result and not eval_args.random_policy and not eval_args.heuristic_policy:
         agent = Agent(envs.tempENV).to(device)
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
@@ -213,21 +217,29 @@ if __name__ == "__main__":
         episode_timesteps = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
         episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
-        done = torch.zeros(eval_args.num_envs, device=device, dtype=torch.float32)
         success_scene_cfg = []
 
-        with torch.no_grad():
-            state = torch.Tensor(envs.reset()).to(device)
+        if agent is not None:
+            with torch.no_grad():
+                seq_obs = torch.Tensor(envs.reset()).to(device)
+                # Scene and obj feature tensor are keeping updated inplace
+                scene_ft_obs = torch.zeros((eval_args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+                obj_ft_obs = torch.zeros((eval_args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
+                agent.preprocess_pc_update_tensor(scene_ft_obs, obj_ft_obs, envs.reset_infos, use_mask=True)
+        
         print(f" Start Evaluating: {max_num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials")
 
         start_time = time.time()
         while num_episodes < eval_args.num_trials:
             ################ agent evaluation ################
             if eval_args.random_policy:
-                action = (torch.rand((eval_args.num_envs, envs.tempENV.action_shape[1]), device=device) * 2 - 1) * 5
+                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 5
+            elif eval_args.heuristic_policy:
+                assert not eval_args.fixed_qr_region, "Heuristic policy only support fixed_qr_region"
+                action = torch.zeros((eval_args.num_envs, temp_env.action_shape[1]), device=device)
             else:
                 with torch.no_grad():
-                    action, probs = agent.select_action(state)
+                    action, probs = agent.select_action([seq_obs, scene_ft_obs, obj_ft_obs])
                     if eval_args.critic_visualize and envs.env_method('get_env_attr', "info")[0]['stepping']==1:
                         act_sig_grid_tensor = create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[5]*6).to(device)
                         raw_actions = inverse_sigmoid(act_sig_grid_tensor)
@@ -235,12 +247,14 @@ if __name__ == "__main__":
                         print(f"Mean and Std: {probs.mean}, {probs.stddev}")
                         envs.env_method('visualize_actor_prob', raw_actions, action_log_prob)
                         
-            next_state, reward, done, infos = envs.step(action)
-
-            next_state, done = torch.Tensor(next_state).to(device), torch.Tensor(done).to(device)
+            next_seq_obs, reward, done, infos = envs.step(action)
+            if agent is not None:
+                agent.preprocess_pc_update_tensor(scene_ft_obs, obj_ft_obs, infos, use_mask=True)
+            
+            next_seq_obs, done = torch.Tensor(next_seq_obs).to(device), torch.Tensor(done).to(device)
             reward = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
 
-            state = next_state
+            seq_obs = next_seq_obs
             episode_rewards += reward
             
             terminal_index = done == 1
@@ -283,6 +297,14 @@ if __name__ == "__main__":
                         "machine_time": machine_time,
                         "success_scene_cfg": success_scene_cfg}
             write_csv_line(eval_args.result_file_path, csv_result)
+
+            # Save success rate and placed objects number
+            meta_data = {
+                "episode": num_episodes,
+                "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+            }
+            save_json(meta_data, os.path.join(eval_args.trajectory_dir, "meta_data.json"))
 
     print('Process Over')
     envs.close()

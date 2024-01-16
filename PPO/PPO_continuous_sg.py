@@ -133,6 +133,7 @@ class Agent(nn.Module):
         self.envs = envs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_transformer = envs.args.use_transformer
+        self.num_traj_hist_tf = 2; self.num_traj_hist_linear = 2
         self.num_linear_layers = envs.args.num_linear_layers if hasattr(envs.args, 'num_linear_layers') else 3
         self.num_transf_layers = envs.args.num_transf_layers if hasattr(envs.args, 'num_transf_layers') else 3
         self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
@@ -160,8 +161,8 @@ class Agent(nn.Module):
             self.traj_hist_encoder = Transfromer_Linear(
                 input_size=envs.traj_history_shape[1], 
                 hidden_size=self.hidden_size, 
-                num_transf_layers=self.num_transf_layers,
-                num_linear_layers=self.num_linear_layers, 
+                num_transf_layers=self.num_traj_hist_tf,
+                num_linear_layers=self.num_traj_hist_linear, 
                 output_size=envs.history_ft_dim, 
                 batch_first=True, 
                 init_std=1.0
@@ -181,7 +182,7 @@ class Agent(nn.Module):
                 input_size=np.prod(envs.traj_history_shape), 
                 hidden_size=self.hidden_size, 
                 output_size=envs.history_ft_dim, 
-                num_layers=self.num_linear_layers+self.num_transf_layers, 
+                num_layers=self.num_traj_hist_tf+self.num_traj_hist_linear, 
                 use_relu=envs.args.use_relu,
                 init_std=1.0, auto_flatten=True
             ).to(self.device)
@@ -256,19 +257,19 @@ class Agent(nn.Module):
                 all_envs_obj_ft_tensor[update_env_ids_minibatch] = obj_pc_ft
 
 
-    def get_value(self, obs_tuple):
-        for i in range(len(obs_tuple)):
-            obs_tuple[i] = obs_tuple[i].to(self.device) if obs_tuple[i].device != self.device else obs_tuple[i]
-        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_tuple
+    def get_value(self, obs_list):
+        for i in range(len(obs_list)):
+            obs_list[i] = obs_list[i].to(self.device) if obs_list[i].device != self.device else obs_list[i]
+        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
         return self.critic(x)
 
 
-    def get_action_and_value(self, obs_tuple, action=None):
-        for i in range(len(obs_tuple)):
-            obs_tuple[i] = obs_tuple[i].to(self.device) if obs_tuple[i].device != self.device else obs_tuple[i]
-        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_tuple
+    def get_action_and_value(self, obs_list, action=None):
+        for i in range(len(obs_list)):
+            obs_list[i] = obs_list[i].to(self.device) if obs_list[i].device != self.device else obs_list[i]
+        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         # We currently use cat to combine all features; Later we can try to use attention to combine them
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
@@ -281,10 +282,10 @@ class Agent(nn.Module):
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
     
 
-    def select_action(self, obs_tuple):
-        for i in range(len(obs_tuple)):
-            obs_tuple[i] = obs_tuple[i].to(self.device) if obs_tuple[i].device != self.device else obs_tuple[i]
-        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_tuple
+    def select_action(self, obs_list):
+        for i in range(len(obs_list)):
+            obs_list[i] = obs_list[i].to(self.device) if obs_list[i].device != self.device else obs_list[i]
+        seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
         output = self.actor(x)

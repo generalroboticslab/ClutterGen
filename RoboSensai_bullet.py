@@ -114,10 +114,11 @@ class RoboSensaiBullet:
         table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_urdf_points, use_worldpos=False)
         table_axes_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *tableHalfExtents]
         self.fixed_scene_name_data["table"] = {"id": tableId,
-                                                "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
-                                                "bbox": table_axes_bbox,
-                                                "queried_region": "on", 
-                                                "pc": table_pc
+                                               "init_z_offset": 0.0,
+                                               "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
+                                               "bbox": table_axes_bbox,
+                                               "queried_region": "on", 
+                                               "pc": table_pc
                                               }
         # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
         if self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
@@ -135,10 +136,12 @@ class RoboSensaiBullet:
                 scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
                 scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
+                init_z_offset = 5.
                 assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
                 self.fixed_scene_name_data[scene_uni_name] = {  # Init_pose is floating on the air to avoid rely on the ground
                                                                 "id": scene_id,
-                                                                "init_pose": ([0., 0., stable_init_pos_z+5.], p.getQuaternionFromEuler([0., 0., 0.])), # For training, we hang the object in the air
+                                                                "init_z_offset": init_z_offset,
+                                                                "init_pose": ([0., 0., stable_init_pos_z+init_z_offset], p.getQuaternionFromEuler([0., 0., 0.])), # For training, we hang the object in the air
                                                                 "init_stable_pose": ([0., 0., stable_init_pos_z], p.getQuaternionFromEuler([0., 0., 0.])), # For evaluation, we place the object on the ground
                                                                 "bbox": scene_axes_bbox,
                                                                 "queried_region": scene_label["queried_region"], 
@@ -292,7 +295,7 @@ class RoboSensaiBullet:
         self.obj_done = True
 
         # Training
-        self.cur_trial = 0
+        self.cur_trial = 1
         # Observations
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
         self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
@@ -305,25 +308,34 @@ class RoboSensaiBullet:
         # You can use unplaced_objs to decide how many objs should be placed on the scene
         selected_obj_pool = list(self.obj_name_data.keys())
         self.unplaced_objs_name = []
-        while True:
-            candidate_obj_name = self.rng.choice(selected_obj_pool) if self.args.random_select_placing else selected_obj_pool[0]
-            selected_obj_pool.remove(candidate_obj_name)
-            if candidate_obj_name == self.selected_qr_scene_name: continue
+        
+        # Sequence selection to check the dataset stabability (only for evaluation)
+        if hasattr(self.args, "seq_select_placing") and self.args.seq_select_placing:
+            if not hasattr(self, "cur_seq_index"): self.cur_seq_index = 0
+            candidate_obj_name = selected_obj_pool[self.cur_seq_index:self.cur_seq_index+self.args.max_num_placing_objs]
+            self.unplaced_objs_name.extend(candidate_obj_name)
+            self.cur_seq_index = (self.cur_seq_index + self.args.max_num_placing_objs) % len(selected_obj_pool)
+            print(f"Current Sequence Index: {self.cur_seq_index}; NUmber of pool objs: {len(selected_obj_pool)}")
+        else:
+            while True:
+                candidate_obj_name = self.rng.choice(selected_obj_pool) if self.args.random_select_placing else selected_obj_pool[0]
+                selected_obj_pool.remove(candidate_obj_name)
+                if candidate_obj_name == self.selected_qr_scene_name: continue
 
-            # Use scene bbox and obj bbox to do a simple filtering (especially for the "in" relation)
-            candidate_obj_bbox = self.obj_name_data[candidate_obj_name]["bbox"]
-            if self.selected_qr_scene_region == "in": # obj bbox dimension should be smaller than scene bbox dimension
-                # XYZ dimension should be smaller than scene dimension
-                if all([candidate_obj_bbox[i]<self.selected_qr_scene_bbox[i] for i in range(7, 10)]):
-                    self.unplaced_objs_name.append(candidate_obj_name)
-            elif self.selected_qr_scene_region == "on":
-                # XY dimension should be smaller than scene dimension
-                if all([candidate_obj_bbox[i]<self.selected_qr_scene_bbox[i] for i in range(7, 9)]):
-                    self.unplaced_objs_name.append(candidate_obj_name)
-            else:
-                raise NotImplementedError(f"Scene region {self.selected_qr_scene_region} is not implemented!")
-            
-            if len(self.unplaced_objs_name) >= self.args.max_num_placing_objs or len(selected_obj_pool)==0: break
+                # Use scene bbox and obj bbox to do a simple filtering (especially for the "in" relation)
+                candidate_obj_bbox = self.obj_name_data[candidate_obj_name]["bbox"]
+                if self.selected_qr_scene_region == "in": # obj bbox dimension should be smaller than scene bbox dimension
+                    # XYZ dimension should be smaller than scene dimension
+                    if all([candidate_obj_bbox[i]<self.selected_qr_scene_bbox[i] for i in range(7, 10)]):
+                        self.unplaced_objs_name.append(candidate_obj_name)
+                elif self.selected_qr_scene_region == "on":
+                    # XY dimension should be smaller than scene dimension
+                    if all([candidate_obj_bbox[i]<self.selected_qr_scene_bbox[i] for i in range(7, 9)]):
+                        self.unplaced_objs_name.append(candidate_obj_name)
+                else:
+                    raise NotImplementedError(f"Scene region {self.selected_qr_scene_region} is not implemented!")
+                
+                if len(self.unplaced_objs_name) >= self.args.max_num_placing_objs or len(selected_obj_pool)==0: break
 
 
     def update_unquery_scenes(self):
@@ -340,18 +352,19 @@ class RoboSensaiBullet:
         self.last_raw_action = action.copy()
         
         # action = [x, y, z, roll, pitch, yaw]
-        scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        placed_qr_region = self.selected_qr_region
-        half_extents = placed_qr_region[7:]
-        untrans_xyz = action[:3] * (2 * half_extents) - half_extents
+        World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        QRscene_2_QRregion = self.selected_qr_region
+        half_extents = QRscene_2_QRregion[7:]
+        QRregion_2_ObjCenter = action[:3] * (2 * half_extents) - half_extents
+        QRregion_2_ObjBase_xyz = p.multiplyTransforms(QRregion_2_ObjCenter, [0, 0, 0, 1.], -self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
         # In the qr_scene baseLink frame
-        local_action_xyz = p.multiplyTransforms(placed_qr_region[:3], placed_qr_region[3:7], untrans_xyz, [0., 0., 0., 1.])[0]
+        QRsceneBase_2_ObjBase_xyz = p.multiplyTransforms(QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7], QRregion_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
         # In the simulator world frame
-        step_action_xyz = p.multiplyTransforms(scene_obj_pose[0], scene_obj_pose[1], local_action_xyz, [0., 0., 0., 1.])[0]
-        step_action_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
+        World_2_ObjBase_xyz = p.multiplyTransforms(World_2_QRscene[0], World_2_QRscene[1], QRsceneBase_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
+        World_2_ObjBase_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
 
         if self.args.rendering:
-            world2qr_region = p.multiplyTransforms(*scene_obj_pose, placed_qr_region[:3], placed_qr_region[3:7])
+            world2qr_region = p.multiplyTransforms(*World_2_QRscene, QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7])
             if hasattr(self, "last_world2qr_region") and world2qr_region == self.last_world2qr_region: pass
             else:
                 if hasattr(self, "region_vis_id"): p.removeBody(self.region_vis_id, physicsClientId=self.client_id)
@@ -359,7 +372,7 @@ class RoboSensaiBullet:
                                                       halfExtents=half_extents, rgba_color=[1, 0, 0, 0.1], client_id=self.client_id)
                 self.last_world2qr_region = world2qr_region
 
-        return step_action_xyz, step_action_quat
+        return World_2_ObjBase_xyz, World_2_ObjBase_quat
 
 
     def step(self, action):
@@ -384,8 +397,9 @@ class RoboSensaiBullet:
                 self.simstep(1/240)
                 obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
                 obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
-                # Update the trajectory history
-                self.traj_history[self.his_steps] = obj_pos + obj_quat + obj_vel.tolist()
+                # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]
+                self.traj_history.pop(0)
+                self.traj_history.append(obj_pos + obj_quat + obj_vel.tolist())
                 # Accumulate velocity reward
                 self.accm_vel_reward += -obj_vel[:].__abs__().sum()
                 # Jump out if the object is not moving (in the future, we might need to add acceleration checker)
@@ -415,8 +429,8 @@ class RoboSensaiBullet:
                 print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
                 if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
 
-        # This point should be considered as the start of the episode! Stablebaseline3 will automatically reset the environment when done is True; Therefore this will introduce reset twice but we can not avoid it.
-        if self.info['stepping'] == 1.: observation = self.compute_observations() if not done else self.reset() 
+        # This point should be considered as the start of the episode! Stablebaseline3 will automatically reset the environment when done is True; Therefore our environment does not have reset function called, it is called outside.
+        if self.info['stepping'] == 1. and not done: observation = self.compute_observations()
         else: observation = self.last_seq_obs
 
         # Reset successfully placed object pose
@@ -465,7 +479,7 @@ class RoboSensaiBullet:
                     if len(self.unquried_scene_name) == 0: self.update_unquery_scenes()
             
         # We need object description (index), bbox, reward (later)
-        # Choose query object
+        # Choose query object placement order
         if self.obj_done:
             self.obj_done = False
             self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name))
@@ -502,7 +516,7 @@ class RoboSensaiBullet:
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
         if self.his_steps <= self.args.max_stable_steps: 
             # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
-            self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
+            self.obj_done = True; self.cur_trial = 1; self.success_obj_num += 1
             self.unplaced_objs_name.remove(self.selected_obj_name)
             # Update the placement success rate of each object
             self.update_running_avg(record_dict=self.info['obj_success_rate'],
@@ -549,7 +563,13 @@ class RoboSensaiBullet:
         # Record miscs info
         if done:
             self.num_episode += 1
-            self.info['placed_obj_poses'] = self.placed_obj_poses
+            # Record the scene pose here
+            final_scene_obj_pose_dict = deepcopy(self.placed_obj_poses)
+            scene_pos, scene_quat = self.scene_init_stable_pose
+            scene_init_z_offset = self.fixed_scene_name_data[self.selected_qr_scene_name]["init_z_offset"]
+            final_scene_obj_pose_dict[self.selected_qr_scene_name] = [[scene_pos[0], scene_pos[1], scene_pos[2] - scene_init_z_offset], scene_quat]
+
+            self.info['placed_obj_poses'] = final_scene_obj_pose_dict
             self.info['success_placed_obj_num'] = self.success_obj_num
                                     
             # Record the success number if objects successfully placed in one scene

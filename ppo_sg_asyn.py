@@ -38,7 +38,7 @@ def parse_args():
     # RoboSensai Env parameters (dataset)
     parser.add_argument('--num_pool_objs', type=int, default=200)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
-    parser.add_argument('--max_num_placing_objs', type=int, default=16)
+    parser.add_argument('--max_num_placing_objs', type=int, default=1)
     parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
-    parser.add_argument("--max_stable_steps", type=int, default=50, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument("--max_stable_steps", type=int, default=60, help="the maximum steps for the env to be stable considering success")
     parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
     parser.add_argument('--reward_pobj', type=float, default=100., help='Position reward weight')
     parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
