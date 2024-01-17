@@ -78,7 +78,6 @@ def pc_random_downsample(pc_array, num_points):
         num_points: int
     """
     if num_points >= pc_array.shape[0]: 
-        pc_array = np.concatenate([pc_array, np.zeros((num_points - pc_array.shape[0], 3))], axis=0)
         return pc_array
     else:
         idx = np.random.choice(pc_array.shape[0], num_points, replace=False)

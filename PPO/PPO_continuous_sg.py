@@ -237,8 +237,12 @@ class Agent(nn.Module):
                 indicator = info["pc_change_indicator"]
                 if not indicator: continue
             update_env_ids.append(i)
-            scene_pc_buf.append(np.expand_dims(info["selected_qr_scene_pc"], axis=0))
-            obj_pc_buf.append(np.expand_dims(info["selected_obj_pc"], axis=0))
+            scene_pc, obj_pc = info["selected_qr_scene_pc"], info["selected_obj_pc"]
+            # Make sure the scene point cloud has the same number of points (object already has the same number of points)
+            if scene_pc.shape[0] < self.envs.args.max_num_scene_points:
+                scene_pc = np.concatenate([scene_pc, np.zeros((self.envs.args.max_num_scene_points-scene_pc.shape[0], scene_pc.shape[1]))], axis=0)
+            scene_pc_buf.append(np.expand_dims(scene_pc, axis=0))
+            obj_pc_buf.append(np.expand_dims(obj_pc, axis=0))
         if len(update_env_ids) == 0: return
         
         update_env_ids = np.array(update_env_ids)
