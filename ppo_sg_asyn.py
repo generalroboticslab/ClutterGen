@@ -143,7 +143,7 @@ def parse_args():
     if args.random_select_placing: additional += '_ObjPlace'
     if args.random_select_scene_pool: additional += '_ScenePool'
     if not args.fixed_scene_only: additional += '_unFixedScene'
-    if args.fixed_qr_region: additional += '_QRRegion'
+    if not args.fixed_qr_region: additional += '_QRRegion'
     additional += '_Goal'
     if args.max_num_placing_objs: additional += f'_maxObjNum{args.max_num_placing_objs}'
     if args.num_pool_objs: additional += f'_maxPool{args.num_pool_objs}'
