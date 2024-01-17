@@ -80,7 +80,7 @@ def parse_args():
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout per object")
-    parser.add_argument("--pc_batchsize", type=int, default=20, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--pc_batchsize", type=int, default=None, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--use_relu", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Use Relu or tanh.")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
@@ -119,6 +119,7 @@ def parse_args():
     args.num_steps = args.num_steps * args.max_num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.pc_batchsize = args.pc_batchsize if args.pc_batchsize is not None else args.num_envs
 
     if args.cpus:
         print('Running on specific CPUS:', args.cpus)
