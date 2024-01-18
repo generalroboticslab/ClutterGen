@@ -60,6 +60,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-r", "--relative_file_path", type=str, required=True)
     parser.add_argument("-s", "--send", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True)
+    parser.add_argument("-ip", "--server", type=str, default="00")
     args = parser.parse_args()
 
     # Example usage:
@@ -69,7 +70,7 @@ if __name__=="__main__":
     server_project_path = "/home/yj208/Working/RoboSensai"
     local_abs_file_path = os.path.join(local_project_path, args.relative_file_path)
     server_abs_file_path = os.path.join(server_project_path, args.relative_file_path)
-    server_address = "bc298-cmp-00.egr.duke.edu"
+    server_address = f"bc298-cmp-{args.server}.egr.duke.edu"
     username = "yj208"
     password = "Jys11053032!"
 

@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='Union_01-15_21:48_Transformer_Tanh_Rand_ObjPlace_QRRegion_Goal_maxObjNum1_maxPool240_maxScene1_maxStable50_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_01-17_15:03_Transformer_FT_Tanh_Rand_ObjPool_ObjPlace_QRRegion_Goal_maxObjNum5_maxPool200_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq10') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -88,7 +88,7 @@ def get_args():
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--seq_select_placing', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    # parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--critic_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
@@ -233,19 +233,21 @@ if __name__ == "__main__":
         while num_episodes < eval_args.num_trials:
             ################ agent evaluation ################
             if eval_args.random_policy:
-                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 5
+                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 5 # [-5, 5] before sigmoid
             elif eval_args.heuristic_policy:
                 assert not eval_args.fixed_qr_region, "Heuristic policy only support fixed_qr_region"
                 action = torch.zeros((eval_args.num_envs, temp_env.action_shape[1]), device=device)
             else:
                 with torch.no_grad():
                     action, probs = agent.select_action([seq_obs, scene_ft_obs, obj_ft_obs])
+                    print(f"Mean and Std: {probs.mean}, {probs.stddev}")
+                    
                     if eval_args.critic_visualize and envs.env_method('get_env_attr', "info")[0]['stepping']==1:
                         act_sig_grid_tensor = create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[5]*6).to(device)
                         raw_actions = inverse_sigmoid(act_sig_grid_tensor)
                         action_log_prob = probs.log_prob(raw_actions)
-                        print(f"Mean and Std: {probs.mean}, {probs.stddev}")
-                        envs.env_method('visualize_actor_prob', raw_actions, action_log_prob)
+                        prob_pos_heatmap = envs.env_method('visualize_actor_prob', raw_actions, action_log_prob)[0]
+                        World_2_ObjBase_xyz, xyz_act_prob, World_2_ObjBase_quat, r_act_prob = prob_pos_heatmap
                         
             next_seq_obs, reward, done, infos = envs.step(action)
             if agent is not None:

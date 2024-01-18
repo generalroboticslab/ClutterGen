@@ -592,56 +592,60 @@ class RoboSensaiBullet:
         action = raw_actions.sigmoid() # Map action to (0, 1)
         action[..., 3:5] = 0. # No x,y rotation
         # action = [x, y, z, roll, pitch, yaw]
-        scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        scene_obj_pos_tensor, scene_obj_ori_tensor = self.to_torch(scene_obj_pose[0]), self.to_torch(scene_obj_pose[1])
-        placed_qr_region = self.to_torch(self.selected_qr_region)
-        half_extents = placed_qr_region[7:]
-        untrans_xyz = action[..., :3] * (2 * half_extents) - half_extents
+        World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        World_2_QRscene_pos, World_2_QRscene_ori = self.to_torch(World_2_QRscene[0]), self.to_torch(World_2_QRscene[1])
+        QRscene_2_QRregion = self.to_torch(self.selected_qr_region)
+        half_extents = QRscene_2_QRregion[7:]
+        QRregion_2_ObjCenter = action[..., :3] * (2 * half_extents) - half_extents
         # In the qr_scene baseLink frame
-        untrans_xyz_shape_head = untrans_xyz.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
-        placed_qr_region_xyz, placed_qr_region_quat = placed_qr_region[:3].repeat(*untrans_xyz_shape_head, 1), placed_qr_region[3:7].repeat(*untrans_xyz_shape_head, 1)
-        local_action_xyz = tf_combine(placed_qr_region_quat, placed_qr_region_xyz, self.to_torch([0., 0., 0., 1.]).repeat(*untrans_xyz_shape_head, 1), untrans_xyz)[1]
+        QRregion_2_ObjCenter_shape_head = QRregion_2_ObjCenter.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
+        QRscene_2_QRregion_xyz, QRscene_2_QRregion_quat = QRscene_2_QRregion[:3].repeat(*QRregion_2_ObjCenter_shape_head, 1), QRscene_2_QRregion[3:7].repeat(*QRregion_2_ObjCenter_shape_head, 1)
+        QRsceneBase_2_ObjBase_xyz = tf_combine(QRscene_2_QRregion_quat, QRscene_2_QRregion_xyz, self.to_torch([0., 0., 0., 1.]).repeat(*QRregion_2_ObjCenter_shape_head, 1), QRregion_2_ObjCenter)[1]
         # In the simulator world frame
-        local_action_xyz_shape_head = local_action_xyz.shape[:-1]
-        scene_obj_pos_tensor, scene_obj_ori_tensor = scene_obj_pos_tensor.repeat(*local_action_xyz_shape_head, 1), scene_obj_ori_tensor.repeat(*local_action_xyz_shape_head, 1)
-        step_action_xyz = tf_combine(scene_obj_ori_tensor, scene_obj_pos_tensor, self.to_torch([0., 0., 0., 1.]).repeat(*local_action_xyz_shape_head, 1), local_action_xyz)[1]
+        QRsceneBase_2_ObjBase_xyz_shape_head = QRsceneBase_2_ObjBase_xyz.shape[:-1]
+        World_2_QRscene_pos, World_2_QRscene_ori = World_2_QRscene_pos.repeat(*QRsceneBase_2_ObjBase_xyz_shape_head, 1), World_2_QRscene_ori.repeat(*QRsceneBase_2_ObjBase_xyz_shape_head, 1)
+        World_2_ObjBase_xyz = tf_combine(World_2_QRscene_ori, World_2_QRscene_pos, self.to_torch([0., 0., 0., 1.]).repeat(*QRsceneBase_2_ObjBase_xyz_shape_head, 1), QRsceneBase_2_ObjBase_xyz)[1]
         # Convert Rotation to Quaternion
-        step_action_euler = action[..., 3:] * 2*np.pi
-        step_action_quat = quat_from_euler((action[..., 3:] * 2*np.pi))
+        World_2_ObjBase_euler = action[..., 3:] * 2*np.pi
+        World_2_ObjBase_quat = quat_from_euler(World_2_ObjBase_euler)
 
         xyz_act_prob = act_log_prob[..., :3].sum(-1).exp()
-        xyzr_act_prob = (act_log_prob[..., :3].sum(-1) + act_log_prob[..., 5]).exp()
-        used_act_prob = xyz_act_prob # or xyzr_act_prob
+        r_act_prob = act_log_prob[..., 5].exp()
+        using_act_prob = xyz_act_prob # or xyzr_act_prob
         # Compute each voxel size
         voxel_half_x = (half_extents[0] / (action.shape[0]-1)).item() # We have num_steps -1 intervals
         voxel_half_y = (half_extents[1] / (action.shape[1]-1)).item()
         voxel_half_z = (half_extents[2] / (action.shape[2]-1)).item()
 
-        if self.args.rendering:
-            # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
-            step_action_xyz_i = step_action_xyz[:, :, :, 0, 0, 0].view(-1, 3)
-            step_action_quat_i = step_action_quat[:, :, :, 0, 0, 0].view(-1, 4)
-            step_euler_i = step_action_euler[:, :, :, 0, 0, 0].view(-1, 3)
-            used_act_prob_i = used_act_prob[:, :, :, 0, 0, 0].view(-1, 1)
-            print(f"Euler Angle: {step_euler_i.unique(dim=0)}")
-            # Normalize the prob sum to 1
-            used_act_prob_i = used_act_prob_i / (used_act_prob_i.sum() + 1e-10)
-            # Strenthen the range to [0, 1.] to strengthen the color
-            used_act_prob_i = (used_act_prob_i - used_act_prob_i.min()) / (used_act_prob_i.max() - used_act_prob_i.min() + 1e-10)
+        # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
+        World_2_ObjBase_xyz_i = World_2_ObjBase_xyz[:, :, :, 0, 0, 0].view(-1, 3)
+        World_2_ObjBase_quat_i = World_2_ObjBase_quat[0, 0, 0, 0, 0, :].view(-1, 4)
+
+        step_euler_i = World_2_ObjBase_euler[:, :, :, 0, 0, 0].view(-1, 3)
+        using_act_prob_i = using_act_prob[:, :, :, 0, 0, 0].view(-1, 1)
+        # print(f"Euler Angle: {step_euler_i.unique(dim=0)}")
+        # Normalize the prob sum to 1
+        using_act_prob_i = using_act_prob_i / (using_act_prob_i.sum() + 1e-10)
+        # Strenthen the range to [0, 1.] to strengthen the color
+        using_act_prob_i = (using_act_prob_i - using_act_prob_i.min()) / (using_act_prob_i.max() - using_act_prob_i.min() + 1e-10)
+        r_act_prob = (r_act_prob - r_act_prob.min()) / (r_act_prob.max() - r_act_prob.min() + 1e-10)
             
+        if self.args.rendering:
             if hasattr(self, "act_vs_box_ids"): 
                 [p.removeBody(act_vs_box_id, physicsClientId=self.client_id) for act_vs_box_id in self.act_vs_box_ids]
             
             self.act_vs_box_ids = []
-            for j in range(step_action_xyz_i.shape[0]):
+            for j in range(World_2_ObjBase_xyz_i.shape[0]):
                 # Use Yellow color
-                if torch.isclose(used_act_prob_i[j], torch.zeros_like(used_act_prob_i[j])): continue
-                rgba_color = [1, 1, 0, used_act_prob_i[j].item()]
-                act_vs_box_id = pu.draw_box_body(step_action_xyz_i[j].cpu().numpy(), 
+                if torch.isclose(using_act_prob_i[j], torch.zeros_like(using_act_prob_i[j])): continue
+                rgba_color = [1, 1, 0, using_act_prob_i[j].item()]
+                act_vs_box_id = pu.draw_box_body(World_2_ObjBase_xyz_i[j].cpu().numpy(), 
                                                 halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
                                                 client_id=self.client_id, rgba_color=rgba_color)
                 self.act_vs_box_ids.append(act_vs_box_id)
             time.sleep(3.)
+        
+        return World_2_ObjBase_xyz_i, using_act_prob_i, World_2_ObjBase_quat_i, r_act_prob
     
     ######################################
     ######### Utils FUnctions ############
