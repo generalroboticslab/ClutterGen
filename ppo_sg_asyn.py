@@ -85,7 +85,7 @@ def parse_args():
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
+    parser.add_argument("--minibatch-size", type=int, default=1000, help="the number of mini-batches")
     parser.add_argument("--update-epochs", type=int, default=5, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
@@ -118,7 +118,7 @@ def parse_args():
     # Training required attributes
     args.num_steps = args.num_steps * args.max_num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
     args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
     args.pc_batchsize = args.pc_batchsize if args.pc_batchsize is not None else args.num_envs
 
     if args.cpus:
