@@ -57,10 +57,10 @@ class RoboSensaiBullet:
         self.obj_dataset_folder = os.path.join(self.args.asset_root, self.args.object_pool_folder)
         # 0: "Table", "Bookcase", "Dishwasher", "Microwave", all storage furniture
         self.obj_uni_names_dataset = {}
-        obj_categories = os.listdir(self.obj_dataset_folder)
+        obj_categories = sorted(os.listdir(self.obj_dataset_folder))
         for cate in obj_categories:
             obj_folder = os.path.join(self.obj_dataset_folder, cate)
-            obj_indexes = os.listdir(obj_folder)
+            obj_indexes = sorted(os.listdir(obj_folder))
             for idx in obj_indexes:
                 obj_uni_name = f"{cate}_{idx}"
                 obj_urdf_path = f"{self.obj_dataset_folder}/{cate}/{idx}/mobility.urdf"
@@ -72,10 +72,10 @@ class RoboSensaiBullet:
         # Load fixed scenes path
         self.fixed_scene_dataset_folder = os.path.join(self.args.asset_root, self.args.scene_pool_folder)
         self.scene_uni_names_dataset = {}
-        scene_categories = os.listdir(self.fixed_scene_dataset_folder)
+        scene_categories = sorted(os.listdir(self.fixed_scene_dataset_folder))
         for scene in scene_categories:
             scene_pool_folder = os.path.join(self.fixed_scene_dataset_folder, scene)
-            scene_indexes = os.listdir(scene_pool_folder)
+            scene_indexes = sorted(os.listdir(scene_pool_folder))
             for idx in scene_indexes:
                 scene_uni_name = f"{scene}_{idx}"
                 scene_urdf_path = f"{self.fixed_scene_dataset_folder}/{scene}/{idx}/mobility.urdf"

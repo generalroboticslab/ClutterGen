@@ -133,13 +133,13 @@ class Agent(nn.Module):
         self.envs = envs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_transformer = envs.args.use_transformer
-        self.num_traj_hist_tf = 2; self.num_traj_hist_linear = 2
-        self.num_linear_layers = envs.args.num_linear_layers if hasattr(envs.args, 'num_linear_layers') else 3
+        self.num_traj_hist_tf = 3; self.num_traj_hist_linear = 2
+        self.num_linear_layers = envs.args.num_linear_layers if hasattr(envs.args, 'num_linear_layers') else 2
         self.num_transf_layers = envs.args.num_transf_layers if hasattr(envs.args, 'num_transf_layers') else 3
         self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
         self.deterministic = envs.args.deterministic
         self.hidden_size = envs.args.hidden_size
-        self.action_logits_num = envs.action_shape[1] * 2 # 2 for mean and std
+        self.action_logits_num = envs.action_shape[1] # 2 for mean and std
         
         # PointNet
         self.pc_batchsize = envs.args.pc_batchsize
@@ -149,11 +149,13 @@ class Agent(nn.Module):
         self.act_encoder = nn.Sequential(
             layer_init(nn.Linear(envs.action_dim, envs.action_ft_dim)),
             self.activation,
+            layer_init(nn.Linear(envs.action_ft_dim, envs.action_ft_dim)),
         ).to(self.device)
 
         self.qr_region_encoder = nn.Sequential(
             layer_init(nn.Linear(envs.qr_region_dim, envs.qr_region_ft_dim)),
             self.activation,
+            layer_init(nn.Linear(envs.qr_region_ft_dim, envs.qr_region_ft_dim))
         ).to(self.device)
 
         # Trajectory history encoder and Large sequence observation encoder
@@ -213,6 +215,9 @@ class Agent(nn.Module):
             init_std=0.01,
         ).to(self.device)
 
+        # is_leaf problem for nn.parameters/must set to() within it
+        self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.action_shape)).to(self.device), requires_grad=True) 
+
         self.to(envs.tensor_dtype)
 
     
@@ -262,8 +267,6 @@ class Agent(nn.Module):
 
 
     def get_value(self, obs_list):
-        for i in range(len(obs_list)):
-            obs_list[i] = obs_list[i].to(self.device) if obs_list[i].device != self.device else obs_list[i]
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
@@ -271,15 +274,13 @@ class Agent(nn.Module):
 
 
     def get_action_and_value(self, obs_list, action=None):
-        for i in range(len(obs_list)):
-            obs_list[i] = obs_list[i].to(self.device) if obs_list[i].device != self.device else obs_list[i]
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         # We currently use cat to combine all features; Later we can try to use attention to combine them
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        output = self.actor(x)
-        action_mean, action_log_std = output.chunk(2, -1)
-        action_std = action_log_std.exp()
+        action_mean = self.actor(x)
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
             action = action_mean if self.deterministic else probs.sample()
@@ -287,14 +288,12 @@ class Agent(nn.Module):
     
 
     def select_action(self, obs_list):
-        for i in range(len(obs_list)):
-            obs_list[i] = obs_list[i].to(self.device) if obs_list[i].device != self.device else obs_list[i]
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        output = self.actor(x)
-        action_mean, action_log_std = output.chunk(2, -1)
-        action_std = action_log_std.exp()
+        action_mean = self.actor(x)
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         action = action_mean if self.deterministic else probs.sample()
         return action, probs
