@@ -182,17 +182,17 @@ tippe_top = """
 
 
 # URDF to PointsCloud
-import pybullet_utils as pu
-import open3d as o3d
-client_id = p.connect(p.GUI)
-p.setAdditionalSearchPath(pybullet_data.getDataPath())
-p.loadURDF("plane.urdf")
-p.setGravity(0, 0, -9.8)
-obj_id = p.loadURDF("assets/union_objects_test/Eyeglasses/0/mobility.urdf", basePosition=[0, 0, 10.], useFixedBase=True, globalScaling=0.2)
+# import pybullet_utils as pu
+# import open3d as o3d
+# client_id = p.connect(p.GUI)
+# p.setAdditionalSearchPath(pybullet_data.getDataPath())
+# p.loadURDF("plane.urdf")
+# p.setGravity(0, 0, -9.8)
+# obj_id = p.loadURDF("assets/union_objects_test/Eyeglasses/0/mobility.urdf", basePosition=[0, 0, 10.], useFixedBase=True, globalScaling=0.2)
 
-world2baselink = pu.get_link_pose(obj_id, -1)
-num_links = pu.get_num_links(obj_id)
-whole_pc = []
+# world2baselink = pu.get_link_pose(obj_id, -1)
+# num_links = pu.get_num_links(obj_id)
+# whole_pc = []
 
 # for link_id in range(-1, num_links):
 #     link_pc_world = pu.get_link_pc_from_id(obj_id, link_id, min_num_points=1024, use_worldpos=False, client_id=client_id)
@@ -200,16 +200,16 @@ whole_pc = []
 
 # whole_pc = np.array(whole_pc)
 # print(whole_pc.shape)
-whole_pc = pu.get_obj_pc_from_id(obj_id, num_points=50000, use_worldpos=True, client_id=client_id)
-print(whole_pc.shape)
-o3d_pc = o3d.geometry.PointCloud()
-o3d_pc.points = o3d.utility.Vector3dVector(whole_pc)
-bbox = o3d_pc.get_axis_aligned_bounding_box()
-bbox.color = np.array([0, 0, 0.])
-print(bbox.get_center(), bbox.get_half_extent())
-coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-# coord_frame2 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=world2link[0])
-o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
+# whole_pc = pu.get_obj_pc_from_id(obj_id, num_points=50000, use_worldpos=True, client_id=client_id)
+# print(whole_pc.shape)
+# o3d_pc = o3d.geometry.PointCloud()
+# o3d_pc.points = o3d.utility.Vector3dVector(whole_pc)
+# bbox = o3d_pc.get_axis_aligned_bounding_box()
+# bbox.color = np.array([0, 0, 0.])
+# print(bbox.get_center(), bbox.get_half_extent())
+# coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+# # coord_frame2 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=world2link[0])
+# o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
 
 
 
@@ -337,13 +337,44 @@ o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
 # whole_pc = []
 
 
-from Blender_script.PybulletRecorder import PyBulletRecorder
-pb_recorder = PyBulletRecorder(client_id=client_id)
-pb_recorder.register_object(obj_id)
+# from Blender_script.PybulletRecorder import PyBulletRecorder
+# pb_recorder = PyBulletRecorder(client_id=client_id)
+# pb_recorder.register_object(obj_id)
 
-for i in range(1):
-    p.stepSimulation()
-    pb_recorder.add_keyframe()
-    time.sleep(1./240.)
+# for i in range(1):
+#     p.stepSimulation()
+#     pb_recorder.add_keyframe()
+#     time.sleep(1./240.)
 
 # pb_recorder.save("test.pkl")
+
+
+# Point Cloud Extraction Speed Test
+from PointNet_Model.pointnet2_cls_ssg import get_model
+import torch
+import time
+
+device = "cuda:0"
+pc_extractor = get_model(num_class=40, normal_channel=False).to(device) # num_classes is used for loading checkpoint to make sure the model is the same
+pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=device)
+test_pc = torch.rand((1, 3, 10240), device=device)
+with torch.no_grad():
+    print(f"Doing 1 batch PC")
+    avg_time = 0
+    for i in range(100):
+      start_time = time.time()
+      pc_extractor(test_pc)
+      avg_time += time.time() - start_time
+    print(f"1 Batch PC 100 times Average time: {avg_time/100.}")
+
+
+test_pc = torch.rand((20, 3, 10240), device=device)
+with torch.no_grad():
+    print(f"Doing 20 batches PC")
+    avg_time = 0
+    for i in range(100):
+      start_time = time.time()
+      pc_extractor(test_pc)
+      avg_time += time.time() - start_time
+    print(f"20 Batches PC 100 times Average time: {avg_time/100.}")
+
