@@ -1,5 +1,6 @@
 import pybullet as p
-import PySimpleGUI as sg
+try: import PySimpleGUI as sg
+except: print("PySimpleGUI can not be imported on the server side.")
 import pickle
 from os import getcwd
 from os.path import abspath, dirname, basename, splitext, join
