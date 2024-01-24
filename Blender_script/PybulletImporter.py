@@ -15,6 +15,7 @@ from os.path import splitext, join, basename, exists
 from os import listdir
 from mathutils import Vector
 import math
+import time
 
 
 def load_pkl(filepath=None):
@@ -419,5 +420,8 @@ _, max_frame = load_pkl(filepath)
 
 skip_frames = 10
 frame_rate = 240 // skip_frames
+
+start_time = time.time()
 render_animation('test_res/output.mp4', encoder='H264', resolution=(1280, 720), 
                  skip_frames=skip_frames, start_frame=0, end_frame=max_frame+480, quality=80, frame_rate=frame_rate)
+print(f"Total time: {time.time() - start_time:.2f}s")
