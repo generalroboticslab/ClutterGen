@@ -39,3 +39,4 @@ paramiko
 scp
 str2bool
 ipdb
+PySimpleGUI

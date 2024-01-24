@@ -1123,8 +1123,13 @@ def get_link_pc_from_id(obj_id, link_index=-1, min_num_points=1024, use_worldpos
             print(f'No collision shape for object {obj_id}, link {link_index}, {i}th part')
             continue
 
-        link_type, link_mesh_scale, link_mesh_path, par2link_pos, par2link_ori = link_collision_info[2:7]
-        what2linkpart = p.multiplyTransforms(what2linkjoint[0], what2linkjoint[1], par2link_pos, par2link_ori)
+        ## ***Note: linkjoint2linkcenter_pos is already scaled by mesh_scale, so we don't need to scale it again!
+        link_type, link_mesh_scale, link_mesh_path, linkjoint2linkcenter_pos, linkjoint2linkcenter_ori = link_collision_info[2:7]
+
+        what2linkpart = p.multiplyTransforms(
+            what2linkjoint[0], what2linkjoint[1], 
+            linkjoint2linkcenter_pos, linkjoint2linkcenter_ori
+        )
         if link_type == p.GEOM_MESH:
             linkpart_pc_local = sample_pc_from_mesh(link_mesh_path, link_mesh_scale, min_num_points)
         elif link_type == p.GEOM_BOX:

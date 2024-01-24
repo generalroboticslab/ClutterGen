@@ -24,6 +24,7 @@ from PointNet_Model.pointnet2_cls_ssg import get_model
 # Visualization
 from tabulate import tabulate
 from torch_utils import tf_combine, quat_from_euler
+from Blender_script.PybulletRecorder import PyBulletRecorder
 
 
 class RoboSensaiBullet:
@@ -211,6 +212,8 @@ class RoboSensaiBullet:
         self._init_obs_act_space()
         self.load_scenes()
         self.load_objects()
+        if self.args.blender_record: 
+            self.pybullet_recorder = PyBulletRecorder(client_id=self.client_id)
 
 
     def post_checker(self, verbose=False):
@@ -268,6 +271,7 @@ class RoboSensaiBullet:
         self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
         self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
+        self.args.blender_record = self.args.blender_record if hasattr(self.args, "blender_record") else False
         # Buffer does not need to be reset
         self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 
                      'obj_success_rate': {}, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
@@ -302,6 +306,11 @@ class RoboSensaiBullet:
         self.last_seq_obs = np.zeros(self.raw_act_hist_qr_obs_shape[1:], dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
+
+        # Blender record
+        if self.args.blender_record: 
+            self.pybullet_recorder.reset(links=True)
+            [self.pybullet_recorder.add_keyframe() for _ in range(120)] # Add 0.5s keyframes to show the start
 
     
     def update_unplaced_objs(self):
@@ -395,6 +404,8 @@ class RoboSensaiBullet:
             self.prev_obj_vel = np.array([0.]*6, dtype=self.numpy_dtype)
             for _ in range(ceil(self.args.max_traj_history_len/self.args.step_divider)):
                 self.simstep(1/240)
+                self.blender_record()
+
                 obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
                 obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
                 # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]
@@ -478,6 +489,8 @@ class RoboSensaiBullet:
                     self.unquried_scene_name.remove(self.selected_qr_scene_name)
                     if len(self.unquried_scene_name) == 0: self.update_unquery_scenes()
             
+            self.blender_register(self.selected_qr_scene_id, self.selected_qr_scene_name)
+            
         # We need object description (index), bbox, reward (later)
         # Choose query object placement order
         if self.obj_done:
@@ -488,6 +501,8 @@ class RoboSensaiBullet:
             self.selected_obj_bbox = self.obj_name_data[self.selected_obj_name]["bbox"]
             pu.set_mass(self.selected_obj_id, self.obj_name_data[self.selected_obj_name]["mass"], client_id=self.client_id)
             self.info['pc_change_indicator'] = 1.
+
+            self.blender_register(self.selected_obj_id, self.selected_obj_name)
 
         # Compute query region area based on the selected object and scene
         if self.selected_qr_scene_region == "on":
@@ -581,6 +596,11 @@ class RoboSensaiBullet:
                 self.info['success'] = 1.
             else:
                 self.info['success'] = 0.
+
+            # Must deepcopy the recorder since it will be reset before the info gets returned (stablebaseline3 will reset the environment after done is True)
+            if self.args.blender_record:
+                self.info['blender_recorder'] = deepcopy(self.pybullet_recorder) 
+        
         return done
         
 
@@ -651,6 +671,20 @@ class RoboSensaiBullet:
     ######### Utils FUnctions ############
     ######################################
 
+    def blender_record(self):
+        if self.args.blender_record:
+            self.pybullet_recorder.add_keyframe()
+    
+
+    def blender_register(self, obj_id, body_name=None):
+        if self.args.blender_record: self.pybullet_recorder.register_object(obj_id, body_name=body_name)
+
+    
+    def blender_save(self, save_path=None):
+        save_path = save_path if save_path is not None else self.args.blender_record_path
+        if self.args.blender_record: self.pybullet_recorder.save(save_path)
+
+    
     def step_manual(self):
         with keyboard.Events() as events:
             while True:

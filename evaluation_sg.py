@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='Union_01-17_15:03_Transformer_FT_Tanh_Rand_ObjPool_ObjPlace_QRRegion_Goal_maxObjNum5_maxPool200_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq10') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_01-19_14:43_Transformer_Tanh_Rand_ObjPlace_QRRegion_Goal_maxObjNum5_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq10') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -92,6 +92,7 @@ def get_args():
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--critic_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
+    parser.add_argument('--blender_record', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
 
     eval_args = parser.parse_args()
@@ -217,7 +218,7 @@ if __name__ == "__main__":
         episode_timesteps = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
         episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
-        success_scene_cfg = []
+        scene_cfg_dict = {}; blender_recorder_lst = []
 
         if agent is not None:
             with torch.no_grad():
@@ -240,7 +241,6 @@ if __name__ == "__main__":
             else:
                 with torch.no_grad():
                     action, probs = agent.select_action([seq_obs, scene_ft_obs, obj_ft_obs])
-                    print(f"Mean and Std: {probs.mean}, {probs.stddev}")
                     
                     if eval_args.critic_visualize and envs.env_method('get_env_attr', "info")[0]['stepping']==1:
                         act_sig_grid_tensor = create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[5]*6).to(device)
@@ -263,7 +263,7 @@ if __name__ == "__main__":
             terminal_nums = terminal_index.sum().item()
             # Compute the average episode rewards.
             if terminal_nums > 0:
-                num_episodes += terminal_nums
+                
                 terminal_ids = terminal_index.nonzero().flatten()
 
                 update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
@@ -272,8 +272,18 @@ if __name__ == "__main__":
                 steps_buf = torch.Tensor(combine_envs_float_info2list(infos, 'his_steps', terminal_ids)).to(device)
                 update_tensor_buffer(episode_timesteps, steps_buf)
                 success_ids = terminal_ids[success_buf.to(torch.bool)]
-                success_scene_cfg.extend(combine_envs_float_info2list(infos, 'placed_obj_poses', success_ids))
+                scene_cfg = combine_envs_float_info2list(infos, 'placed_obj_poses', terminal_ids)
+                [scene_cfg_dict.update({num_episodes + i: scene_cfg[i]}) for i in range(terminal_nums)]
+                
+                if eval_args.blender_record:
+                    blender_recorders_lst = combine_envs_float_info2list(infos, 'blender_recorder', terminal_ids)
+                    for i, blender_recorder in enumerate(blender_recorders_lst):
+                        index_sufix = f"{num_episodes + i}"
+                        success_sufix = 'success' if success_buf[i].item() else 'failure'
+                        blender_recorder.save(os.path.join(eval_args.trajectory_dir, 
+                                            f"{max_num_placing_objs}Objs_{index_sufix}eps_{success_sufix}.pkl"))
 
+                num_episodes += terminal_nums
                 print_info = f"Episodes: {num_episodes}" + f" / Total Success: {episode_success_box.sum().item()}" 
                 if eval_args.num_envs == 1:
                     print_info += f" / Episode reward: {episode_rewards.item()}"
@@ -296,8 +306,8 @@ if __name__ == "__main__":
                         "success_rate": success_rate,
                         "unstable_steps": unstable_steps,
                         "avg_reward": episode_reward,
-                        "machine_time": machine_time,
-                        "success_scene_cfg": success_scene_cfg}
+                        "machine_time": machine_time
+                        }
             write_csv_line(eval_args.result_file_path, csv_result)
 
             # Save success rate and placed objects number
@@ -305,8 +315,9 @@ if __name__ == "__main__":
                 "episode": num_episodes,
                 "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
                 "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                "scene_cfg": scene_cfg_dict,
             }
-            save_json(meta_data, os.path.join(eval_args.trajectory_dir, "meta_data.json"))
+            save_json(meta_data, os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_meta_data.json"))
 
     print('Process Over')
     envs.close()

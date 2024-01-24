@@ -182,17 +182,17 @@ tippe_top = """
 
 
 # URDF to PointsCloud
-# import pybullet_utils as pu
-# import open3d as o3d
-# client_id = p.connect(p.GUI)
-# p.setAdditionalSearchPath(pybullet_data.getDataPath())
-# p.loadURDF("plane.urdf")
-# p.setGravity(0, 0, -9.8)
-# obj_id = p.loadURDF("assets/union_objects_test/AlarmClock/1/mobility.urdf", basePosition=[0, 0, 0.], useFixedBase=True, globalScaling=1.)
+import pybullet_utils as pu
+import open3d as o3d
+client_id = p.connect(p.GUI)
+p.setAdditionalSearchPath(pybullet_data.getDataPath())
+p.loadURDF("plane.urdf")
+p.setGravity(0, 0, -9.8)
+obj_id = p.loadURDF("assets/union_objects_test/Eyeglasses/0/mobility.urdf", basePosition=[0, 0, 10.], useFixedBase=True, globalScaling=0.2)
 
-# world2baselink = pu.get_link_pose(obj_id, -1)
-# num_links = pu.get_num_links(obj_id)
-# whole_pc = []
+world2baselink = pu.get_link_pose(obj_id, -1)
+num_links = pu.get_num_links(obj_id)
+whole_pc = []
 
 # for link_id in range(-1, num_links):
 #     link_pc_world = pu.get_link_pc_from_id(obj_id, link_id, min_num_points=1024, use_worldpos=False, client_id=client_id)
@@ -200,16 +200,16 @@ tippe_top = """
 
 # whole_pc = np.array(whole_pc)
 # print(whole_pc.shape)
-# whole_pc = pu.get_obj_pc_from_id(obj_id, num_points=20000, use_worldpos=False, client_id=client_id)
-# print(whole_pc.shape)
-# o3d_pc = o3d.geometry.PointCloud()
-# o3d_pc.points = o3d.utility.Vector3dVector(whole_pc)
-# bbox = o3d_pc.get_axis_aligned_bounding_box()
-# bbox.color = np.array([0, 0, 0.])
-# print(bbox.get_center(), bbox.get_half_extent())
-# coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-# # coord_frame2 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=world2link[0])
-# o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
+whole_pc = pu.get_obj_pc_from_id(obj_id, num_points=50000, use_worldpos=True, client_id=client_id)
+print(whole_pc.shape)
+o3d_pc = o3d.geometry.PointCloud()
+o3d_pc.points = o3d.utility.Vector3dVector(whole_pc)
+bbox = o3d_pc.get_axis_aligned_bounding_box()
+bbox.color = np.array([0, 0, 0.])
+print(bbox.get_center(), bbox.get_half_extent())
+coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+# coord_frame2 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=world2link[0])
+o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox])
 
 
 
@@ -309,8 +309,41 @@ tippe_top = """
 # aa = read_json("assets/union_objects/Scissors/7/label.json")
 
 
-import psutil
-import os
+# import psutil
+# import os
 
-process = psutil.Process(477850)
-print(f"Memory Usage: {process.memory_info().rss / 1024 ** 2} MB")  # RSS memory in MB
+# process = psutil.Process(477850)
+# print(f"Memory Usage: {process.memory_info().rss / 1024 ** 2} MB")  # RSS memory in MB
+
+
+# import pybullet_utils as pu
+# import open3d as o3d
+
+# client_id = p.connect(p.GUI)
+# p.setAdditionalSearchPath(pybullet_data.getDataPath())
+# p.loadURDF("plane.urdf")
+# p.setGravity(0, 0, -9.8)
+
+# dataset_folder = "assets/union_objects_test"
+# cate = "AlarmClock"
+# idx = "1"
+# obj_label_path = f"{dataset_folder}/{cate}/{idx}/label.json"
+# obj_label = read_json(obj_label_path)
+# obj_id = p.loadURDF(f"{dataset_folder}/{cate}/{idx}/mobility.urdf", basePosition=[0, 0, 0.], useFixedBase=False, globalScaling=obj_label["globalScaling"])
+
+
+# world2baselink = pu.get_link_pose(obj_id, -1)
+# num_links = pu.get_num_links(obj_id)
+# whole_pc = []
+
+
+from Blender_script.PybulletRecorder import PyBulletRecorder
+pb_recorder = PyBulletRecorder(client_id=client_id)
+pb_recorder.register_object(obj_id)
+
+for i in range(1):
+    p.stepSimulation()
+    pb_recorder.add_keyframe()
+    time.sleep(1./240.)
+
+# pb_recorder.save("test.pkl")
