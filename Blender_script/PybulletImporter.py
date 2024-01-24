@@ -160,7 +160,7 @@ def set_blender_engine(render_engine='BLENDER_EEVEE'):
     if render_engine == 'CYCLES':
         engine_key = render_engine.lower()
         # Set the device_type
-        bpy.context.preferences.addons[engine_key].preferences.compute_device_type = "CUDA"
+        bpy.context.preferences.addons[engine_key].preferences.compute_device_type = "OPTIX"  # "CUDA" or "OPTIX" for NVIDIA RTX cards
         bpy.context.preferences.addons[engine_key].preferences.memory_cache_limit = 10240
         # Set the device and feature set
         bpy.context.scene.cycles.device = "GPU"
