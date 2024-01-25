@@ -240,10 +240,13 @@ class RoboSensaiBullet:
         # 1 is the env number to align with the isaacgym env
         # We have two kinds of observation: seq_obs [qr_region, prev_action, obj_sim_history]; pc_obs [scene_pc, obj_pc]
         self.qr_region_dim = 10; self.action_dim = 6; self.traj_hist_dim = self.args.max_traj_history_len*(6+7)
-        self.history_ft_dim = 512; self.qr_region_ft_dim = 256; self.action_ft_dim = 256
-        self.scene_ft_dim = 1024; self.obj_ft_dim = 1024; self.seq_info_ft_dim = 2048
         self.raw_act_hist_qr_obs_shape = (1, self.args.sequence_len, self.qr_region_dim + self.action_dim + self.traj_hist_dim)
+
+        self.history_ft_dim = self.traj_hist_dim if not self.args.use_traj_encoder else 512; 
+        self.qr_region_ft_dim = self.qr_region_dim; self.action_ft_dim = self.action_dim
         self.post_act_hist_qr_ft_shape = (1, self.args.sequence_len, self.qr_region_ft_dim + self.action_ft_dim + self.history_ft_dim)
+        
+        self.scene_ft_dim = 1024; self.obj_ft_dim = 1024; self.seq_info_ft_dim = 2048
         self.post_observation_shape = (1, self.seq_info_ft_dim + self.scene_ft_dim + self.obj_ft_dim)
         
         # Action space: [x, y, z, roll, pitch, yaw]
@@ -271,12 +274,13 @@ class RoboSensaiBullet:
         self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
         self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
+        self.args.use_traj_encoder = self.args.use_traj_encoder if hasattr(self.args, "use_traj_encoder") else False
         self.args.blender_record = self.args.blender_record if hasattr(self.args, "blender_record") else False
         # Buffer does not need to be reset
         self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 
                      'obj_success_rate': {}, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
         self.num_episode = 0
-        self.default_qr_region_z = 0.5
+        self.default_qr_region_z = 0.3
 
     
     def reset_env(self):

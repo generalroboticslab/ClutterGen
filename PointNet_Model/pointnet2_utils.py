@@ -32,11 +32,20 @@ def square_distance(src, dst):
     Output:
         dist: per-point square distance, [B, N, M]
     """
-    B, N, _ = src.shape
-    _, M, _ = dst.shape
-    dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
-    dist += torch.sum(src ** 2, -1).view(B, N, 1)
-    dist += torch.sum(dst ** 2, -1).view(B, 1, M)
+    # B, N, _ = src.shape
+    # _, M, _ = dst.shape
+    # dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
+    # dist += torch.sum(src ** 2, -1).view(B, N, 1)
+    # dist += torch.sum(dst ** 2, -1).view(B, 1, M)
+
+    B, N, C = src.shape
+    B, M, C = dst.shape
+    # dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
+    # dist += torch.sum(src ** 2, -1).view(B, N, 1)
+    # dist += torch.sum(dst ** 2, -1).view(B, 1, M)
+    diff = src.unsqueeze(2).expand(B, N, M, C) - dst.unsqueeze(1).expand(B, N, M, C)
+    dist = torch.sum(diff ** 2, -1)
+
     return dist
 
 
@@ -73,6 +82,7 @@ def farthest_point_sample(xyz, npoint):
     centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
     distance = torch.ones(B, N).to(device) * 1e10
     farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
+    # farthest = torch.zeros((B,), dtype=torch.long).to(device)
     batch_indices = torch.arange(B, dtype=torch.long).to(device)
     for i in range(npoint):
         centroids[:, i] = farthest

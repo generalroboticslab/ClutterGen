@@ -75,6 +75,7 @@ def parse_args():
     parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
     parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_traj_encoder", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout per object")

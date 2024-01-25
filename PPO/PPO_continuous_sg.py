@@ -133,38 +133,28 @@ class Agent(nn.Module):
         self.envs = envs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_transformer = envs.args.use_transformer
-        self.num_traj_hist_tf = 3; self.num_traj_hist_linear = 2
-        self.num_linear_layers = envs.args.num_linear_layers if hasattr(envs.args, 'num_linear_layers') else 2
-        self.num_transf_layers = envs.args.num_transf_layers if hasattr(envs.args, 'num_transf_layers') else 3
         self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
         self.deterministic = envs.args.deterministic
         self.hidden_size = envs.args.hidden_size
         self.action_logits_num = envs.action_shape[1] # 2 for mean and std
+
+        # Layer Number
+        self.traj_hist_encoder_num_linear = 2; self.traj_hist_encoder_num_transf = 2
+        self.seq_obs_encoder_num_linear = 2; self.seq_obs_encoder_num_transf = 2
+        self.critic_num_linear = 5; self.actor_num_linear = 5
         
         # PointNet
         self.pc_batchsize = envs.args.pc_batchsize
         self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
         self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
 
-        self.act_encoder = nn.Sequential(
-            layer_init(nn.Linear(envs.action_dim, envs.action_ft_dim)),
-            self.activation,
-            layer_init(nn.Linear(envs.action_ft_dim, envs.action_ft_dim)),
-        ).to(self.device)
-
-        self.qr_region_encoder = nn.Sequential(
-            layer_init(nn.Linear(envs.qr_region_dim, envs.qr_region_ft_dim)),
-            self.activation,
-            layer_init(nn.Linear(envs.qr_region_ft_dim, envs.qr_region_ft_dim))
-        ).to(self.device)
-
         # Trajectory history encoder and Large sequence observation encoder
         if self.use_transformer:
             self.traj_hist_encoder = Transfromer_Linear(
                 input_size=envs.traj_history_shape[1], 
                 hidden_size=self.hidden_size, 
-                num_transf_layers=self.num_traj_hist_tf,
-                num_linear_layers=self.num_traj_hist_linear, 
+                num_transf_layers=self.traj_hist_encoder_num_transf,
+                num_linear_layers=self.traj_hist_encoder_num_linear, 
                 output_size=envs.history_ft_dim, 
                 batch_first=True, 
                 init_std=1.0
@@ -172,8 +162,8 @@ class Agent(nn.Module):
             self.seq_obs_encoder = Transfromer_Linear(
                 input_size=envs.post_act_hist_qr_ft_shape[2], 
                 hidden_size=self.hidden_size, 
-                num_transf_layers=self.num_transf_layers,
-                num_linear_layers=self.num_linear_layers, 
+                num_transf_layers=self.seq_obs_encoder_num_transf,
+                num_linear_layers=self.seq_obs_encoder_num_linear, 
                 output_size=envs.seq_info_ft_dim, 
                 batch_first=True, 
                 init_std=1.0
@@ -184,7 +174,7 @@ class Agent(nn.Module):
                 input_size=np.prod(envs.traj_history_shape), 
                 hidden_size=self.hidden_size, 
                 output_size=envs.history_ft_dim, 
-                num_layers=self.num_traj_hist_tf+self.num_traj_hist_linear, 
+                num_layers=self.traj_hist_encoder_num_linear, 
                 use_relu=envs.args.use_relu,
                 init_std=1.0, auto_flatten=True
             ).to(self.device)
@@ -192,7 +182,7 @@ class Agent(nn.Module):
                 input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
                 hidden_size=self.hidden_size, 
                 output_size=envs.seq_info_ft_dim, 
-                num_layers=self.num_linear_layers+self.num_transf_layers, 
+                num_layers=self.seq_obs_encoder_num_linear, 
                 use_relu=envs.args.use_relu,
                 init_std=1.0, auto_flatten=True
             ).to(self.device)
@@ -202,7 +192,7 @@ class Agent(nn.Module):
             input_size=envs.post_observation_shape[1],
             hidden_size=self.hidden_size,
             output_size=1,
-            num_layers=self.num_linear_layers,
+            num_layers=self.critic_num_linear,
             use_relu=envs.args.use_relu,
             init_std=1.0,
         ).to(self.device)
@@ -210,7 +200,7 @@ class Agent(nn.Module):
             input_size=envs.post_observation_shape[1],
             hidden_size=self.hidden_size,
             output_size=self.action_logits_num,
-            num_layers=self.num_linear_layers,
+            num_layers=self.actor_num_linear,
             use_relu=envs.args.use_relu,
             init_std=0.01,
         ).to(self.device)
@@ -222,16 +212,16 @@ class Agent(nn.Module):
 
     
     def seq_obs_ft_extract(self, seq_obs):
-        seq_obs = seq_obs.to(self.device) if seq_obs.device != self.device else seq_obs
-        qr_region_hist = seq_obs[:, :, self.envs.qr_region_slice]
-        act_hist = seq_obs[:, :, self.envs.action_slice]
-        traj_history = seq_obs[:, :, self.envs.traj_history_slice].view(-1, *self.envs.traj_history_shape)
-        qr_region_hist_ft = self.qr_region_encoder(qr_region_hist)
-        act_hist_ft = self.act_encoder(act_hist)
-        traj_hist_ft = self.traj_hist_encoder(traj_history)
-        traj_hist_ft = traj_hist_ft.view(*seq_obs.shape[:2], self.envs.history_ft_dim)
-        seq_obs_embedding = torch.cat([qr_region_hist_ft, act_hist_ft, traj_hist_ft], dim=-1)
-        seq_obs_ft = self.seq_obs_encoder(seq_obs_embedding)
+        if self.envs.args.use_traj_encoder:
+            qr_region_hist = seq_obs[:, :, self.envs.qr_region_slice]
+            act_hist = seq_obs[:, :, self.envs.action_slice]
+            traj_history = seq_obs[:, :, self.envs.traj_history_slice].view(-1, *self.envs.traj_history_shape)
+            traj_hist_ft = self.traj_hist_encoder(traj_history)
+            traj_hist_ft = traj_hist_ft.view(*seq_obs.shape[:2], self.envs.history_ft_dim)
+            seq_obs_embedding = torch.cat([qr_region_hist, act_hist, traj_hist_ft], dim=-1)
+            seq_obs_ft = self.seq_obs_encoder(seq_obs_embedding)
+        else:
+            seq_obs_ft = self.seq_obs_encoder(seq_obs)
         return seq_obs_ft
     
 
@@ -362,7 +352,6 @@ def convert_time(relative_time):
 
 
 if __name__ == "__main__":
-
     class TestModule(nn.Module):
         def __init__(self):
             super().__init__()
