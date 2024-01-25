@@ -363,18 +363,20 @@ with torch.no_grad():
     avg_time = 0
     for i in range(100):
       start_time = time.time()
-      pc_extractor(test_pc)
+      feature = pc_extractor(test_pc)
       avg_time += time.time() - start_time
+      print(f"Feature:", feature[0])
+      print(feature.shape)
     print(f"1 Batch PC 100 times Average time: {avg_time/100.}")
 
 
-test_pc = torch.rand((20, 3, 10240), device=device)
-with torch.no_grad():
-    print(f"Doing 20 batches PC")
-    avg_time = 0
-    for i in range(100):
-      start_time = time.time()
-      pc_extractor(test_pc)
-      avg_time += time.time() - start_time
-    print(f"20 Batches PC 100 times Average time: {avg_time/100.}")
+# test_pc = torch.rand((20, 3, 10240), device=device)
+# with torch.no_grad():
+#     print(f"Doing 20 batches PC")
+#     avg_time = 0
+#     for i in range(100):
+#       start_time = time.time()
+#       pc_extractor(test_pc)
+#       avg_time += time.time() - start_time
+#     print(f"20 Batches PC 100 times Average time: {avg_time/100.}")
 
