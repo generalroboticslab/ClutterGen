@@ -545,7 +545,7 @@ class RoboSensaiBullet:
             selected_obj_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
             self.placed_obj_poses[self.selected_obj_name] = selected_obj_pose
             # vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
-            vel_reward += max(100, self.args.reward_pobj * self.args.num_placing_objs) if len(self.placed_obj_poses) >= self.args.num_placing_objs \
+            vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
                 else self.args.reward_pobj
             # Update the scene observation | transform the selected object point cloud to world frame using the current pose
             scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
