@@ -246,7 +246,8 @@ class RoboSensaiBullet:
         self.qr_region_ft_dim = self.qr_region_dim; self.action_ft_dim = self.action_dim
         self.post_act_hist_qr_ft_shape = (1, self.args.sequence_len, self.qr_region_ft_dim + self.action_ft_dim + self.history_ft_dim)
         
-        self.scene_ft_dim = 1024; self.obj_ft_dim = 1024; self.seq_info_ft_dim = 2048
+        self.scene_ft_dim = 1024; self.obj_ft_dim = 1024
+        self.seq_info_ft_dim = 2048 if self.args.use_seq_obs_encoder else np.prod(self.post_act_hist_qr_ft_shape[1:])
         self.post_observation_shape = (1, self.seq_info_ft_dim + self.scene_ft_dim + self.obj_ft_dim)
         
         # Action space: [x, y, z, roll, pitch, yaw]
@@ -545,8 +546,9 @@ class RoboSensaiBullet:
             selected_obj_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
             self.placed_obj_poses[self.selected_obj_name] = selected_obj_pose
             # vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
-            vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
-                else self.args.reward_pobj
+            vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) \
+                          if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
+                          else self.args.reward_pobj
             # Update the scene observation | transform the selected object point cloud to world frame using the current pose
             scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
             scene_obj2_selected_obj_pose = p.multiplyTransforms(*p.invertTransform(*scene_obj_pose), selected_obj_pose[0], selected_obj_pose[1])

@@ -212,17 +212,23 @@ class Agent(nn.Module):
 
     
     def seq_obs_ft_extract(self, seq_obs):
+        """
+        Preprocess the sequence observation and extract the features
+        """
         if self.envs.args.use_traj_encoder:
             qr_region_hist = seq_obs[:, :, self.envs.qr_region_slice]
             act_hist = seq_obs[:, :, self.envs.action_slice]
             traj_history = seq_obs[:, :, self.envs.traj_history_slice].view(-1, *self.envs.traj_history_shape)
             traj_hist_ft = self.traj_hist_encoder(traj_history)
             traj_hist_ft = traj_hist_ft.view(*seq_obs.shape[:2], self.envs.history_ft_dim)
-            seq_obs_embedding = torch.cat([qr_region_hist, act_hist, traj_hist_ft], dim=-1)
-            seq_obs_ft = self.seq_obs_encoder(seq_obs_embedding)
+            seq_obs = torch.cat([qr_region_hist, act_hist, traj_hist_ft], dim=-1)
+        
+        if self.envs.args.use_seq_obs_encoder:
+            seq_obs = self.seq_obs_encoder(seq_obs)
         else:
-            seq_obs_ft = self.seq_obs_encoder(seq_obs)
-        return seq_obs_ft
+            # Flatten the sequence observation to (Env, Seq*Dim)
+            seq_obs = torch.flatten(seq_obs, start_dim=1)
+        return seq_obs
     
 
     def preprocess_pc_update_tensor(self, all_envs_scene_ft_tensor, all_envs_obj_ft_tensor, infos, use_mask=False):
