@@ -186,6 +186,7 @@ class Agent(nn.Module):
                 num_transf_layers=self.seq_obs_encoder_num_transf,
                 num_linear_layers=self.seq_obs_encoder_num_linear, 
                 output_size=envs.seq_info_ft_dim, 
+                nhead=8,
                 batch_first=True, 
                 init_std=1.0
             ).to(self.device)
@@ -320,7 +321,9 @@ class Agent(nn.Module):
         if ckpt_path is None:
             ckpt_path = "{}/{}_{}".format(folder_path, folder_name, suffix)
         print('Saving models to {}'.format(ckpt_path))
-        torch.save(self.state_dict(), ckpt_path)
+        # Don't save the pc_extractor; we have weights offline
+        filtered_state_dict = {k: v for k, v in self.state_dict().items() if 'pc_extractor' not in k}
+        torch.save(filtered_state_dict, ckpt_path)
 
 
     # Load model parameters
@@ -328,7 +331,7 @@ class Agent(nn.Module):
         print('Loading models from {}'.format(ckpt_path))
         if ckpt_path is not None:
             checkpoint = torch.load(ckpt_path, map_location=map_location)
-            self.load_state_dict(checkpoint)
+            self.load_state_dict(checkpoint, strict=False)
 
             if evaluate: self.set_mode('eval')
             else: self.set_mode('train')

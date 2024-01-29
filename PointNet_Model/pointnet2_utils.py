@@ -40,9 +40,6 @@ def square_distance(src, dst):
 
     B, N, C = src.shape
     B, M, C = dst.shape
-    # dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
-    # dist += torch.sum(src ** 2, -1).view(B, N, 1)
-    # dist += torch.sum(dst ** 2, -1).view(B, 1, M)
     diff = src.unsqueeze(2).expand(B, N, M, C) - dst.unsqueeze(1).expand(B, N, M, C)
     dist = torch.sum(diff ** 2, -1)
 
