@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--max_num_urdf_points', type=int, default=2048)
     parser.add_argument('--max_num_scene_points', type=int, default=10240)
@@ -74,12 +74,13 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
-    parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_tf_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_tf_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--pc_batchsize", type=int, default=None, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--use_relu", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use Relu or tanh.")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
@@ -116,7 +117,8 @@ def parse_args():
     args = parser.parse_args()
 
     # Training required attributes
-    args.num_steps = args.num_steps * args.max_num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
+    assert args.num_steps > args.max_num_placing_objs * args.max_trials * 5, \
+        f"num_steps now {args.num_steps} should be 5 times larger than agent traj length {args.max_num_placing_objs * args.max_trials * 5} to avoid overfitting"
     args.batch_size = int(args.num_envs * args.num_steps)
     args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
     args.pc_batchsize = args.pc_batchsize if args.pc_batchsize is not None else args.num_envs
@@ -132,10 +134,11 @@ def parse_args():
     # Uniformalize training name
     additional = ''
     ###--- suffix for final name ---###
-    if args.use_lstm: additional += '_LSTM'
-    elif args.use_transformer: additional += '_Transformer'
-    else: additional += '_FC'
-    if args.checkpoint is not None: additional += '_FT'
+    if args.use_traj_encoder: 
+        additional += '_TrajEncoderTF' if args.use_tf_traj_encoder else '_TrajEncoderFC'
+    if args.use_seq_obs_encoder:
+        additional += '_SeqObsEncoderTF' if args.use_tf_seq_obs_encoder else '_SeqObsEncoderFC'
+    if args.checkpoint is not None: additional += '_FineTune'
     if args.use_relu: additional += '_Relu'
     else: additional += '_Tanh'
     additional += '_Rand'
@@ -156,6 +159,7 @@ def parse_args():
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
     if args.penalty > 0: additional += f'_ori{args.penalty}'
     additional += f'_seq{args.sequence_len}'
+    additional += f'_step{args.num_steps}'
 
     args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
 

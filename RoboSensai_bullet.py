@@ -205,6 +205,9 @@ class RoboSensaiBullet:
         num_queriable_scenes = len(self.queriable_obj_names) + len(self.fixed_scene_name_data.keys()) if not self.args.fixed_scene_only else len(self.fixed_scene_name_data.keys())
         assert num_queriable_scenes >= self.args.max_num_qr_scenes, f"Only {num_queriable_scenes} scenes are loaded, but we need {self.args.max_num_qr_scenes} scenes!"
         assert len(self.obj_name_data) >= self.args.max_num_placing_objs, f"Only {len(self.obj_name_data)} objects are loaded, but we need {self.args.max_num_placing_objs} objects!"
+        
+        verbose_info = f"Loaded {len(self.obj_name_data)} objects from {self.args.object_pool_folder} | {self.args.max_num_placing_objs} objects will be placed."
+        print("*"*len(verbose_info)); print(verbose_info); print("*"*len(verbose_info))
 
     
     def load_world(self):
@@ -397,6 +400,7 @@ class RoboSensaiBullet:
             pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
             self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
             self.accm_vel_reward = 0.
+            self.prev_obj_vel = np.array([0.]*6, dtype=self.numpy_dtype)
             self.his_steps = 0
             self.continue_stable_steps = 0
             self.info['stepping'] = 0.
@@ -404,16 +408,16 @@ class RoboSensaiBullet:
             self.info['pc_change_indicator'] = 0.
         
         # stepping == 0 means previous action is still running, we need to wait until the object is stable
+        # TODO: Stable check is not only based on the placed object, but the maximum vel in the whole scene!!
         # In-pysical step
         if self.info['stepping'] == 0.:
-            self.prev_obj_vel = np.array([0.]*6, dtype=self.numpy_dtype)
             for _ in range(ceil(self.args.max_traj_history_len/self.args.step_divider)):
                 self.simstep(1/240)
                 self.blender_record()
 
                 obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
                 obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
-                # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]
+                # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]; Left Shift
                 self.traj_history.pop(0)
                 self.traj_history.append(obj_pos + obj_quat + obj_vel.tolist())
                 # Accumulate velocity reward
@@ -526,6 +530,7 @@ class RoboSensaiBullet:
         # Update the sequence observation | pop the first observation and append the last observation
         his_traj = self.to_numpy(self.traj_history).flatten()
         cur_seq_obs = np.concatenate([self.selected_qr_region, self.last_raw_action, his_traj])
+        # Left shift the sequence observation
         self.last_seq_obs = np.concatenate([self.last_seq_obs[1:, :], np.expand_dims(cur_seq_obs, axis=0)])
         
         return self.last_seq_obs

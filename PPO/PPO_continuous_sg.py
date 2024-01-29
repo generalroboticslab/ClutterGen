@@ -82,11 +82,20 @@ class PositionalEncoding(nn.Module):
 
 
 class Transfromer_Linear(nn.Module):
-    def __init__(self, input_size, hidden_size, num_transf_layers, num_linear_layers, output_size, batch_first=True, init_std=0.01) -> None:
+    def __init__(self, input_size, hidden_size, num_transf_layers, num_linear_layers, output_size, nhead=1, batch_first=True, init_std=0.01) -> None:
         super().__init__()
         self.positional_encoding = PositionalEncoding(input_size, batch_first=batch_first)
-        transformer_layer = nn.TransformerEncoderLayer(d_model=input_size, nhead=1, dim_feedforward=hidden_size, batch_first=batch_first)
-        self.transformer = nn.TransformerEncoder(transformer_layer, num_layers=num_transf_layers, norm=nn.LayerNorm(input_size))
+        transformer_layer = nn.TransformerEncoderLayer(
+            d_model=input_size, 
+            nhead=nhead, 
+            dim_feedforward=hidden_size, 
+            batch_first=batch_first
+        )
+        self.transformer = nn.TransformerEncoder(
+            transformer_layer, 
+            num_layers=num_transf_layers, 
+            norm=nn.LayerNorm(input_size)
+        )
         self.linear = MLP(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -104,10 +113,12 @@ class Transfromer_Linear(nn.Module):
     
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=False, init_std=1., auto_flatten=False):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=False, init_std=1., auto_flatten=False, flatten_start_dim=1):
         super().__init__()
         self.activation = nn.ReLU() if use_relu else nn.Tanh()
-        self.mlp = nn.Sequential() if not auto_flatten else nn.Sequential(AutoFlatten())
+        self.mlp = nn.Sequential() \
+                   if not auto_flatten \
+                   else nn.Sequential(AutoFlatten(start_dim=flatten_start_dim))
         for i in range(num_layers-1):
             input_shape = input_size if i==0 else hidden_size
             self.mlp.append(layer_init(nn.Linear(input_shape, hidden_size)))
@@ -132,7 +143,6 @@ class Agent(nn.Module):
         super().__init__()
         self.envs = envs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.use_transformer = envs.args.use_transformer
         self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
         self.deterministic = envs.args.deterministic
         self.hidden_size = envs.args.hidden_size
@@ -149,7 +159,7 @@ class Agent(nn.Module):
         self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
 
         # Trajectory history encoder and Large sequence observation encoder
-        if self.use_transformer:
+        if envs.args.use_tf_traj_encoder:
             self.traj_hist_encoder = Transfromer_Linear(
                 input_size=envs.traj_history_shape[1], 
                 hidden_size=self.hidden_size, 
@@ -159,16 +169,6 @@ class Agent(nn.Module):
                 batch_first=True, 
                 init_std=1.0
             ).to(self.device)
-            self.seq_obs_encoder = Transfromer_Linear(
-                input_size=envs.post_act_hist_qr_ft_shape[2], 
-                hidden_size=self.hidden_size, 
-                num_transf_layers=self.seq_obs_encoder_num_transf,
-                num_linear_layers=self.seq_obs_encoder_num_linear, 
-                output_size=envs.seq_info_ft_dim, 
-                batch_first=True, 
-                init_std=1.0
-            ).to(self.device)
-            
         else:
             self.traj_hist_encoder = MLP(
                 input_size=np.prod(envs.traj_history_shape), 
@@ -178,6 +178,18 @@ class Agent(nn.Module):
                 use_relu=envs.args.use_relu,
                 init_std=1.0, auto_flatten=True
             ).to(self.device)
+        
+        if envs.args.use_tf_seq_obs_encoder:
+            self.seq_obs_encoder = Transfromer_Linear(
+                input_size=envs.post_act_hist_qr_ft_shape[2], 
+                hidden_size=self.hidden_size, 
+                num_transf_layers=self.seq_obs_encoder_num_transf,
+                num_linear_layers=self.seq_obs_encoder_num_linear, 
+                output_size=envs.seq_info_ft_dim, 
+                batch_first=True, 
+                init_std=1.0
+            ).to(self.device)
+        else:
             self.seq_obs_encoder = MLP(
                 input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
                 hidden_size=self.hidden_size, 
@@ -214,6 +226,8 @@ class Agent(nn.Module):
     def seq_obs_ft_extract(self, seq_obs):
         """
         Preprocess the sequence observation and extract the features
+        input seq_obs: (Env, Seq, Dim1)
+        output seq_obs_ft: (Env, Dim2)
         """
         if self.envs.args.use_traj_encoder:
             qr_region_hist = seq_obs[:, :, self.envs.qr_region_slice]
@@ -226,7 +240,7 @@ class Agent(nn.Module):
         if self.envs.args.use_seq_obs_encoder:
             seq_obs = self.seq_obs_encoder(seq_obs)
         else:
-            # Flatten the sequence observation to (Env, Seq*Dim)
+            # Flatten the sequence observation from (Env, Seq, Dim) to (Env, Seq*Dim)
             seq_obs = torch.flatten(seq_obs, start_dim=1)
         return seq_obs
     
