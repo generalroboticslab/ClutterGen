@@ -78,6 +78,7 @@ def parse_args():
     parser.add_argument("--use_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_tf_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_tf_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_pc_extractor", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout per object")
@@ -138,6 +139,8 @@ def parse_args():
         additional += '_TrajEncoderTF' if args.use_tf_traj_encoder else '_TrajEncoderFC'
     if args.use_seq_obs_encoder:
         additional += '_SeqObsEncoderTF' if args.use_tf_seq_obs_encoder else '_SeqObsEncoderFC'
+    if args.use_pc_extractor: 
+        additional += '_PCExtractor'
     if args.checkpoint is not None: additional += '_FineTune'
     if args.use_relu: additional += '_Relu'
     else: additional += '_Tanh'
@@ -293,6 +296,8 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
 
     # TRY NOT TO MODIFY: start the game
+    update_iter = 0
+    reward_update_iters = 0
     global_step = 0
     start_time = time.time()
     next_seq_obs = torch.Tensor(envs.reset()).to(device)
@@ -304,8 +309,8 @@ if __name__ == "__main__":
     num_updates = args.total_timesteps // args.batch_size  # ?? same as episodes? No!! episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
     # Asynchronous requirements Flagss
     env_step_idx = torch.zeros(args.num_envs, dtype=torch.long).to(device)
-    next_step_env_idx = torch.ones(args.num_envs).to(device) # All environments need agent actions
-    step_env_id = next_step_env_idx.nonzero().squeeze(dim=-1)
+    env_stage_idx = torch.zeros(args.num_envs).to(device) # All environments need agent actions
+    step_env_id = (env_stage_idx==0).nonzero().squeeze(dim=-1)
 
     # wandb
     config = dict(
@@ -361,13 +366,21 @@ if __name__ == "__main__":
         actions_buf.zero_(); logprobs_buf.zero_(); rewards_buf.zero_(); dones_buf.zero_(); values_buf.zero_(); 
         next_seq_obs_buf.zero_(); next_scene_ft_obs_buf.zero_(); next_obj_ft_obs_buf.zero_(); next_done_buf.zero_();
         
+        process_time_sum = 0.
+        agent_step_time_sum = 0.
+        env_step_time_sum = 0.
+        pc_process_time_sum = 0.
+        post_process_time_sum = 0.
+
         completed_seq_num = 0
+        # Fake action to activate the environment
+        step_action = torch.zeros((args.num_envs, temp_env.action_shape[1]), device=device)
         while completed_seq_num < args.num_envs:
-            # Fake action to activate the environment
-            step_action = torch.zeros((args.num_envs, temp_env.action_shape[1]), device=device)
+            process_start_time = time.time()
             
             if len(step_env_id) > 0:
-                global_step += next_step_env_idx.sum()
+                agent_step_start_time = time.time()
+                global_step += len(step_env_id)
                 step_env_steps = env_step_idx[step_env_id]
                 seq_obs_asy[step_env_steps, step_env_id] = next_seq_obs[step_env_id]
                 scene_ft_obs_asy[step_env_steps, step_env_id] = next_scene_ft_obs[step_env_id]
@@ -386,13 +399,27 @@ if __name__ == "__main__":
                         values_asy[step_env_steps, step_env_id] = sub_value.flatten()
                     actions_asy[step_env_steps, step_env_id] = sub_step_action.to(tensor_dtype)
                     logprobs_asy[step_env_steps, step_env_id] = sub_logprob
+                agent_step_time_usage = time.time() - agent_step_start_time
 
             # TRY NOT TO MODIFY: execute the game and log data.
+            env_step_start_time = time.time()
             next_seq_obs, reward, done, infos = envs.step(step_action)
-            agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
+            env_step_time_usage = time.time() - env_step_start_time
+            
+            env_stage_idx = torch.Tensor(combine_envs_float_info2list(infos, 'stage')).to(device)
+            step_env_id = (env_stage_idx==0).nonzero().squeeze(dim=-1)
+
+            pc_process_start_time = time.time()
+            # All environments are waiting for placing next objects; We process the point cloud together here
+            if (env_stage_idx==2).all():
+                envs.env_method("set_env_attr", "allow_step", True)
+                next_seq_obs, reward, done, infos = envs.step(step_action)
+                step_env_id = torch.arange(args.num_envs).to(device)
+                agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
+            pc_process_time_usage = time.time() - pc_process_start_time
+
+            post_process_start_time = time.time()
             # Update step environment index
-            next_step_env_idx = torch.Tensor(combine_envs_float_info2list(infos, 'stepping')).to(device)
-            step_env_id = next_step_env_idx.nonzero().squeeze(dim=-1)
 
             if len(step_env_id) > 0:
                 # Transfer to tensor
@@ -464,22 +491,29 @@ if __name__ == "__main__":
                     
                     if args.collect_data:
                         if args.wandb:
-                            wandb.log({'episodes': i_episode, 'reward/reward_train': episode_reward, 
-                                       'reward/reward_pos': episode_pos_r, 'reward/penalty_act': episode_act_p})
+                            wandb.log({'episodes': i_episode, 
+                                       'iterations': update_iter,
+                                       'reward/reward_train': episode_reward, 
+                                       'reward/reward_pos': episode_pos_r, 
+                                       'reward/penalty_act': episode_act_p})
 
                             if i_episode >= args.reward_steps:  # episode success rate
+                                if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
                                 wandb.log({'s_episodes': i_episode - args.reward_steps, 
+                                           'iterations': update_iter - reward_update_iters,
                                            'reward/success_rate': episode_success_rate, 
                                            'reward/num_placed_objs': episode_placed_objs})
 
                         if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
                             best_acc = episode_success_rate;
                             agent.save_checkpoint(folder_path=args.checkpoint_dir,
-                                                    folder_name=args.final_name, suffix='best')
+                                                  folder_name=args.final_name, 
+                                                  suffix='best')
                             print(f's_episodes: {i_episode - args.reward_steps} | Now best accuracy is {best_acc * 100:.3f}% | Number of placed objects is {episode_placed_objs:.2f}')
                         if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
-                            agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
-                                                    suffix=str(i_episode))
+                            agent.save_checkpoint(folder_path=args.checkpoint_dir, 
+                                                  folder_name=args.final_name,
+                                                  suffix=str(i_episode))
                             mile_stone = i_episode
                             
                         # Save success rate and placed objects number
@@ -489,6 +523,16 @@ if __name__ == "__main__":
                             "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
                         }
                         save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
+            post_process_time_usage = time.time() - post_process_start_time
+            process_time_usage_all = time.time() - process_start_time
+
+            process_time_sum += process_time_usage_all
+            agent_step_time_sum += agent_step_time_usage
+            env_step_time_sum += env_step_time_usage
+            pc_process_time_sum += pc_process_time_usage
+            post_process_time_sum += post_process_time_usage
+        
+        print(f"All time usage: {process_time_sum} \n Agent Step: {agent_step_time_sum} \n Env Step: {env_step_time_sum} \n PC Process: {pc_process_time_sum} \n Post Process: {post_process_time_sum}")
 
 
 
@@ -600,6 +644,8 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
+                update_iter += 1
+
 
         # To float32 is because it does support for bfloat16 to numpy
         y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()
@@ -607,7 +653,8 @@ if __name__ == "__main__":
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         if args.collect_data and args.wandb:
-            wandb.log({'steps': global_step, 
+            wandb.log({'iterations': update_iter,
+                       'steps': global_step, 
                        'train/learning_rate': optimizer.param_groups[0]["lr"],
                        'train/critic_loss': v_loss.item(),
                        'train/policy_loss': pg_loss.item(),
