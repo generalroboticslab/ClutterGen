@@ -405,18 +405,14 @@ if __name__ == "__main__":
             env_step_start_time = time.time()
             next_seq_obs, reward, done, infos = envs.step(step_action)
             env_step_time_usage = time.time() - env_step_start_time
-            
-            env_stage_idx = torch.Tensor(combine_envs_float_info2list(infos, 'stage')).to(device)
-            step_env_id = (env_stage_idx==0).nonzero().squeeze(dim=-1)
 
             pc_process_start_time = time.time()
             # All environments are waiting for placing next objects; We process the point cloud together here
-            if (env_stage_idx==2).all():
-                envs.env_method("set_env_attr", "allow_step", True)
-                next_seq_obs, reward, done, infos = envs.step(step_action)
-                step_env_id = torch.arange(args.num_envs).to(device)
-                agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
+            agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
             pc_process_time_usage = time.time() - pc_process_start_time
+            
+            env_stage_idx = torch.Tensor(combine_envs_float_info2list(infos, 'stage')).to(device)
+            step_env_id = (env_stage_idx==0).nonzero().squeeze(dim=-1)
 
             post_process_start_time = time.time()
             # Update step environment index
