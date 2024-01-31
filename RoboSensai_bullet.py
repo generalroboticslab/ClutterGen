@@ -445,6 +445,19 @@ class RoboSensaiBullet:
         # Post-physical step
         reward = self.compute_reward() if self.info["stage"]==0. else 0. # Must compute reward before observation since the velocity will be reset in the observaion. Only stage environment will be recorded
         done = self.compute_done() if self.info["stage"]==0. else False
+
+        # Stage 2 means the object is placed and the environment is ready for the next object, but waiting for all envs to be ready
+        # Force the environment to wait for all other envs to be ready to place the next object; otherwise stablebaseline3 will reset the environment
+        if self.obj_done:
+            self.info["stage"] = 2. 
+            done = False 
+
+        if self.info["stage"] == 2. and self.allow_step: 
+            self.allow_step = False
+            reward = self.reward
+            done = self.done
+            # Move stage to the step stage; It will not recompute done and reward but compute observation
+            self.info["stage"] = 0.
         
         # Success Visualization here since observation needs to be reset. Only for evaluation!
         if self.args.rendering and self.info["stage"] == 0.:
@@ -571,19 +584,19 @@ class RoboSensaiBullet:
             # pu.visualize_pc(self.selected_qr_scene_pc)
             # pu.visualize_pc(self.selected_obj_pc)
 
-        self.last_reward = vel_reward
+        self.reward = vel_reward
 
-        return self.last_reward
+        return self.reward
         
 
     def compute_done(self):
-        done = False # Not real done, done signal means one training episode is done
+        self.done = False # Not real done, done signal means one training episode is done
         # When all cur stage objects have been placed, move to the next scene, refill all objects
         if len(self.unplaced_objs_name)==0 or self.cur_trial >= self.args.max_trials:
             self.unquried_scene_name.remove(self.selected_qr_scene_name)
             self.query_scene_done = True # Choose new queried scene in the current stage
             self.obj_done = True         # Choose new object in the current stage
-            done = True
+            self.done = True
             if self.cur_trial >= self.args.max_trials:
                 # Failed to place the object, reset its pose to the prepare area
                 pu.set_pose(body=self.obj_name_data[self.selected_obj_name]["id"], pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
@@ -593,7 +606,7 @@ class RoboSensaiBullet:
                                         new_value=0.)        
         
         # Record miscs info
-        if done:
+        if self.done:
             self.num_episode += 1
             # Record the scene pose here
             final_scene_obj_pose_dict = deepcopy(self.placed_obj_poses)
@@ -618,7 +631,7 @@ class RoboSensaiBullet:
             if self.args.blender_record:
                 self.info['blender_recorder'] = deepcopy(self.pybullet_recorder) 
         
-        return done
+        return self.done
         
 
     ######################################
