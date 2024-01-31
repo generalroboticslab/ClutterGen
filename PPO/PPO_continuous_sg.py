@@ -247,34 +247,39 @@ class Agent(nn.Module):
     
 
     def preprocess_pc_update_tensor(self, all_envs_scene_ft_tensor, all_envs_obj_ft_tensor, infos, use_mask=False):
-        scene_pc_buf = []; obj_pc_buf = []; update_env_ids = []
+        scene_pc_buf = []; scene_pc_update_env_ids = []
         for i, info in enumerate(infos):
             if use_mask:
                 indicator = info["pc_change_indicator"]
-                if not indicator: continue
-            update_env_ids.append(i)
-            scene_pc, obj_pc = info["selected_qr_scene_pc"], info["selected_obj_pc"]
+                if not indicator: 
+                    continue
+
+            scene_pc, init_scene_pc_ft, obj_pc_ft = info["selected_qr_scene_pc"], info["selected_init_qr_scene_ft"], info["selected_obj_pc_ft"]
+            # Update object point cloud features
+            all_envs_obj_ft_tensor[i] = obj_pc_ft.to(self.device)
+            # Update init scene point cloud features, which does not require re-extracted
+            if init_scene_pc_ft is not None:
+                all_envs_scene_ft_tensor[i] = init_scene_pc_ft.to(self.device)
+                continue
+            
+            scene_pc_update_env_ids.append(i)
             # Make sure the scene point cloud has the same number of points (object already has the same number of points)
             if scene_pc.shape[0] < self.envs.args.max_num_scene_points:
                 scene_pc = np.concatenate([scene_pc, np.zeros((self.envs.args.max_num_scene_points-scene_pc.shape[0], scene_pc.shape[1]))], axis=0)
             scene_pc_buf.append(np.expand_dims(scene_pc, axis=0))
-            obj_pc_buf.append(np.expand_dims(obj_pc, axis=0))
-        if len(update_env_ids) == 0: return
-        
-        update_env_ids = np.array(update_env_ids)
-        scene_pc_buf, obj_pc_buf = np.concatenate(scene_pc_buf, axis=0), np.concatenate(obj_pc_buf, axis=0)
+        if len(scene_pc_update_env_ids) == 0: return
+        print(f"Update Scene Point Cloud for {scene_pc_update_env_ids}")
+        scene_pc_buf = np.concatenate(scene_pc_buf, axis=0)
         # PC-Net Points xyz: input points position data, [B, C, N]
         # While our pc input is [B, N, C] so we need transpose
         # Batch operation to increase the maximum environments
-        for i in range(0, len(update_env_ids), self.pc_batchsize):
+        # Update scene point cloud features which requires re-extracted
+        for i in range(0, len(scene_pc_update_env_ids), self.pc_batchsize):
             with torch.no_grad():
-                update_env_ids_minibatch = update_env_ids[i:i+self.pc_batchsize]
+                update_env_ids_minibatch = scene_pc_update_env_ids[i:i+self.pc_batchsize]
                 scene_pc_minibatch = torch.Tensor(scene_pc_buf[i:i+self.pc_batchsize]).to(self.device).transpose(1, 2)
-                obj_pc_minibatch = torch.Tensor(obj_pc_buf[i:i+self.pc_batchsize]).to(self.device).transpose(1, 2)
                 scene_pc_ft = self.pc_extractor(scene_pc_minibatch)
-                obj_pc_ft = self.pc_extractor(obj_pc_minibatch)
                 all_envs_scene_ft_tensor[update_env_ids_minibatch] = scene_pc_ft
-                all_envs_obj_ft_tensor[update_env_ids_minibatch] = obj_pc_ft
 
 
     def get_value(self, obs_list):

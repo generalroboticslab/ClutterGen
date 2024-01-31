@@ -163,6 +163,7 @@ def parse_args():
     if args.penalty > 0: additional += f'_ori{args.penalty}'
     additional += f'_seq{args.sequence_len}'
     additional += f'_step{args.num_steps}'
+    additional += f'_trial{args.max_trials}'
 
     args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
 

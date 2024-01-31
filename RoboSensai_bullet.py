@@ -86,6 +86,8 @@ class RoboSensaiBullet:
 
 
     def load_scenes(self):
+        if not hasattr(self, "pc_extractor"): self._init_pc_extractor()
+
         self.fixed_scene_name_data = {}; self.unquried_scene_name = []
         self.prepare_area = [[-1100., -1100., 0.], [-1000, -1000, 100]]
         # Plane
@@ -119,7 +121,8 @@ class RoboSensaiBullet:
                                                "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
                                                "bbox": table_axes_bbox,
                                                "queried_region": "on", 
-                                               "pc": table_pc
+                                               "pc": table_pc,
+                                               "pc_feature": self.pc_extractor(self.to_torch(table_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.tensor_dtype)
                                               }
         # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
         if self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
@@ -148,6 +151,7 @@ class RoboSensaiBullet:
                                                                 "queried_region": scene_label["queried_region"], 
                                                                 "pc": scene_pc,
                                                                 "mass": pu.get_mass(scene_id, client_id=self.client_id),
+                                                                "pc_feature": self.pc_extractor(self.to_torch(scene_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.tensor_dtype)
                                                             }
                 
                 # For scene who has "in" relation, set transparence to 0.5
@@ -187,6 +191,7 @@ class RoboSensaiBullet:
                                                     "queried_region": obj_label["queried_region"], 
                                                     "pc": obj_pc,
                                                     "mass": pu.get_mass(object_id, client_id=self.client_id),
+                                                    "pc_feature": self.pc_extractor(self.to_torch(obj_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.tensor_dtype)
                                                     }
 
                 # object queried region; This is a dataset bug that some objects are labeled as string "None"
@@ -208,6 +213,7 @@ class RoboSensaiBullet:
         
         verbose_info = f"Loaded {len(self.obj_name_data)} objects from {self.args.object_pool_folder} | {self.args.max_num_placing_objs} objects will be placed."
         print("*"*len(verbose_info)); print(verbose_info); print("*"*len(verbose_info))
+        if hasattr(self, "pc_extractor"): self._del_pc_extractor()
 
     
     def load_world(self):
@@ -237,6 +243,15 @@ class RoboSensaiBullet:
     #########################################
     ######### Training Functions ############
     #########################################
+
+    def _init_pc_extractor(self):
+        self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
+        self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
+
+
+    def _del_pc_extractor(self):
+        del self.pc_extractor      
+    
 
     def _init_obs_act_space(self):
         # Observation space: [scene_pc_feature, obj_pc_feature, bbox, action, history (hitory_len * (obj_pos + obj_vel)))]
@@ -484,7 +499,8 @@ class RoboSensaiBullet:
                 self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name))
                 self.scene_name_data = self.obj_name_data if self.selected_qr_scene_name in self.obj_name_data.keys() else self.fixed_scene_name_data
                 self.selected_qr_scene_id = self.scene_name_data[self.selected_qr_scene_name]["id"]
-                self.selected_qr_scene_pc = self.scene_name_data[self.selected_qr_scene_name]["pc"].copy()
+                self.selected_qr_scene_pc = self.scene_name_data[self.selected_qr_scene_name]["pc"]
+                self.selected_qr_scene_ft = self.scene_name_data[self.selected_qr_scene_name]["pc_feature"]
                 self.selected_qr_scene_bbox = self.scene_name_data[self.selected_qr_scene_name]["bbox"]
                 self.selected_qr_scene_region = self.scene_name_data[self.selected_qr_scene_name]["queried_region"]
                 self.tallest_placed_half_z_extend = 0.
@@ -493,7 +509,9 @@ class RoboSensaiBullet:
                 pu.set_mass(self.selected_qr_scene_id, mass=0., client_id=self.client_id) # Set the scene mass to 0
 
                 self.update_unplaced_objs() # Refill all objects based on the new selected scene when the queried scene changed
-                if len(self.unplaced_objs_name) > 0: break
+                if len(self.unplaced_objs_name) > 0: 
+                    self.info["selected_init_qr_scene_ft"] = self.selected_qr_scene_ft
+                    break
                 else: # This scene has no objects to place based on the naive filtering, remove it from the unquery scene list
                     self.unquried_scene_name.remove(self.selected_qr_scene_name)
                     if len(self.unquried_scene_name) == 0: self.update_unquery_scenes()
@@ -506,7 +524,8 @@ class RoboSensaiBullet:
             self.obj_done = False
             self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name))
             self.selected_obj_id = self.obj_name_data[self.selected_obj_name]["id"]
-            self.selected_obj_pc = self.obj_name_data[self.selected_obj_name]["pc"].copy()
+            self.selected_obj_pc = self.obj_name_data[self.selected_obj_name]["pc"]
+            self.selected_obj_pc_ft = self.obj_name_data[self.selected_obj_name]["pc_feature"]
             self.selected_obj_bbox = self.obj_name_data[self.selected_obj_name]["bbox"]
             pu.set_mass(self.selected_obj_id, self.obj_name_data[self.selected_obj_name]["mass"], client_id=self.client_id)
             self.info['pc_change_indicator'] = 1.
@@ -526,7 +545,7 @@ class RoboSensaiBullet:
 
         # Update the queried scene points cloud
         self.info["selected_qr_scene_pc"] = self.selected_qr_scene_pc
-        self.info["selected_obj_pc"] = self.selected_obj_pc
+        self.info["selected_obj_pc_ft"] = self.selected_obj_pc_ft
         # Update the sequence observation | pop the first observation and append the last observation
         his_traj = self.to_numpy(self.traj_history).flatten()
         cur_seq_obs = np.concatenate([self.selected_qr_region, self.last_raw_action, his_traj])
@@ -561,6 +580,7 @@ class RoboSensaiBullet:
             # transformed_selected_obj_pc = tf_apply(self.to_torch(selected_obj_pose[1]), self.to_torch(selected_obj_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
             self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
+            self.info["selected_init_qr_scene_ft"] = None # The scene points need to be re-extracted
             self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
             # Run one inference needs ~0.5s!
 
