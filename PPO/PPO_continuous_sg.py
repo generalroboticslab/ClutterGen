@@ -270,7 +270,7 @@ class Agent(nn.Module):
                 scene_pc = np.concatenate([scene_pc, np.zeros((self.envs.args.max_num_scene_points-scene_pc.shape[0], scene_pc.shape[1]))], axis=0)
             scene_pc_buf.append(np.expand_dims(scene_pc, axis=0))
         if len(scene_pc_update_env_ids) == 0: return
-        print(f"Update Scene Point Cloud for {scene_pc_update_env_ids}")
+
         scene_pc_buf = np.concatenate(scene_pc_buf, axis=0)
         # PC-Net Points xyz: input points position data, [B, C, N]
         # While our pc input is [B, N, C] so we need transpose
