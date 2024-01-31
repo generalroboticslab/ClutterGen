@@ -78,6 +78,7 @@ def parse_args():
     parser.add_argument("--use_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_tf_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_tf_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_pc_extractor", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout per object")
@@ -138,6 +139,8 @@ def parse_args():
         additional += '_TrajEncoderTF' if args.use_tf_traj_encoder else '_TrajEncoderFC'
     if args.use_seq_obs_encoder:
         additional += '_SeqObsEncoderTF' if args.use_tf_seq_obs_encoder else '_SeqObsEncoderFC'
+    if args.use_pc_extractor: 
+        additional += '_PCExtractor'
     if args.checkpoint is not None: additional += '_FineTune'
     if args.use_relu: additional += '_Relu'
     else: additional += '_Tanh'
@@ -293,6 +296,8 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs), dtype=tensor_dtype).to(device)
 
     # TRY NOT TO MODIFY: start the game
+    update_iter = 0
+    reward_update_iters = 0
     global_step = 0
     start_time = time.time()
     next_seq_obs = torch.Tensor(envs.reset()).to(device)
@@ -464,22 +469,28 @@ if __name__ == "__main__":
                     
                     if args.collect_data:
                         if args.wandb:
-                            wandb.log({'episodes': i_episode, 'reward/reward_train': episode_reward, 
-                                       'reward/reward_pos': episode_pos_r, 'reward/penalty_act': episode_act_p})
+                            wandb.log({'episodes': i_episode, 
+                                       'reward/reward_train': episode_reward, 
+                                       'reward/reward_pos': episode_pos_r, 
+                                       'reward/penalty_act': episode_act_p})
 
                             if i_episode >= args.reward_steps:  # episode success rate
+                                if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
                                 wandb.log({'s_episodes': i_episode - args.reward_steps, 
+                                           'iterations': update_iter - reward_update_iters,
                                            'reward/success_rate': episode_success_rate, 
                                            'reward/num_placed_objs': episode_placed_objs})
 
                         if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
                             best_acc = episode_success_rate;
                             agent.save_checkpoint(folder_path=args.checkpoint_dir,
-                                                    folder_name=args.final_name, suffix='best')
+                                                  folder_name=args.final_name, 
+                                                  suffix='best')
                             print(f's_episodes: {i_episode - args.reward_steps} | Now best accuracy is {best_acc * 100:.3f}% | Number of placed objects is {episode_placed_objs:.2f}')
                         if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
-                            agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
-                                                    suffix=str(i_episode))
+                            agent.save_checkpoint(folder_path=args.checkpoint_dir, 
+                                                  folder_name=args.final_name,
+                                                  suffix=str(i_episode))
                             mile_stone = i_episode
                             
                         # Save success rate and placed objects number
@@ -600,6 +611,8 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
+                update_iter += 1
+
 
         # To float32 is because it does support for bfloat16 to numpy
         y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()
@@ -608,6 +621,7 @@ if __name__ == "__main__":
 
         if args.collect_data and args.wandb:
             wandb.log({'steps': global_step, 
+                       'iterations': update_iter,
                        'train/learning_rate': optimizer.param_groups[0]["lr"],
                        'train/critic_loss': v_loss.item(),
                        'train/policy_loss': pg_loss.item(),
