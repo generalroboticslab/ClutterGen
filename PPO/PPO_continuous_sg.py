@@ -247,6 +247,8 @@ class Agent(nn.Module):
     
 
     def preprocess_pc_update_tensor(self, all_envs_scene_ft_tensor, all_envs_obj_ft_tensor, infos, use_mask=False):
+        if not self.envs.args.use_pc_extractor: return
+
         scene_pc_buf = []; scene_pc_update_env_ids = []
         for i, info in enumerate(infos):
             if use_mask:
