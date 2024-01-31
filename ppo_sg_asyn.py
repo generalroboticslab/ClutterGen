@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument('--max_num_urdf_points', type=int, default=2048)
     parser.add_argument('--max_num_scene_points', type=int, default=10240)
     # RoboSensai Env parameters (training)
-    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_trials', type=int, default=2)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument("--max_stable_steps", type=int, default=60, help="the maximum steps for the env to be stable considering success")
@@ -471,6 +471,7 @@ if __name__ == "__main__":
                     if args.collect_data:
                         if args.wandb:
                             wandb.log({'episodes': i_episode, 
+                                       "iterations": update_iter,
                                        'reward/reward_train': episode_reward, 
                                        'reward/reward_pos': episode_pos_r, 
                                        'reward/penalty_act': episode_act_p})
@@ -478,7 +479,7 @@ if __name__ == "__main__":
                             if i_episode >= args.reward_steps:  # episode success rate
                                 if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
                                 wandb.log({'s_episodes': i_episode - args.reward_steps, 
-                                           'iterations': update_iter - reward_update_iters,
+                                           's_iterations': update_iter - reward_update_iters,
                                            'reward/success_rate': episode_success_rate, 
                                            'reward/num_placed_objs': episode_placed_objs})
 
