@@ -500,7 +500,7 @@ if __name__ == "__main__":
                             if i_episode >= args.reward_steps:  # episode success rate
                                 if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
                                 wandb.log({'s_episodes': i_episode - args.reward_steps, 
-                                           's_iterations': update_iter - reward_update_iters,
+                                           'iterations': update_iter - reward_update_iters,
                                            'reward/success_rate': episode_success_rate, 
                                            'reward/num_placed_objs': episode_placed_objs})
 
