@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
     # RoboSensai Env parameters (dataset)
-    parser.add_argument('--num_pool_objs', type=int, default=16)
+    parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
     parser.add_argument('--max_num_placing_objs', type=int, default=5)
     parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
@@ -107,7 +107,7 @@ def parse_args():
     parser.add_argument('--checkpoint', type=str, default=None)
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--sequence_len', type=int, default=10)
+    parser.add_argument('--sequence_len', type=int, default=5)
     parser.add_argument('--reward_steps', type=int, default=5000)
     parser.add_argument('--cpus', type=int, default=[], nargs='+', help="run environments on specified cpus")
     parser.add_argument("--torch_deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
@@ -513,6 +513,8 @@ if __name__ == "__main__":
                 loss.backward()
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
+
+                update_iter += 1
 
             if args.target_kl is not None:
                 if approx_kl > args.target_kl:
