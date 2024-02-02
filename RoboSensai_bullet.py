@@ -295,6 +295,8 @@ class RoboSensaiBullet:
         self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
         self.args.use_traj_encoder = self.args.use_traj_encoder if hasattr(self.args, "use_traj_encoder") else False
         self.args.blender_record = self.args.blender_record if hasattr(self.args, "blender_record") else False
+        self.args.step_async = self.args.step_async if hasattr(self.args, "step_async") else False
+        self.args.step_sync = self.args.step_sync if hasattr(self.args, "step_sync") else False
         # Buffer does not need to be reset
         self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 
                      'obj_success_rate': {}, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
@@ -408,6 +410,62 @@ class RoboSensaiBullet:
 
 
     def step(self, action):
+        if self.args.step_async:
+            return self.step_async(action)
+        elif self.args.step_sync:
+            return self.step_sync(action)
+
+
+    def step_sync(self, action):
+        step_time_inside = time.time()
+        pose_xyz, pose_quat = self.convert_actions(action)
+        pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
+        
+        self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
+        self.accm_vel_reward = 0.
+        self.prev_obj_vel = np.array([0.]*6, dtype=self.numpy_dtype)
+        self.continue_stable_steps = 0.
+        self.info['pc_change_indicator'] = 0.
+
+        for self.his_steps in range(self.args.max_traj_history_len):
+            self.simstep(1/240)
+            obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
+            obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True)
+            # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]; Left Shift
+            self.traj_history.pop(0)
+            self.traj_history.append(obj_pos + obj_quat + obj_vel.tolist())
+            # Accumulate velocity reward
+            self.accm_vel_reward += -obj_vel[:].__abs__().sum()
+            # Jump out if the object is not moving
+            if self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel):
+                self.continue_stable_steps += 1
+                if self.continue_stable_steps >= self.args.min_continue_stable_steps: 
+                    self.info['his_steps'] = self.his_steps
+                    break
+
+            self.prev_obj_vel = obj_vel
+
+        reward = self.compute_reward() # Must compute reward before observation since we use the velocity to compute reward
+        done = self.compute_done()
+        # Success Visualization here since observation needs to be reset. Only for evaluation!
+        if self.args.rendering:
+            print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
+            if done and self.info['success'] == 1:
+                print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
+                if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
+
+        observation = self.compute_observations() if not done else self.last_seq_obs # This point should be considered as the start of the episode!
+
+        # Reset placed object pose | when reset, the placed_obj_poses will be empty 
+        obj_names, obj_poses = dict2list(self.placed_obj_poses)
+        for i, obj_name in enumerate(obj_names):
+            pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
+
+        self.info["inside_steptime"] = time.time() - step_time_inside
+        return observation, reward, done, self.info
+
+
+    def step_async(self, action):
         # stepping == 1 means this action is from the agent and is meaningful
         # Pre-physical step
         if self.info['stepping'] == 1.:
@@ -699,6 +757,40 @@ class RoboSensaiBullet:
             time.sleep(3.)
         
         return World_2_ObjBase_xyz_i, using_act_prob_i, World_2_ObjBase_quat_i, r_act_prob
+    
+
+    def replay_placement_scene(self, scene_dict_file):
+        scene_dict = read_json(scene_dict_file)
+        success_scene_cfg = scene_dict["success_scene_cfg"]
+        self.replay_obj_dict_id = {}
+        with keyboard.Events() as events:
+            for episode, placed_obj_poses in success_scene_cfg.items():
+                for obj_name, obj_pose in placed_obj_poses.items():
+
+                    while True:
+                        key = None
+                        event = events.get(0.0001)
+                        if event is not None:
+                            if isinstance(event, events.Press) and hasattr(event.key, 'char'):
+                                key = event.key.char
+                        if key == 's':
+                            break
+                        pu.step(1./240, client_id=self.client_id)
+                        time.sleep(1./240)
+
+                    if obj_name not in self.obj_uni_names_dataset: continue
+
+                    if obj_name not in self.replay_obj_dict_id.keys():
+                        obj_urdf_path = self.obj_uni_names_dataset[obj_name]["urdf"]
+                        obj_label = self.obj_uni_names_dataset[obj_name]["label"]
+                        self.replay_obj_dict_id[obj_name] = self.loadURDF(
+                            obj_urdf_path, 
+                            basePosition=self.rng.uniform(*self.prepare_area), baseOrientation=[0., 0., 0., 1.], 
+                            globalScaling=obj_label["globalScaling"], useFixedBase=False)
+                    print(f"Placing {obj_name} {obj_pose} in {episode}...")
+                    
+                    pu.set_pose(self.replay_obj_dict_id[obj_name], obj_pose, client_id=self.client_id)
+
     
     ######################################
     ######### Utils FUnctions ############

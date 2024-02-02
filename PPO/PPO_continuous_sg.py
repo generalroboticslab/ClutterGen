@@ -15,6 +15,7 @@ from torch.distributions.normal import Normal
 
 # PointNet
 from PointNet_Model.pointnet2_cls_ssg import get_model
+import pybullet_utils as pu
 
 import copy
 import math
@@ -269,6 +270,7 @@ class Agent(nn.Module):
             if scene_pc.shape[0] < self.envs.args.max_num_scene_points:
                 scene_pc = np.concatenate([scene_pc, np.zeros((self.envs.args.max_num_scene_points-scene_pc.shape[0], scene_pc.shape[1]))], axis=0)
             scene_pc_buf.append(np.expand_dims(scene_pc, axis=0))
+            # pu.visualize_pc(scene_pc)
         if len(scene_pc_update_env_ids) == 0: return
 
         scene_pc_buf = np.concatenate(scene_pc_buf, axis=0)
@@ -282,6 +284,8 @@ class Agent(nn.Module):
                 scene_pc_minibatch = torch.Tensor(scene_pc_buf[i:i+self.pc_batchsize]).to(self.device).transpose(1, 2)
                 scene_pc_ft = self.pc_extractor(scene_pc_minibatch)
                 all_envs_scene_ft_tensor[update_env_ids_minibatch] = scene_pc_ft
+            
+        return scene_pc_update_env_ids
 
 
     def get_value(self, obs_list):

@@ -20,35 +20,49 @@ import torch.nn as nn
 import torch.optim as optim
 
 from multi_envs import *
+from utils import *
 
 
 def parse_args():
-    # fmt: off
     parser = argparse.ArgumentParser(description='Train Tactile Pushing Experiment')
     
     # Env hyper parameters
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True) # https://docs.python.org/3/library/argparse.html#:~:text=%27%3F%27.%20One%20argument,to%20illustrate%20this%3A
-    parser.add_argument('--object_pool_name', type=str, default='YCB', help="Target object to be grasped. Ex: cube")
+    parser.add_argument('--object_pool_name', type=str, default='Union', help="Target object to be grasped. Ex: cube")
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
-    # RoboSensai Env parameters
-    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
-    parser.add_argument('--num_pool_objs', type=int, default=20)
-    parser.add_argument('--num_placing_objs', type=int, default=1) 
-    parser.add_argument('--max_traj_history_len', type=int, default=240)  
-    parser.add_argument('--random_select_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    # RoboSensai Env parameters (dataset)
+    parser.add_argument('--num_pool_objs', type=int, default=16)
+    parser.add_argument('--num_pool_scenes', type=int, default=1)
+    parser.add_argument('--max_num_placing_objs', type=int, default=5)
+    parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
+    parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
-    parser.add_argument("--max_stable_steps", type=int, default=50, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
+    parser.add_argument('--max_num_urdf_points', type=int, default=2048)
+    parser.add_argument('--max_num_scene_points', type=int, default=10240)
+    # RoboSensai Env parameters (training)
+    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_traj_history_len', type=int, default=240) 
+    parser.add_argument("--max_stable_steps", type=int, default=60, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
     parser.add_argument('--reward_pobj', type=float, default=100., help='Position reward weight')
     parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')
     parser.add_argument('--vel_reward_scale', type=float, default=0.005, help='scaler for the velocity reward')
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/360], nargs='+')
+    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
+    parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='objects/ycb_objects_origin_at_center_vhacd', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='union_objects_train', help="folder path that stores all urdf files")
+    parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
+
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--wandb', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
@@ -57,14 +71,20 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
-    parser.add_argument("--use_transformer", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_tf_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_tf_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
+    parser.add_argument("--use_pc_extractor", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
-    parser.add_argument("--num_envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
+    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--pc_batchsize", type=int, default=None, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--use_relu", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use Relu or tanh.")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
+    parser.add_argument("--minibatch-size", type=int, default=1000, help="the number of mini-batches")
     parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
@@ -95,9 +115,12 @@ def parse_args():
     args = parser.parse_args()
 
     # Training required attributes
-    args.num_steps = args.num_steps * args.num_placing_objs # make sure the num_steps is 5 times larger than agent traj length
+    args.step_sync = True
+    assert args.num_steps > args.max_num_placing_objs * args.max_trials * 5, \
+        f"num_steps now {args.num_steps} should be 5 times larger than agent traj length {args.max_num_placing_objs * args.max_trials * 5} to avoid overfitting"
     args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
+    args.pc_batchsize = args.pc_batchsize if args.pc_batchsize is not None else args.num_envs
 
     if args.cpus:
         print('Running on specific CPUS:', args.cpus)
@@ -108,21 +131,37 @@ def parse_args():
         args.rendering = True
 
     # Uniformalize training name
-    additional = ''
+    additional = 'Sync'
     ###--- suffix for final name ---###
-    if args.use_lstm: additional += '_LSTM'
-    elif args.use_transformer: additional += '_Transformer'
-    else: additional += '_FC'
-    if args.checkpoint is not None: additional += '_FT'
+    if args.use_traj_encoder: 
+        additional += '_TrajEncoderTF' if args.use_tf_traj_encoder else '_TrajEncoderFC'
+    if args.use_seq_obs_encoder:
+        additional += '_SeqObsEncoderTF' if args.use_tf_seq_obs_encoder else '_SeqObsEncoderFC'
+    if args.use_pc_extractor: 
+        additional += '_PCExtractor'
+    if args.checkpoint is not None: additional += '_FineTune'
+    if args.use_relu: additional += '_Relu'
+    else: additional += '_Tanh'
     additional += '_Rand'
-    if args.random_select_pool: additional += '_pool'
-    if args.random_select_placing: additional += '_placing'
+    if args.random_select_objs_pool: additional += '_ObjPool'
+    if args.random_select_placing: additional += '_ObjPlace'
+    if args.random_select_scene_pool: additional += '_ScenePool'
+    if not args.fixed_scene_only: additional += '_unFixedScene'
+    if not args.fixed_qr_region: additional += '_QRRegion'
     additional += '_Goal'
-    if args.num_placing_objs: additional += f'_{args.num_placing_objs}'
-    if args.max_stable_steps: additional += f'_maxstable{args.max_stable_steps}'
+    if args.max_num_placing_objs: additional += f'_maxObjNum{args.max_num_placing_objs}'
+    if args.num_pool_objs: additional += f'_maxPool{args.num_pool_objs}'
+    if args.num_pool_scenes: additional += f'_maxScene{args.num_pool_scenes}'
+    if args.max_stable_steps: additional += f'_maxStable{args.max_stable_steps}'
+    if args.min_continue_stable_steps: additional += f'_contStable{args.min_continue_stable_steps}'
+    if args.max_num_qr_scenes: additional += f'_maxQR{args.max_num_qr_scenes}Scene'
+    if args.num_episode_to_replace_pool: additional += f'_Epis2Replace{args.num_episode_to_replace_pool}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
     if args.penalty > 0: additional += f'_ori{args.penalty}'
+    additional += f'_seq{args.sequence_len}'
+    additional += f'_step{args.num_steps}'
+    additional += f'_trial{args.max_trials}'
 
     args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
 
@@ -184,7 +223,7 @@ if __name__ == "__main__":
     # env and scene setup; TODO Input the aruments into HandemEnv
     # envs = RoboSensaiBullet(args=args)
     envs = create_multi_envs(args, 'forkserver')
-    temp_env = envs.get_attr('env')[0]
+    temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
     agent = Agent(temp_env).to(device)
     if args.checkpoint is not None:
         checkpoint_folder = os.path.join(args.result_dir, 'checkpoints', args.checkpoint)
@@ -195,9 +234,36 @@ if __name__ == "__main__":
     agent.set_mode('train')  # set to train
     optimizer = optim.Adam(agent.parameters(), lr=args.lr, eps=1e-5)
 
+    # Assuming you have these variables from your environment
+    raw_obs_shape_data = [
+        ["Raw Observation Shape", ""],
+        ["Name", "Shape"],
+        ["Raw Observation Shape", temp_env.raw_act_hist_qr_obs_shape],
+        ["QR Region Dim", temp_env.qr_region_dim],
+        ["Action Dim", temp_env.action_dim],
+        ["Traj History Dim", temp_env.traj_hist_dim],
+        ["Scene PC Dim", f"(3, {args.max_num_scene_points})"],
+        ["Obj PC Dim", f"(3, {args.max_num_urdf_points})"],
+        ["Sequence Length", f"{args.sequence_len}"]
+    ]
+    
+    post_obs_shape_data = [
+        ["Post Observation Shape", ""],
+        ["Name", "Shape"],
+        ["Post Observation Shape", temp_env.post_observation_shape],
+        ["Scene Feature Dim", temp_env.scene_ft_dim],
+        ["Obj Feature Dim", temp_env.obj_ft_dim],
+        ["Seq Obs ft Dim", temp_env.seq_info_ft_dim]
+    ]
+
+    print(tabulate(raw_obs_shape_data, headers="firstrow", tablefmt="grid"))
+    print(tabulate(post_obs_shape_data, headers="firstrow", tablefmt="grid"))
+
     # ALGO Logic: Storage setup
-    print(f"Observation Shape: {temp_env.observation_shape}")
-    obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.observation_shape[1:], dtype=temp_env.tensor_dtype).to(device)
+    print(f"Observation Shape: {temp_env.post_observation_shape}")
+    seq_obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
+    scene_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    obj_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=temp_env.tensor_dtype).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
@@ -205,9 +271,15 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
 
     # TRY NOT TO MODIFY: start the game
+    update_iter = 0
+    reward_update_iters = 0
     global_step = 0
     start_time = time.time()
-    next_obs = torch.Tensor(envs.reset()).to(device)
+    next_seq_obs = torch.Tensor(envs.reset()).to(device)
+    # Scene and obj feature tensor are keeping updated inplace
+    next_scene_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+    next_obj_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
+    agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, envs.reset_infos, use_mask=True)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size  # ?? same as episodes? No!! episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
 
@@ -242,6 +314,8 @@ if __name__ == "__main__":
 
     episode_rewards_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
     episode_success_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
+    episode_placed_objs_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
+
     pos_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
     ori_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
     act_p_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
@@ -260,33 +334,31 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[step] = next_obs
+            seq_obs[step] = next_seq_obs
+            scene_ft_obs[step] = next_scene_ft_obs
+            obj_ft_obs[step] = next_obj_ft_obs
+
             dones[step] = next_done
 
             ## ----- ALGO LOGIC: action logic ----- ##
             ## if not expert_action, normal training; Otherwise use only expert actions
-            # transfer discrete actions to real actions; TODO: Logical problem about next_obs (terminal observation to query step action for the first action)
+            # transfer discrete actions to real actions; TODO: Logical problem about next_seq_obs (terminal observation to query step action for the first action)
             if args.random_policy:
                 step_action = torch.rand((args.num_envs, temp_env.action_shape[1]), device=device)
             else:
                 with torch.no_grad():
-                    step_action, logprob, _, value = agent.get_action_and_value(next_obs)
+                    step_action, logprob, _, value = agent.get_action_and_value([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
                     values[step] = value.flatten()
                 actions[step] = step_action
                 logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, done, infos = envs.step(step_action)
+            next_seq_obs, reward, done, infos = envs.step(step_action)
+            update_env_ids = agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
 
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+            next_seq_obs, next_done = torch.Tensor(next_seq_obs).to(device), torch.Tensor(done).to(device)
             rewards[step] = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
-            
-            # Record all rewards information
-            # pos_reward, act_penalty = infos['pos_reward'], infos['act_penalty']
-
             episode_rewards += rewards[step]
-            # episode_pos_rewards += pos_reward
-            # episode_act_penalties += act_penalty
             
             terminal_index = next_done == 1
             terminal_nums = terminal_index.sum().item()
@@ -298,47 +370,65 @@ if __name__ == "__main__":
                 update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
                 
                 terminal_ids = terminal_index.nonzero().flatten()
-                success_buf = torch.Tensor([infos[id]['success'] for id in terminal_ids]).to(device)
+                success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
                 update_tensor_buffer(episode_success_box, success_buf)
+                placed_obj_num_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success_placed_obj_num', terminal_ids)).to(device)
+                update_tensor_buffer(episode_placed_objs_box, placed_obj_num_buf)
 
+                # Empty the episode rewards
                 episode_rewards[terminal_index] = 0.
-                episode_pos_rewards[terminal_index] = 0.
-                episode_act_penalties[terminal_index] = 0.
-
                 episode_reward = torch.mean(episode_rewards_box[-i_episode:]).item()
-                episode_pos_r = torch.mean(pos_r_box[-i_episode:]).item()
-                episode_act_p = torch.mean(act_p_box[-i_episode:]).item()
                 episode_success_rate = torch.mean(episode_success_box[-i_episode:]).item()
+                episode_placed_objs = torch.mean(episode_placed_objs_box[-i_episode:]).item()
 
                 if not args.quiet:
-                    print(f"Global Steps:{global_step}/{args.total_timesteps}, Episode:{i_episode}, Success Rate:{episode_success_rate:.2f}, Reward:{episode_reward:.4f}," \
-                        f"Pos Reward: {episode_pos_r:.4f}, Act Penalty: {episode_act_p:.4f}")
+                    print(f"Global Steps:{global_step}/{args.total_timesteps}," 
+                          f"Episode:{i_episode}, Success Rate:{episode_success_rate:.2f},"
+                          f"Reward:{episode_reward:.4f}")
                 
                 if args.collect_data:
                     if args.wandb:
-                        wandb.log({'episodes': i_episode, 'reward/reward_train': episode_reward, 'reward/reward_pos': episode_pos_r,
-                                   'reward/penalty_act': episode_act_p})
+                        wandb.log({'episodes': i_episode, 
+                                   'iterations': update_iter,
+                                   'reward/reward_train': episode_reward})
 
                         if i_episode >= args.reward_steps:  # episode success rate
-                            wandb.log({'s_episodes': i_episode - args.reward_steps, 'reward/success_rate': episode_success_rate})
+                            if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
+                            wandb.log({'s_episodes': i_episode - args.reward_steps, 
+                                       's_iterations': update_iter - reward_update_iters,
+                                       'reward/success_rate': episode_success_rate,
+                                       'reward/num_placed_objs': episode_placed_objs})
 
                     if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
                         best_acc = episode_success_rate;
                         agent.save_checkpoint(folder_path=args.checkpoint_dir,
-                                                folder_name=args.final_name, suffix='best')
-                        print(f'Now best accuracy is {best_acc * 100}%')
+                                              folder_name=args.final_name, 
+                                              suffix='best')
+                        print(f"s_episodes: {i_episode - args.reward_steps} | " 
+                              f"Now best accuracy is {best_acc * 100:.3f}% | " 
+                              f"Number of placed objects is {episode_placed_objs:.2f}")
                     if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
-                        agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name,
-                                                suffix=str(i_episode))
+                        agent.save_checkpoint(folder_path=args.checkpoint_dir, 
+                                              folder_name=args.final_name,
+                                              suffix=str(i_episode))
                         mile_stone = i_episode
+
+                    # Save success rate and placed objects number
+                    meta_data = {
+                        "episode": i_episode,
+                        "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                        "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                    }
+                    save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
 
 
         ####----- force action to test variance; Skip the training process ----####
         if args.random_policy: continue
 
+
         ####----- Compute advantage for each state in the markov chain ----####
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            next_value = agent.get_value([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs]).reshape(1, -1)
             if args.gae:
                 advantages = torch.zeros_like(rewards).to(device)
                 lastgaelam = 0
@@ -365,7 +455,9 @@ if __name__ == "__main__":
                 advantages = returns - values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + temp_env.observation_shape[1:])
+        b_seq_obs = seq_obs.reshape((-1,) + temp_env.raw_act_hist_qr_obs_shape[1:])
+        b_scene_ft_obs = scene_ft_obs.reshape((-1,) + (temp_env.scene_ft_dim, ))
+        b_obj_ft_obs = obj_ft_obs.reshape((-1,) + (temp_env.obj_ft_dim, ))
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + temp_env.action_shape[1:])
         b_advantages = advantages.reshape(-1)
@@ -380,7 +472,7 @@ if __name__ == "__main__":
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value([b_seq_obs[mb_inds], b_scene_ft_obs[mb_inds], b_obj_ft_obs[mb_inds]], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -433,11 +525,13 @@ if __name__ == "__main__":
 
         if args.collect_data and args.wandb:
             wandb.log({'steps': global_step, 
+                       'iterations': update_iter,
                        'train/learning_rate': optimizer.param_groups[0]["lr"],
                        'train/critic_loss': v_loss.item(),
                        'train/policy_loss': pg_loss.item(),
                        'train/entropy': entropy_loss.item(),
                        'train/approx_kl': approx_kl.item(),
+                       'train/advantages': mb_advantages.mean().item(),
                        'train/explained_variance': explained_var})
 
         if not args.quiet:
