@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument('--max_num_urdf_points', type=int, default=2048)
     parser.add_argument('--max_num_scene_points', type=int, default=10240)
     # RoboSensai Env parameters (training)
-    parser.add_argument('--max_trials', type=int, default=2)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument('--step_divider', type=int, default=4) 
     parser.add_argument("--max_stable_steps", type=int, default=60, help="the maximum steps for the env to be stable considering success")
@@ -88,7 +88,7 @@ def parse_args():
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
     parser.add_argument("--minibatch-size", type=int, default=1000, help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=5, help="the K epochs to update the policy")
+    parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
@@ -118,8 +118,9 @@ def parse_args():
     args = parser.parse_args()
 
     # Training required attributes
-    assert args.num_steps > args.max_num_placing_objs * args.max_trials * 5, \
-        f"num_steps now {args.num_steps} should be 5 times larger than agent traj length {args.max_num_placing_objs * args.max_trials * 5} to avoid overfitting"
+    args.step_async = True
+    assert args.num_envs * args.num_steps > args.max_num_placing_objs * args.max_trials * 5, \
+        f"num_steps * num_envs now {args.num_envs * args.num_steps} should be 5 times larger than agent traj length {args.max_num_placing_objs * args.max_trials * 5} to avoid overfitting"
     args.batch_size = int(args.num_envs * args.num_steps)
     args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
     args.pc_batchsize = args.pc_batchsize if args.pc_batchsize is not None else args.num_envs
@@ -133,7 +134,7 @@ def parse_args():
         args.rendering = True
 
     # Uniformalize training name
-    additional = ''
+    additional = 'Async'
     ###--- suffix for final name ---###
     if args.use_traj_encoder: 
         additional += '_TrajEncoderTF' if args.use_tf_traj_encoder else '_TrajEncoderFC'
@@ -224,7 +225,7 @@ if __name__ == "__main__":
 
     # env and scene setup; TODO Input the aruments into HandemEnv
     # envs = RoboSensaiBullet(args=args)
-    envs = create_multi_envs(args, 'spawn')
+    envs = create_multi_envs(args, 'forkserver')
     temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
     agent = Agent(temp_env).to(device)
     if args.checkpoint is not None:

@@ -116,8 +116,8 @@ def parse_args():
 
     # Training required attributes
     args.step_sync = True
-    assert args.num_steps > args.max_num_placing_objs * args.max_trials * 5, \
-        f"num_steps now {args.num_steps} should be 5 times larger than agent traj length {args.max_num_placing_objs * args.max_trials * 5} to avoid overfitting"
+    assert args.num_envs * args.num_steps > args.max_num_placing_objs * args.max_trials * 5, \
+        f"num_steps * num_envs now {args.num_envs * args.num_steps} should be 5 times larger than agent traj length {args.max_num_placing_objs * args.max_trials * 5} to avoid overfitting"
     args.batch_size = int(args.num_envs * args.num_steps)
     args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
     args.pc_batchsize = args.pc_batchsize if args.pc_batchsize is not None else args.num_envs
