@@ -221,9 +221,13 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env and scene setup; TODO Input the aruments into HandemEnv
-    # envs = RoboSensaiBullet(args=args)
-    envs = create_multi_envs(args, 'forkserver')
-    temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
+    if args.num_envs >1:
+        envs = create_multi_envs(args, 'forkserver')
+        temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
+    elif args.num_envs == 1:
+        envs = RoboSensaiBullet(args=args)
+        temp_env = envs; tensor_dtype = temp_env.tensor_dtype
+    
     agent = Agent(temp_env).to(device)
     if args.checkpoint is not None:
         checkpoint_folder = os.path.join(args.result_dir, 'checkpoints', args.checkpoint)
@@ -279,7 +283,8 @@ if __name__ == "__main__":
     # Scene and obj feature tensor are keeping updated inplace
     next_scene_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
     next_obj_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
-    agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, envs.reset_infos, use_mask=True)
+    reset_infos = envs.reset_infos if args.num_envs > 1 else [envs.info]
+    agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, reset_infos, use_mask=True)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size  # ?? same as episodes? No!! episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
 

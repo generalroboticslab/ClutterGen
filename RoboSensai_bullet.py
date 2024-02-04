@@ -417,7 +417,6 @@ class RoboSensaiBullet:
 
 
     def step_sync(self, action):
-        step_time_inside = time.time()
         pose_xyz, pose_quat = self.convert_actions(action)
         pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
         
@@ -461,8 +460,12 @@ class RoboSensaiBullet:
         for i, obj_name in enumerate(obj_names):
             pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
 
-        self.info["inside_steptime"] = time.time() - step_time_inside
-        return observation, reward, done, self.info
+        if self.args.num_envs == 1:
+            observation = self.reset() if done else observation # 1 Env we do not use stableBaseline which will ask for manually reset
+            return np.expand_dims(observation, axis=0), np.array([reward]), \
+                   np.array([done]), [self.info]
+        else:
+            return observation, reward, done, self.info
 
 
     def step_async(self, action):
@@ -532,7 +535,12 @@ class RoboSensaiBullet:
             for i, obj_name in enumerate(obj_names):
                 pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
 
-        return observation, reward, done, self.info
+        if self.args.num_envs == 1:
+            observation = self.reset() if done else observation # 1 Env we do not use stableBaseline which will ask for manually reset
+            return np.expand_dims(observation, axis=0), np.array([reward]), \
+                   np.array([done]), [self.info]
+        else:
+            return observation, reward, done, self.info
 
 
     def reset(self):
@@ -544,7 +552,11 @@ class RoboSensaiBullet:
             self.load_scenes()
             self.load_objects()
         self.reset_env()
-        return self.compute_observations()
+
+        if self.args.num_envs == 1:
+            return np.expand_dims(self.compute_observations(), axis=0)
+        else:
+            return self.compute_observations()
 
     
     def compute_observations(self):
