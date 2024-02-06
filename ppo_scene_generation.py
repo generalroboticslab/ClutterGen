@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument('--max_num_urdf_points', type=int, default=2048)
     parser.add_argument('--max_num_scene_points', type=int, default=10240)
     # RoboSensai Env parameters (training)
-    parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument("--max_stable_steps", type=int, default=60, help="the maximum steps for the env to be stable considering success")
     parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
@@ -220,8 +220,8 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    # env and scene setup; TODO Input the aruments into HandemEnv
-    if args.num_envs >1:
+    # env and scene setup
+    if args.num_envs > 1:
         envs = create_multi_envs(args, 'forkserver')
         temp_env = envs.tempENV; tensor_dtype = temp_env.tensor_dtype
     elif args.num_envs == 1:

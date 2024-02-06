@@ -389,8 +389,8 @@ class RoboSensaiBullet:
         World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
         QRscene_2_QRregion = self.selected_qr_region
         half_extents = QRscene_2_QRregion[7:]
-        QRregion_2_ObjCenter = action[:3] * (2 * half_extents) - half_extents
-        QRregion_2_ObjBase_xyz = p.multiplyTransforms(QRregion_2_ObjCenter, [0, 0, 0, 1.], -self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
+        QRregion_2_ObjBboxCenter = action[:3] * (2 * half_extents) - half_extents
+        QRregion_2_ObjBase_xyz = p.multiplyTransforms(QRregion_2_ObjBboxCenter, [0, 0, 0, 1.], -self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
         # In the qr_scene baseLink frame
         QRsceneBase_2_ObjBase_xyz = p.multiplyTransforms(QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7], QRregion_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
         # In the simulator world frame
@@ -428,6 +428,7 @@ class RoboSensaiBullet:
 
         for self.his_steps in range(self.args.max_traj_history_len):
             self.simstep(1/240)
+            self.blender_record()
             obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
             obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True)
             # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]; Left Shift
@@ -710,7 +711,10 @@ class RoboSensaiBullet:
     ######################################
     ####### Evaluation Functions #########
     ######################################
-    def visualize_actor_prob(self, raw_actions, act_log_prob):
+    def visualize_actor_prob(self, raw_actions, act_log_prob, step_action):
+        World_2_ObjBasePlace_xyz, World_2_ObjBasePlace_quat = self.convert_actions(step_action)
+        World_2_ObjBboxCenterPlace_xyz = p.multiplyTransforms(World_2_ObjBasePlace_xyz, [0, 0, 0, 1.], self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
+
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
         action = raw_actions.sigmoid() # Map action to (0, 1)
         action[..., 3:5] = 0. # No x,y rotation
@@ -719,19 +723,21 @@ class RoboSensaiBullet:
         World_2_QRscene_pos, World_2_QRscene_ori = self.to_torch(World_2_QRscene[0]), self.to_torch(World_2_QRscene[1])
         QRscene_2_QRregion = self.to_torch(self.selected_qr_region)
         half_extents = QRscene_2_QRregion[7:]
-        QRregion_2_ObjCenter = action[..., :3] * (2 * half_extents) - half_extents
+        QRregion_2_ObjBboxCenter = action[..., :3] * (2 * half_extents) - half_extents
         # In the qr_scene baseLink frame
-        QRregion_2_ObjCenter_shape_head = QRregion_2_ObjCenter.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
-        QRscene_2_QRregion_xyz, QRscene_2_QRregion_quat = QRscene_2_QRregion[:3].repeat(*QRregion_2_ObjCenter_shape_head, 1), QRscene_2_QRregion[3:7].repeat(*QRregion_2_ObjCenter_shape_head, 1)
-        QRsceneBase_2_ObjBase_xyz = tf_combine(QRscene_2_QRregion_quat, QRscene_2_QRregion_xyz, self.to_torch([0., 0., 0., 1.]).repeat(*QRregion_2_ObjCenter_shape_head, 1), QRregion_2_ObjCenter)[1]
+        QRregion_2_ObjBboxCenter_shape_head = QRregion_2_ObjBboxCenter.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
+        QRscene_2_QRregion_xyz, QRscene_2_QRregion_quat = QRscene_2_QRregion[:3].repeat(*QRregion_2_ObjBboxCenter_shape_head, 1), QRscene_2_QRregion[3:7].repeat(*QRregion_2_ObjBboxCenter_shape_head, 1)
+        QRsceneBase_2_ObjBboxCenter_xyz = tf_combine(QRscene_2_QRregion_quat, QRscene_2_QRregion_xyz, self.to_torch([0., 0., 0., 1.]).repeat(*QRregion_2_ObjBboxCenter_shape_head, 1), QRregion_2_ObjBboxCenter)[1]
         # In the simulator world frame
-        QRsceneBase_2_ObjBase_xyz_shape_head = QRsceneBase_2_ObjBase_xyz.shape[:-1]
-        World_2_QRscene_pos, World_2_QRscene_ori = World_2_QRscene_pos.repeat(*QRsceneBase_2_ObjBase_xyz_shape_head, 1), World_2_QRscene_ori.repeat(*QRsceneBase_2_ObjBase_xyz_shape_head, 1)
-        World_2_ObjBase_xyz = tf_combine(World_2_QRscene_ori, World_2_QRscene_pos, self.to_torch([0., 0., 0., 1.]).repeat(*QRsceneBase_2_ObjBase_xyz_shape_head, 1), QRsceneBase_2_ObjBase_xyz)[1]
+        QRsceneBase_2_ObjBboxCenter_xyz_shape_head = QRsceneBase_2_ObjBboxCenter_xyz.shape[:-1]
+        World_2_QRscene_pos, World_2_QRscene_ori = World_2_QRscene_pos.repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1), World_2_QRscene_ori.repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1)
+        World_2_ObjBboxCenter_xyz = tf_combine(World_2_QRscene_ori, World_2_QRscene_pos, self.to_torch([0., 0., 0., 1.]).repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1), QRsceneBase_2_ObjBboxCenter_xyz)[1]
         # Convert Rotation to Quaternion
         World_2_ObjBase_euler = action[..., 3:] * 2*np.pi
         World_2_ObjBase_quat = quat_from_euler(World_2_ObjBase_euler)
 
+        # act_log_prob shape is [dim_x, dim_y, dim_z, dim_roll, dim_pitch, dim_yaw, 6]
+        # 6 represents one prob of certain combination of x, y, z, r, p, y
         xyz_act_prob = act_log_prob[..., :3].sum(-1).exp()
         r_act_prob = act_log_prob[..., 5].exp()
         using_act_prob = xyz_act_prob # or xyzr_act_prob
@@ -741,14 +747,12 @@ class RoboSensaiBullet:
         voxel_half_z = (half_extents[2] / (action.shape[2]-1)).item()
 
         # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
-        World_2_ObjBase_xyz_i = World_2_ObjBase_xyz[:, :, :, 0, 0, 0].view(-1, 3)
-        World_2_ObjBase_quat_i = World_2_ObjBase_quat[0, 0, 0, 0, 0, :].view(-1, 4)
+        World_2_ObjBboxCenter_xyz_i = World_2_ObjBboxCenter_xyz[:, :, :, 0, 0, 0].view(-1, 3).cpu().numpy()
+        World_2_ObjBase_quat_i = World_2_ObjBase_quat[0, 0, 0, 0, 0, :].view(-1, 4).cpu().numpy()
 
         step_euler_i = World_2_ObjBase_euler[:, :, :, 0, 0, 0].view(-1, 3)
         using_act_prob_i = using_act_prob[:, :, :, 0, 0, 0].view(-1, 1)
         # print(f"Euler Angle: {step_euler_i.unique(dim=0)}")
-        # Normalize the prob sum to 1
-        using_act_prob_i = using_act_prob_i / (using_act_prob_i.sum() + 1e-10)
         # Strenthen the range to [0, 1.] to strengthen the color
         using_act_prob_i = (using_act_prob_i - using_act_prob_i.min()) / (using_act_prob_i.max() - using_act_prob_i.min() + 1e-10)
         r_act_prob = (r_act_prob - r_act_prob.min()) / (r_act_prob.max() - r_act_prob.min() + 1e-10)
@@ -758,17 +762,26 @@ class RoboSensaiBullet:
                 [p.removeBody(act_vs_box_id, physicsClientId=self.client_id) for act_vs_box_id in self.act_vs_box_ids]
             
             self.act_vs_box_ids = []
-            for j in range(World_2_ObjBase_xyz_i.shape[0]):
-                # Use Yellow color
-                if torch.isclose(using_act_prob_i[j], torch.zeros_like(using_act_prob_i[j])): continue
-                rgba_color = [1, 1, 0, using_act_prob_i[j].item()]
-                act_vs_box_id = pu.draw_box_body(World_2_ObjBase_xyz_i[j].cpu().numpy(), 
-                                                halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
-                                                client_id=self.client_id, rgba_color=rgba_color)
+            if using_act_prob_i.max() == 0: # The resolution is too low and the agent has a high confidence about one certain pos
+                act_vs_box_id = pu.draw_box_body(World_2_ObjBboxCenterPlace_xyz, 
+                                                 halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
+                                                 client_id=self.client_id, rgba_color=[1, 1, 0, 0.5])
                 self.act_vs_box_ids.append(act_vs_box_id)
+            else:
+                for j in range(World_2_ObjBboxCenter_xyz_i.shape[0]):
+                    # Use Yellow color
+                    if torch.isclose(using_act_prob_i[j], torch.zeros_like(using_act_prob_i[j])): 
+                        continue
+                    rgba_color = [1, 1, 0, using_act_prob_i[j].item()]
+                    act_vs_box_id = pu.draw_box_body(World_2_ObjBboxCenter_xyz_i[j].cpu().numpy(), 
+                                                    halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
+                                                    client_id=self.client_id, rgba_color=rgba_color)
+                    self.act_vs_box_ids.append(act_vs_box_id)
             time.sleep(3.)
         
-        return World_2_ObjBase_xyz_i, using_act_prob_i, World_2_ObjBase_quat_i, r_act_prob
+        return World_2_ObjBboxCenter_xyz_i, using_act_prob_i.cpu().numpy(), \
+               World_2_ObjBase_quat_i, r_act_prob.cpu().numpy(), \
+               World_2_ObjBboxCenterPlace_xyz, World_2_ObjBasePlace_quat
     
 
     def replay_placement_scene(self, scene_dict_file):

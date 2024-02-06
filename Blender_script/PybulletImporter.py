@@ -208,7 +208,7 @@ def delete_scene_objects():
 
 
 def render_animation(output_path, encoder='H264', container='MPEG4', resolution=(1920, 1080), 
-                     start_frame=1, end_frame=250, skip_frames=1, quality=90, frame_rate=24):
+                     start_frame=1, end_frame=250, skip_frames=1, quality=90, frame_rate=24, animation=True):
     """
     Renders an animation in Blender to a specified path with various customizable settings.
 
@@ -233,7 +233,7 @@ def render_animation(output_path, encoder='H264', container='MPEG4', resolution=
     bpy.context.scene.render.filepath = output_path
 
     # Set the output format
-    bpy.context.scene.render.image_settings.file_format = 'FFMPEG'
+    bpy.context.scene.render.image_settings.file_format = 'FFMPEG' if animation else 'PNG'
     # Set the codec
     bpy.context.scene.render.ffmpeg.format = container
     bpy.context.scene.render.ffmpeg.codec = encoder
@@ -247,8 +247,8 @@ def render_animation(output_path, encoder='H264', container='MPEG4', resolution=
     bpy.context.scene.frame_end = end_frame
     bpy.context.scene.frame_step = skip_frames
     # Render the animation (https://blender.stackexchange.com/questions/283640/why-does-bpy-ops-render-renderanimation-true-work-but-fails-when-animation-is)
-    bpy.ops.render.render(animation=True, write_still=False)
-    
+    bpy.ops.render.render(animation=animation, write_still=True)
+
     print(f"Rendered animation to {output_path}")
     return
 
@@ -386,42 +386,52 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
 # Only if you create the add-on operator, you can use it.
 
 set_blender_engine(render_engine='CYCLES')
-directory = "eval_res/Union/trajectories/Union_01-19_14:43_Transformer_Tanh_Rand_ObjPlace_QRRegion_Goal_maxObjNum5_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq10_EVAL_best_objRange_5_5"
+directory = "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_8_8"
 filename_ext = ".pkl"
 # Listing all files in the specified directory.
-file_name = '5Objs_4eps_failure.pkl'
-# filepath = [file_name for file_name in listdir(directory) if file_name.endswith(filename_ext)][0]
-filepath = join(directory, file_name)
+filepaths = [join(directory, filename) for filename in listdir(directory) if filename.endswith(filename_ext) and "success" in filename]
+print(filepaths)
 
-delete_collection(specific_name=None)
-delete_scene_objects()
+for i, filepath in enumerate(filepaths):
+    delete_collection(specific_name=None)
+    delete_scene_objects()
 
-# Add a table
-add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.4, 0.5, 0.35), texture_path=None)
-# Add a plane as the ground with wooden texture
-add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
+    # Add a table
+    add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.4, 0.5, 0.35), texture_path=None)
+    # Add a plane as the ground with wooden texture
+    add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
 
-# Add visualization object
-# add_primitive_object(object_type='SPHERE', location=(0, 0, 1.0), scale=(0.1, 0.1, 0.1), use_emission=True, texture_path=None, alpha=0.3)
+    # Add visualization object
+    # add_primitive_object(object_type='SPHERE', location=(0, 0, 1.0), scale=(0.1, 0.1, 0.1), use_emission=True, texture_path=None, alpha=0.3)
 
-# Add light
-add_light(location=(0, 0, 5), energy=5000, color=(1., 1., 1.))
-# Add camera
-animate_camera_focus_rotate(
-    focus_point=(0, 0, 0.35),
-    camera_start_location=(3, 0., 3.),
-    rotation_angle=90,
-    frame_start=1,
-    frame_end=3800
-)
+    # Add light
+    add_light(location=(0, 0, 5), energy=5000, color=(1., 1., 1.))
 
-# Load the data from the pickle file.
-_, max_frame = load_pkl(filepath)
+    # Add camera
+    animate_camera_focus_rotate(
+        focus_point=(0, 0, 0.35),
+        camera_start_location=(0, 3., 3.),
+        rotation_angle=90,
+        # frame_start=1,
+        # frame_end=3800
+        frame_start=0,
+        frame_end=1
+    )
 
-skip_frames = 10
-frame_rate = 240 // skip_frames
+    # Load the data from the pickle file.
+    _, max_frame = load_pkl(filepath)
 
-start_time = time.time()
-render_animation('test_res/output.mp4', encoder='H264', resolution=(1280, 720), 
-                 skip_frames=skip_frames, start_frame=0, end_frame=max_frame+480, quality=80, frame_rate=frame_rate)
-print(f"Total time: {time.time() - start_time:.2f}s")
+    skip_frames = 10
+    frame_rate = 240 // skip_frames
+
+    start_time = time.time()
+    render_animation(f'test_res/output_{i}.png', 
+                    encoder='H264', 
+                    resolution=(2560, 1440), 
+                    skip_frames=skip_frames, 
+                    start_frame=max_frame, 
+                    end_frame=max_frame, 
+                    quality=80, 
+                    frame_rate=frame_rate,
+                    animation=False)
+    print(f"Total time: {time.time() - start_time:.2f}s")

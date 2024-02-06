@@ -322,8 +322,12 @@ class Agent(nn.Module):
 
 
     def set_mode(self, mode='train'):
-        if mode == 'train': self.train()
-        elif mode == 'eval': self.eval()
+        if mode == 'train': 
+            self.train()
+            # PointNet should be in the eval mode because it has BN layer!
+            self.pc_extractor.eval()
+        elif mode == 'eval': 
+            self.eval()
     
 
     def save_checkpoint(self, folder_path, folder_name, suffix="", ckpt_path=None):

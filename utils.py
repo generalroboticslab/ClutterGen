@@ -47,8 +47,8 @@ def dict2list(diction):
 
 def get_on_bbox(bbox, z_half_extend:float):
     bbox = bbox.copy()
-    # scene_center_pos is the relative translation from the object baselink to the center of the object bounding box
-    # All bbox given should be in the baselink frame (baselink is at the origin)
+    # scene_center_pos is the relative translation from the scene object's baselink to the center of the scene object's bounding box
+    # All bbox given should be in the baselink frame (baselink is at the origin when import the urdf)
     scene_center_pos, scene_half_extents = bbox[:3], bbox[7:10]
     scene_center_pos[2] += scene_half_extents[2] + z_half_extend
     scene_half_extents[2] = z_half_extend
@@ -61,8 +61,8 @@ def get_in_bbox(bbox, z_half_extend:float=None):
     if z_half_extend is None: z_half_extend = bbox[9]
     # Half extend should not be smaller than the original half extend
     z_half_extend = max(z_half_extend, bbox[9])
-    # scene_center_pos is the relative translation from the object baselink to the center of the object bounding box
-    # You need to change the relative translation not the absolute translation (half extent in z-axis)
+    # scene_center_pos is the relative translation from the scene object's baselink to the center of the scene object's bounding box
+    # All bbox given should be in the baselink frame (baselink is at the origin when import the urdf)
     scene_center_pos, scene_half_extents = bbox[:3], bbox[7:10]
     scene_center_pos[2] += z_half_extend - scene_half_extents[2]
     scene_half_extents[2] = z_half_extend
