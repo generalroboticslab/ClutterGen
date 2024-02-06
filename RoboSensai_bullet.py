@@ -512,13 +512,6 @@ class RoboSensaiBullet:
         # Post-physical step
         reward = self.compute_reward() if self.info['stepping']==1 else 0. # Must compute reward before observation since the velocity will be reset in the observaion. Only stepping environment will be recorded
         done = self.compute_done() if self.info['stepping']==1 else False
-        # Success Visualization here since observation needs to be reset. Only for evaluation!
-        if self.args.rendering and self.info['stepping']==1:
-            print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
-            if done and self.info['success'] == 1:
-                print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
-                if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
-
         # This point should be considered as the start of the episode! Stablebaseline3 will automatically reset the environment when done is True; Therefore our environment does not have reset function called, it is called outside.
         if self.info['stepping'] == 1. and not done: observation = self.compute_observations()
         else: observation = self.last_seq_obs
