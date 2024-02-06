@@ -92,7 +92,7 @@ def parse_args():
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--target-kl", type=float, default=2., help="the target KL divergence threshold")
     parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Using deterministic policy instead of normal")
     parser.add_argument('--eval', type=bool, default=False, help='Evaluates a policy a policy every 10 episode (default: True)')
     parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor for reward (default: 0.95)')
@@ -472,6 +472,11 @@ if __name__ == "__main__":
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
+        # Save previous parameters
+        if args.target_kl is not None:
+            agent_params_store = copy.deepcopy(agent.state_dict())
+            optim_params_store = copy.deepcopy(optimizer.state_dict())
+
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):
@@ -523,6 +528,8 @@ if __name__ == "__main__":
 
             if args.target_kl is not None:
                 if approx_kl > args.target_kl:
+                    agent.load_state_dict(agent_params_store)
+                    optimizer.load_state_dict(optim_params_store)
                     break
 
         # To float32 is because it does support for bfloat16 to numpy

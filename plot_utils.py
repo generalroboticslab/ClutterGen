@@ -5,6 +5,8 @@ import seaborn as sns
 import os
 import pandas as pd
 import ast
+from PIL import Image
+import matplotlib.backends.backend_pdf
 sns.set_theme()
 
 
@@ -98,11 +100,68 @@ class Plot_Utils:
         self.data_full = {}
 
 
+import os
+import matplotlib.pyplot as plt
+from PIL import Image
+import matplotlib.backends.backend_pdf
+
+def images_to_pdf(image_paths, pdf_path, images_per_row=3, dpi=300, title_ratio=1, fig_ratio=1.2):
+    """
+    Arrange a list of image paths as subplots in a single figure and save as a PDF,
+    with title font size adjusted based on subplot width.
+    """
+    # Open an example image to calculate single image size
+    example_image = Image.open(image_paths[0])
+    img_width, img_height = example_image.size
+    img_width_inches = img_width / dpi * fig_ratio
+    img_height_inches = img_height / dpi * fig_ratio
+    
+    # Calculate figure width and height in inches
+    num_images = len(image_paths)
+    num_rows = (num_images + images_per_row - 1) // images_per_row
+    fig_width = images_per_row * img_width_inches
+    fig_height = num_rows * img_height_inches
+
+    print(f"Figure size: {fig_width} x {fig_height} inches")
+    
+    # Create figure and subplots
+    fig, axes = plt.subplots(num_rows, images_per_row, figsize=(fig_width, fig_height), dpi=dpi)
+    axes = axes.flatten() if num_rows * images_per_row != 1 else [axes]
+    
+    # Calculate title font size based on subplot width and desired ratio
+    title_font_size = img_width_inches * title_ratio
+    
+    for i, ax in enumerate(axes):
+        if i < len(image_paths):
+            img = Image.open(image_paths[i])
+            ax.imshow(img, aspect='equal')
+            ax.axis('off')  # Hide axis
+            ax.set_title(os.path.basename(image_paths[i]), fontsize=title_font_size)
+        else:
+            ax.axis('off')  # Hide unused subplots
+    
+    plt.tight_layout()
+    plt.savefig(pdf_path, dpi=dpi)
+    plt.show()
+    plt.close(fig)
+
+
 
 if __name__ == "__main__":
-    plot_utils = Plot_Utils()
-    plot_utils.read_file("eval_res/YCB/CSV/YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="10p_best", trained_objs=[1, 5, 10])
-    plot_utils.read_file("eval_res/YCB/CSV/YCB_11-28_01:10_FC_FT_Rand_placing_Goal_12_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="12p_best", trained_objs=[1, 5, 10, 12])
-    # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-30_21:39_FC_FT_Rand_placing_Goal_16_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="16p_best", trained_objs=[1, 5, 10, 12, 16])
-    plot_utils.read_file("eval_res/YCB/CSV/EVAL_RandomPolicy_Setup.csv", checkpoint_name="RejectionSampling")
-    plot_utils.plot_success_steps()
+    # plot_utils = Plot_Utils()
+    # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="10p_best", trained_objs=[1, 5, 10])
+    # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-28_01:10_FC_FT_Rand_placing_Goal_12_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="12p_best", trained_objs=[1, 5, 10, 12])
+    # # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-30_21:39_FC_FT_Rand_placing_Goal_16_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="16p_best", trained_objs=[1, 5, 10, 12, 16])
+    # plot_utils.read_file("eval_res/YCB/CSV/EVAL_RandomPolicy_Setup.csv", checkpoint_name="RejectionSampling")
+    # plot_utils.plot_success_steps()
+
+    # Example usage
+    image_folder = 'test_res'  # Update this path
+    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')])  # Example for .png images
+    pdf_output_path = 'test_res/my_images.pdf'  # Update this path
+
+    images_to_pdf(image_files, 
+                  pdf_output_path, 
+                  images_per_row=6, 
+                  dpi=300,
+                  fig_ratio=1.2)
