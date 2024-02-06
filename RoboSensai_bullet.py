@@ -324,7 +324,7 @@ class RoboSensaiBullet:
         self.obj_done = True
 
         # Training
-        self.cur_trial = 1
+        self.cur_trial = 0
         # Observations
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
         self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
@@ -447,13 +447,6 @@ class RoboSensaiBullet:
 
         reward = self.compute_reward() # Must compute reward before observation since we use the velocity to compute reward
         done = self.compute_done()
-        # Success Visualization here since observation needs to be reset. Only for evaluation!
-        if self.args.rendering:
-            print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
-            if done and self.info['success'] == 1:
-                print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
-                if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
-
         observation = self.compute_observations() if not done else self.last_seq_obs # This point should be considered as the start of the episode!
 
         # Reset placed object pose | when reset, the placed_obj_poses will be empty 
@@ -628,10 +621,13 @@ class RoboSensaiBullet:
 
     def compute_reward(self):
         self.cur_trial += 1
+        if self.args.rendering:
+            print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
+
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
         if self.his_steps <= self.args.max_stable_steps: 
             # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
-            self.obj_done = True; self.cur_trial = 1; self.success_obj_num += 1
+            self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
             self.unplaced_objs_name.remove(self.selected_obj_name)
             # Update the placement success rate of each object
             self.update_running_avg(record_dict=self.info['obj_success_rate'],
@@ -698,6 +694,9 @@ class RoboSensaiBullet:
             
             if self.success_obj_num >= self.args.max_num_placing_objs:
                 self.info['success'] = 1.
+                if self.args.rendering: # Success visualization; Only for evaluation!
+                    print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
+                    if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
             else:
                 self.info['success'] = 0.
 
