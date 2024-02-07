@@ -714,8 +714,11 @@ class RoboSensaiBullet:
         World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
         World_2_QRscene_pos, World_2_QRscene_ori = self.to_torch(World_2_QRscene[0]), self.to_torch(World_2_QRscene[1])
         QRscene_2_QRregion = self.to_torch(self.selected_qr_region)
-        half_extents = QRscene_2_QRregion[7:]
-        QRregion_2_ObjBboxCenter = action[..., :3] * (2 * half_extents) - half_extents
+        QRregion_half_extents = QRscene_2_QRregion[7:]
+        QRregion_2_ObjBboxCenter = action[..., :3] * (2 * QRregion_half_extents) - QRregion_half_extents
+        # Compute the grid half extents to compute the voxel size
+        temp_QRregion_2_ObjBboxCenter = QRregion_2_ObjBboxCenter.view(-1, 3) # view so that max and min are easier to commpute
+        Grid_half_extents = (temp_QRregion_2_ObjBboxCenter.max(dim=0)[0] - temp_QRregion_2_ObjBboxCenter.min(dim=0)[0]) / 2
         # In the qr_scene baseLink frame
         QRregion_2_ObjBboxCenter_shape_head = QRregion_2_ObjBboxCenter.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
         QRscene_2_QRregion_xyz, QRscene_2_QRregion_quat = QRscene_2_QRregion[:3].repeat(*QRregion_2_ObjBboxCenter_shape_head, 1), QRscene_2_QRregion[3:7].repeat(*QRregion_2_ObjBboxCenter_shape_head, 1)
@@ -734,9 +737,9 @@ class RoboSensaiBullet:
         r_act_prob = act_log_prob[..., 5].exp()
         using_act_prob = xyz_act_prob # or xyzr_act_prob
         # Compute each voxel size
-        voxel_half_x = (half_extents[0] / (action.shape[0]-1)).item() # We have num_steps -1 intervals
-        voxel_half_y = (half_extents[1] / (action.shape[1]-1)).item()
-        voxel_half_z = (half_extents[2] / (action.shape[2]-1)).item()
+        voxel_half_x = (Grid_half_extents[0] / (action.shape[0]-1)).item() # We have num_steps -1 intervals
+        voxel_half_y = (Grid_half_extents[1] / (action.shape[1]-1)).item()
+        voxel_half_z = (Grid_half_extents[2] / (action.shape[2]-1)).item()
 
         # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
         World_2_ObjBboxCenter_xyz_i = World_2_ObjBboxCenter_xyz[:, :, :, 0, 0, 0].view(-1, 3).cpu().numpy()
@@ -765,9 +768,9 @@ class RoboSensaiBullet:
                     if torch.isclose(using_act_prob_i[j], torch.zeros_like(using_act_prob_i[j])): 
                         continue
                     rgba_color = [1, 1, 0, using_act_prob_i[j].item()]
-                    act_vs_box_id = pu.draw_box_body(World_2_ObjBboxCenter_xyz_i[j].cpu().numpy(), 
-                                                    halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
-                                                    client_id=self.client_id, rgba_color=rgba_color)
+                    act_vs_box_id = pu.draw_box_body(World_2_ObjBboxCenter_xyz_i[j], 
+                                                     halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
+                                                     client_id=self.client_id, rgba_color=rgba_color)
                     self.act_vs_box_ids.append(act_vs_box_id)
             time.sleep(3.)
         

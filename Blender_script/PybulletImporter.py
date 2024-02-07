@@ -12,7 +12,7 @@ from bpy_extras.io_utils import ImportHelper
 import bpy
 import pickle
 from os.path import splitext, join, basename, exists
-from os import listdir
+from os import listdir, makedirs
 from mathutils import Vector
 import math
 import time
@@ -384,13 +384,15 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
 ##############################################################################################################
 # Can not use if __name__ == "__main__" here. Blender seems does not support it.
 # Only if you create the add-on operator, you can use it.
-
+animation = False
+render_nums = 40
 set_blender_engine(render_engine='CYCLES')
-directory = "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_8_8"
+directory = "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_10_10"
 filename_ext = ".pkl"
 # Listing all files in the specified directory.
-filepaths = [join(directory, filename) for filename in listdir(directory) if filename.endswith(filename_ext) and "success" in filename]
-print(filepaths)
+filepaths = [join(directory, filename) for filename in listdir(directory) if filename.endswith(filename_ext) and "success" in filename][:render_nums]
+save_folder = join(directory, "render_results")
+makedirs(save_folder, exist_ok=True)
 
 for i, filepath in enumerate(filepaths):
     delete_collection(specific_name=None)
@@ -425,7 +427,9 @@ for i, filepath in enumerate(filepaths):
     frame_rate = 240 // skip_frames
 
     start_time = time.time()
-    render_animation(f'test_res/output_{i}.png', 
+    output_name = basename(filepath).replace(filename_ext, '.mp4') \
+        if animation else basename(filepath).replace(filename_ext, '.png')
+    render_animation(f'{save_folder}/{output_name}', 
                     encoder='H264', 
                     resolution=(2560, 1440), 
                     skip_frames=skip_frames, 
@@ -433,5 +437,5 @@ for i, filepath in enumerate(filepaths):
                     end_frame=max_frame, 
                     quality=80, 
                     frame_rate=frame_rate,
-                    animation=False)
+                    animation=animation)
     print(f"Total time: {time.time() - start_time:.2f}s")

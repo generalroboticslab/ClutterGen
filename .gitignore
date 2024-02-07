@@ -137,5 +137,5 @@ assets/sem_checkpoints/
 assets/objects/*
 !assets/objects/ycb_objects_origin_at_center_vhacd/
 assets/scenes/
-dynamic_grasping_pybullet/
+DG-official/
 Pointnet_Pointnet2_pytorch/

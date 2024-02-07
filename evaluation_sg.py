@@ -264,9 +264,14 @@ if __name__ == "__main__":
                     action, probs = agent.select_action([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
                     
                     if eval_args.actor_visualize:
-                        act_sig_grid_tensor = create_mesh_grid(action_ranges=[(0, 1)]*6, num_steps=[10]*6).to(device)
+                        std_range = 2 # +-2 std range
+                        probs_mean, probs_std = probs.mean, probs.stddev
+                        raw_act_range_low = (probs_mean - std_range*probs_std).squeeze(dim=0)
+                        raw_act_range_high = (probs_mean + std_range*probs_std).squeeze(dim=0)
+                        action_ranges = list(zip(raw_act_range_low.sigmoid(), raw_act_range_high.sigmoid()))
+                        act_sig_grid_tensor = create_mesh_grid(action_ranges=action_ranges, num_steps=[5]*6).to(device)
                         raw_actions = inverse_sigmoid(act_sig_grid_tensor)
-                        action_log_prob = probs.log_prob(raw_actions)                      
+                        action_log_prob = probs.log_prob(raw_actions)
 
                         prob_pos_heatmap = [envs.visualize_actor_prob(raw_actions, action_log_prob, action)]
 

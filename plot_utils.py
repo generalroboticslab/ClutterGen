@@ -1,4 +1,5 @@
 from matplotlib import pyplot as plt
+import re
 import torch
 import numpy as np
 import seaborn as sns
@@ -8,6 +9,19 @@ import ast
 from PIL import Image
 import matplotlib.backends.backend_pdf
 sns.set_theme()
+
+
+def atoi(text):
+    return int(text) if text.isdigit() else text
+
+
+def natural_keys(text):
+    """
+    alist.sort(key=natural_keys) sorts in human order
+    http://nedbatchelder.com/blog/200712/human_sorting.html
+    (See Toothy's implementation in the comments)
+    """
+    return [atoi(c) for c in re.split(r'(\d+)', text)]
 
 
 class Plot_Utils:
@@ -156,12 +170,12 @@ if __name__ == "__main__":
     # plot_utils.plot_success_steps()
 
     # Example usage
-    image_folder = 'test_res'  # Update this path
-    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')])  # Example for .png images
-    pdf_output_path = 'test_res/my_images.pdf'  # Update this path
+    image_folder = "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_10_10/render_results"  # Update this path
+    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)  # Example for .png images
+    pdf_output_path = os.path.join(image_folder, "combined.pdf")  # Update this path
 
     images_to_pdf(image_files, 
                   pdf_output_path, 
-                  images_per_row=6, 
-                  dpi=300,
+                  images_per_row=5,
+                  dpi=500,
                   fig_ratio=1.2)
