@@ -78,11 +78,9 @@ def get_args():
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
     parser.add_argument('--object_pool_folder', type=str, default='union_objects_train', help="folder path that stores all urdf files")
     parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
-    parser.add_argument('--specific_scene', type=str, default=None)
-
+    parser.add_argument('--specific_scene', type=str, default="table")
     parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
-    parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
     parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=list(range(1, 2)), help='A list of max num of placing objs')
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')

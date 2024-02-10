@@ -355,19 +355,19 @@ import torch
 import time
 
 device = "cuda:0"
-pc_extractor = get_model(num_class=40, normal_channel=False).to(device) # num_classes is used for loading checkpoint to make sure the model is the same
-pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=device)
-test_pc = torch.rand((1, 3, 10240), device=device)
-with torch.no_grad():
-    print(f"Doing 1 batch PC")
-    avg_time = 0
-    for i in range(100):
-      start_time = time.time()
-      feature = pc_extractor(test_pc)
-      avg_time += time.time() - start_time
-      print(f"Feature:", feature[0])
-      print(feature.shape)
-    print(f"1 Batch PC 100 times Average time: {avg_time/100.}")
+# pc_extractor = get_model(num_class=40, normal_channel=False).to(device) # num_classes is used for loading checkpoint to make sure the model is the same
+# pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=device)
+# test_pc = torch.rand((1, 3, 10240), device=device)
+# with torch.no_grad():
+#     print(f"Doing 1 batch PC")
+#     avg_time = 0
+#     for i in range(100):
+#       start_time = time.time()
+#       feature = pc_extractor(test_pc)
+#       avg_time += time.time() - start_time
+#       print(f"Feature:", feature[0])
+#       print(feature.shape)
+#     print(f"1 Batch PC 100 times Average time: {avg_time/100.}")
 
 
 # test_pc = torch.rand((20, 3, 10240), device=device)
@@ -380,3 +380,83 @@ with torch.no_grad():
 #       avg_time += time.time() - start_time
 #     print(f"20 Batches PC 100 times Average time: {avg_time/100.}")
 
+
+# def torch_gpu_memory_usage_during_forward_pass(model, input_size, dtype=torch.float32):
+#     """
+#     Estimates the GPU memory usage of a PyTorch model during a forward pass.
+#     """
+#     # Ensure model is in eval mode to disable dropout, batchnorm, etc.
+#     model.eval()
+
+#     # Create a dummy input tensor
+#     dummy_input = torch.zeros(*input_size, dtype=dtype)
+
+#     # Move model and dummy input to GPU if available
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     model.to(device)
+#     dummy_input = dummy_input.to(device)
+
+#     # Measure GPU memory before the forward pass
+#     # Reset peak memory stats
+#     torch.cuda.reset_peak_memory_stats()
+#     initial_memory = torch.cuda.memory_allocated(device)
+
+#     # Forward pass
+#     with torch.no_grad():
+#         model(dummy_input)
+
+#     # Measure GPU memory after the forward pass
+#     after_memory = torch.cuda.memory_allocated(device)
+#     peak_memory_during_forward = torch.cuda.max_memory_allocated(device)
+
+#     # Calculate the memory used by the model during the forward pass
+#     memory_used_during_forward = after_memory - initial_memory
+#     peak_memory_usage = peak_memory_during_forward - initial_memory
+
+#     # Clean up
+#     del dummy_input
+#     model.to('cpu')
+#     torch.cuda.empty_cache()
+
+#     return memory_used_during_forward, peak_memory_usage
+
+# Usage Example
+# init_gpu_memory = torch.cuda.memory_allocated(device)
+# bunch_models = []
+# for i in range(20):
+#   pc_extractor = get_model(num_class=40, normal_channel=False).to(device) # num_classes is used for loading checkpoint to make sure the model is the same
+#   pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=device)
+#   bunch_models.append(pc_extractor)
+# model_gpu_memory = torch.cuda.memory_allocated(device) - init_gpu_memory
+# print(f"Model GPU memory usage: {model_gpu_memory / (1024 ** 2)} MB")
+
+# input_size = (20, 3, 10240)
+# memory_used, peak_memory = torch_gpu_memory_usage_during_forward_pass(pc_extractor, input_size)
+# print(f"Memory used during forward pass: {memory_used / (1024 ** 2)} MB")
+# print(f"Input size: {input_size}; Peak memory usage during forward pass: {peak_memory / (1024 ** 2)} MB")
+
+
+# Pybullet Step time test with different number of objects
+import pybullet_utils as pu
+import time
+import pybullet as p
+import pybullet_data
+import os
+import numpy as np
+import random
+
+client_id = p.connect(p.DIRECT)
+p.setAdditionalSearchPath(pybullet_data.getDataPath())
+p.setGravity(0, 0, -9.8)
+number_of_objects = 100
+
+for i in range(number_of_objects):
+    obj_id = p.loadURDF("assets/union_objects_test/AlarmClock/1/mobility.urdf", basePosition=[0, 0, 10.], useFixedBase=False, globalScaling=0.2)
+    pu.change_obj_color(obj_id, rgba_color=[random.random(), random.random(), random.random(), 1.])
+  
+start_time = time.time()
+for i in range(240):
+    p.stepSimulation()
+time_elapsed = time.time() - start_time
+
+print(f"Time elapsed: {time_elapsed} s for {number_of_objects} objects")

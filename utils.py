@@ -5,7 +5,7 @@ import csv
 import pprint
 import numpy as np
 import torch
-
+import re
 
 
 def read_json(json_path):
@@ -105,3 +105,16 @@ def tensor_memory_in_mb(tensor):
     total_memory_bytes = num_elements * element_size
     total_memory_mb = total_memory_bytes / (1024 ** 2)  # Convert bytes to MB
     return total_memory_mb
+
+
+def atoi(text):
+    return int(text) if text.isdigit() else text
+
+
+def natural_keys(text):
+    """
+    alist.sort(key=natural_keys) sorts in human order
+    http://nedbatchelder.com/blog/200712/human_sorting.html
+    (See Toothy's implementation in the comments)
+    """
+    return [atoi(c) for c in re.split(r'(\d+)', text)]

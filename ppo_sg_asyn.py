@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument('--num_pool_objs', type=int, default=16)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
     parser.add_argument('--max_num_placing_objs', type=int, default=5)
-    parser.add_argument('--max_num_qr_scenes', type=int, default=1) 
+    parser.add_argument('--specific_scene', type=str, default="table") 
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
@@ -157,7 +157,6 @@ def parse_args():
     if args.num_pool_scenes: additional += f'_maxScene{args.num_pool_scenes}'
     if args.max_stable_steps: additional += f'_maxStable{args.max_stable_steps}'
     if args.min_continue_stable_steps: additional += f'_contStable{args.min_continue_stable_steps}'
-    if args.max_num_qr_scenes: additional += f'_maxQR{args.max_num_qr_scenes}Scene'
     if args.num_episode_to_replace_pool: additional += f'_Epis2Replace{args.num_episode_to_replace_pool}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'

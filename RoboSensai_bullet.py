@@ -1,4 +1,4 @@
-from utils import read_json, dict2list, get_on_bbox, get_in_bbox, pc_random_downsample
+from utils import read_json, dict2list, get_on_bbox, get_in_bbox, pc_random_downsample, natural_keys
 from torch_utils import tf_apply
 import time
 import os
@@ -29,7 +29,7 @@ from Blender_script.PybulletRecorder import PyBulletRecorder
 
 class RoboSensaiBullet:
     def __init__(self, args=None) -> None:
-        self.args = args
+        self.args = deepcopy(args)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.numpy_dtype = np.float16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else np.float32
         self.tensor_dtype = torch.bfloat16 if (hasattr(self.args, "use_bf16") and self.args.use_bf16) else torch.float32
@@ -57,10 +57,10 @@ class RoboSensaiBullet:
         self.obj_dataset_folder = os.path.join(self.args.asset_root, self.args.object_pool_folder)
         # 0: "Table", "Bookcase", "Dishwasher", "Microwave", all storage furniture
         self.obj_uni_names_dataset = {}
-        obj_categories = sorted(os.listdir(self.obj_dataset_folder))
+        obj_categories = sorted(os.listdir(self.obj_dataset_folder), key=natural_keys)
         for cate in obj_categories:
             obj_folder = os.path.join(self.obj_dataset_folder, cate)
-            obj_indexes = sorted(os.listdir(obj_folder))
+            obj_indexes = sorted(os.listdir(obj_folder), key=natural_keys)
             for idx in obj_indexes:
                 obj_uni_name = f"{cate}_{idx}"
                 obj_urdf_path = f"{self.obj_dataset_folder}/{cate}/{idx}/mobility.urdf"
@@ -72,10 +72,10 @@ class RoboSensaiBullet:
         # Load fixed scenes path
         self.fixed_scene_dataset_folder = os.path.join(self.args.asset_root, self.args.scene_pool_folder)
         self.scene_uni_names_dataset = {}
-        scene_categories = sorted(os.listdir(self.fixed_scene_dataset_folder))
+        scene_categories = sorted(os.listdir(self.fixed_scene_dataset_folder), key=natural_keys)
         for scene in scene_categories:
             scene_pool_folder = os.path.join(self.fixed_scene_dataset_folder, scene)
-            scene_indexes = sorted(os.listdir(scene_pool_folder))
+            scene_indexes = sorted(os.listdir(scene_pool_folder), key=natural_keys)
             for idx in scene_indexes:
                 scene_uni_name = f"{scene}_{idx}"
                 scene_urdf_path = f"{self.fixed_scene_dataset_folder}/{scene}/{idx}/mobility.urdf"
@@ -125,11 +125,18 @@ class RoboSensaiBullet:
                                                "pc_feature": self.pc_extractor(self.to_torch(table_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.tensor_dtype)
                                               }
         # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
-        if self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
+        if self.args.specific_scene is not None:
+            if self.args.specific_scene == "table":
+                selected_scene_pool = [] # Only load table
+            else:
+                assert self.args.specific_scene in self.scene_uni_names_dataset, f"Scene {self.args.specific_scene} does not exist!"
+                selected_scene_pool = [self.args.specific_scene]
+        elif self.args.random_select_scene_pool: # Randomly choose scene categories from the pool and their index
             selected_scene_pool = self.rng.choice(list(self.scene_uni_names_dataset.keys()), min(self.args.num_pool_scenes-1, len(self.scene_uni_names_dataset)), replace=False).tolist()
             if self.args.num_pool_scenes > len(self.scene_uni_names_dataset): print(f"WARNING: Only {len(self.scene_uni_names_dataset)} scenes are loaded!")
         else:
             selected_scene_pool = list(self.scene_uni_names_dataset.keys())[:self.args.num_pool_scenes-1]
+        
         for scene_uni_name in selected_scene_pool:
             scene_urdf_path = self.scene_uni_names_dataset[scene_uni_name]["urdf"]
             scene_label = self.scene_uni_names_dataset[scene_uni_name]["label"]
@@ -140,7 +147,7 @@ class RoboSensaiBullet:
                 scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
                 scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
-                init_z_offset = 5.
+                init_z_offset = 5. if not self.args.eval_result else 0. # For training, we hang the scene in the air; For evaluation, we place the scene on the ground
                 assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
                 self.fixed_scene_name_data[scene_uni_name] = {  # Init_pose is floating on the air to avoid rely on the ground
                                                                 "id": scene_id,
@@ -208,7 +215,7 @@ class RoboSensaiBullet:
                 print(f"Failed to load object {obj_uni_name} | Error: {e}")
         
         num_queriable_scenes = len(self.queriable_obj_names) + len(self.fixed_scene_name_data.keys()) if not self.args.fixed_scene_only else len(self.fixed_scene_name_data.keys())
-        assert num_queriable_scenes >= self.args.max_num_qr_scenes, f"Only {num_queriable_scenes} scenes are loaded, but we need {self.args.max_num_qr_scenes} scenes!"
+        assert num_queriable_scenes >= self.args.num_pool_scenes, f"Only {num_queriable_scenes} scenes are loaded, but we need {self.args.num_pool_scenes} scenes!"
         assert len(self.obj_name_data) >= self.args.max_num_placing_objs, f"Only {len(self.obj_name_data)} objects are loaded, but we need {self.args.max_num_placing_objs} objects!"
         
         verbose_info = f"Loaded {len(self.obj_name_data)} objects from {self.args.object_pool_folder} | {self.args.max_num_placing_objs} objects will be placed."
@@ -297,6 +304,7 @@ class RoboSensaiBullet:
         self.args.blender_record = self.args.blender_record if hasattr(self.args, "blender_record") else False
         self.args.step_async = self.args.step_async if hasattr(self.args, "step_async") else False
         self.args.step_sync = self.args.step_sync if hasattr(self.args, "step_sync") else False
+        self.args.eval_result = self.args.eval_result if hasattr(self.args, "eval_result") else False
         # Buffer does not need to be reset
         self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 
                      'obj_success_rate': {}, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
@@ -373,10 +381,12 @@ class RoboSensaiBullet:
 
 
     def update_unquery_scenes(self):
-        self.unquried_scene_name = list(self.fixed_scene_name_data.keys())
-        if not self.args.fixed_scene_only:
-            self.unquried_scene_name.extend(self.queriable_obj_names)
-        self.unquried_scene_name = self.unquried_scene_name[:self.args.max_num_qr_scenes]
+        if self.args.specific_scene is not None:
+            self.unquried_scene_name = [self.args.specific_scene]
+        else:
+            self.unquried_scene_name = list(self.fixed_scene_name_data.keys())
+            if not self.args.fixed_scene_only:
+                self.unquried_scene_name.extend(self.queriable_obj_names)
         
         
     def convert_actions(self, action):
@@ -595,7 +605,9 @@ class RoboSensaiBullet:
             if self.args.fixed_qr_region: max_z_half_extent = self.default_qr_region_z
             self.selected_qr_region = get_on_bbox(self.selected_qr_scene_bbox.copy(), z_half_extend=max_z_half_extent)
         elif self.selected_qr_scene_region == "in":
-            max_z_half_extent = self.selected_obj_bbox[9] # max z-half extend is half extent of the object! we can not handle the case that if some objects already placed on the scene and we want to stack on them.
+            # max z-half extend should be max(self.selected_obj_bbox[9], self.latest_scene_bbox[9]) ## The latest_scene_bbox should be recomputed after the object is placed (but we did not do this for now)
+            # Our current bbox is max(self.selected_obj_bbox[9], self.selected_qr_scene_bbox[9])
+            max_z_half_extent = self.selected_obj_bbox[9] 
             self.selected_qr_region = get_in_bbox(self.selected_qr_scene_bbox.copy(), z_half_extend=max_z_half_extent)
         else:
             raise NotImplementedError(f"Object {self.selected_qr_scene_name} Queried region {self.selected_qr_scene_region} is not implemented!")
@@ -689,7 +701,7 @@ class RoboSensaiBullet:
                 self.info['success'] = 1.
                 if self.args.rendering: # Success visualization; Only for evaluation!
                     print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
-                    if hasattr(self.args, "eval_result") and self.args.eval_result: time.sleep(3.)
+                    if self.args.eval_result: time.sleep(3.)
             else:
                 self.info['success'] = 0.
 
@@ -949,7 +961,6 @@ if __name__=="__main__":
     args.fixed_scene_only = True
     args.num_episode_to_replace_pool = 1000
     args.max_num_placing_objs = 5
-    args.max_num_qr_scenes = 1
     args.sequence_len = 1
     args.default_scaling = 0.5
     args.realtime = True
