@@ -264,7 +264,8 @@ class RoboSensaiBullet:
         # Observation space: [scene_pc_feature, obj_pc_feature, bbox, action, history (hitory_len * (obj_pos + obj_vel)))]
         # 1 is the env number to align with the isaacgym env
         # We have two kinds of observation: seq_obs [qr_region, prev_action, obj_sim_history]; pc_obs [scene_pc, obj_pc]
-        self.qr_region_dim = 10; self.action_dim = 6; self.traj_hist_dim = self.args.max_traj_history_len*(6+7)
+        self.qr_region_dim = 10; self.action_dim = 4; self.traj_hist_dim = self.args.max_traj_history_len*(6+7)
+        self.traj_history_shape = (self.args.max_traj_history_len, 6+7) # obj_pos dimension + obj_vel dimension
         self.raw_act_hist_qr_obs_shape = (1, self.args.sequence_len, self.qr_region_dim + self.action_dim + self.traj_hist_dim)
 
         self.history_ft_dim = self.traj_hist_dim if not self.args.use_traj_encoder else 512; 
@@ -275,10 +276,9 @@ class RoboSensaiBullet:
         self.seq_info_ft_dim = 2048 if self.args.use_seq_obs_encoder else np.prod(self.post_act_hist_qr_ft_shape[1:])
         self.post_observation_shape = (1, self.seq_info_ft_dim + self.scene_ft_dim + self.obj_ft_dim)
         
-        # Action space: [x, y, z, roll, pitch, yaw]
-        self.action_shape = (1, 6)
-        # trajectory shape
-        self.traj_history_shape = (self.args.max_traj_history_len, 6+7) # obj_pos dimension + obj_vel dimension
+        # Action space: [x, y, z, yaw]
+        self.action_shape = (1, self.action_dim)
+
         # slice
         self.qr_region_slice = slice(0, self.qr_region_dim)
         self.action_slice = slice(self.qr_region_slice.stop, self.qr_region_slice.stop+self.action_dim)
@@ -335,7 +335,7 @@ class RoboSensaiBullet:
         self.cur_trial = 0
         # Observations
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
-        self.last_raw_action = np.zeros(6, dtype=self.numpy_dtype)
+        self.last_raw_action = np.zeros(self.action_dim, dtype=self.numpy_dtype)
         self.last_seq_obs = np.zeros(self.raw_act_hist_qr_obs_shape[1:], dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
@@ -392,7 +392,6 @@ class RoboSensaiBullet:
     def convert_actions(self, action):
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
         action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
-        action[3:5] = 0. # No x,y rotation
         self.last_raw_action = action.copy()
         
         # action = [x, y, z, roll, pitch, yaw]
@@ -405,7 +404,7 @@ class RoboSensaiBullet:
         QRsceneBase_2_ObjBase_xyz = p.multiplyTransforms(QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7], QRregion_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
         # In the simulator world frame
         World_2_ObjBase_xyz = p.multiplyTransforms(World_2_QRscene[0], World_2_QRscene[1], QRsceneBase_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
-        World_2_ObjBase_quat = p.getQuaternionFromEuler((action[3:] * 2*np.pi))
+        World_2_ObjBase_quat = p.getQuaternionFromEuler((np.array([0., 0., action[3]], dtype=self.numpy_dtype)* 2*np.pi))
 
         if self.args.rendering:
             world2qr_region = p.multiplyTransforms(*World_2_QRscene, QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7])
@@ -721,8 +720,7 @@ class RoboSensaiBullet:
 
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
         action = raw_actions.sigmoid() # Map action to (0, 1)
-        action[..., 3:5] = 0. # No x,y rotation
-        # action = [x, y, z, roll, pitch, yaw]
+        # action = [x, y, z, yaw]
         World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
         World_2_QRscene_pos, World_2_QRscene_ori = self.to_torch(World_2_QRscene[0]), self.to_torch(World_2_QRscene[1])
         QRscene_2_QRregion = self.to_torch(self.selected_qr_region)
@@ -740,13 +738,14 @@ class RoboSensaiBullet:
         World_2_QRscene_pos, World_2_QRscene_ori = World_2_QRscene_pos.repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1), World_2_QRscene_ori.repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1)
         World_2_ObjBboxCenter_xyz = tf_combine(World_2_QRscene_ori, World_2_QRscene_pos, self.to_torch([0., 0., 0., 1.]).repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1), QRsceneBase_2_ObjBboxCenter_xyz)[1]
         # Convert Rotation to Quaternion
-        World_2_ObjBase_euler = action[..., 3:] * 2*np.pi
+        World_2_ObjBase_euler = torch.zeros(action.shape[:-1]+(3, ), dtype=self.torch_dtype, device=action.device)
+        World_2_ObjBase_euler[..., 3] = action[..., 3] * 2*np.pi
         World_2_ObjBase_quat = quat_from_euler(World_2_ObjBase_euler)
 
         # act_log_prob shape is [dim_x, dim_y, dim_z, dim_roll, dim_pitch, dim_yaw, 6]
         # 6 represents one prob of certain combination of x, y, z, r, p, y
         xyz_act_prob = act_log_prob[..., :3].sum(-1).exp()
-        r_act_prob = act_log_prob[..., 5].exp()
+        r_act_prob = act_log_prob[..., 3].exp()
         using_act_prob = xyz_act_prob # or xyzr_act_prob
         # Compute each voxel size
         voxel_half_x = (Grid_half_extents[0] / (action.shape[0]-1)).item() # We have num_steps -1 intervals
@@ -754,11 +753,11 @@ class RoboSensaiBullet:
         voxel_half_z = (Grid_half_extents[2] / (action.shape[2]-1)).item()
 
         # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
-        World_2_ObjBboxCenter_xyz_i = World_2_ObjBboxCenter_xyz[:, :, :, 0, 0, 0].view(-1, 3).cpu().numpy()
-        World_2_ObjBase_quat_i = World_2_ObjBase_quat[0, 0, 0, 0, 0, :].view(-1, 4).cpu().numpy()
+        World_2_ObjBboxCenter_xyz_i = World_2_ObjBboxCenter_xyz[:, :, :, 0].view(-1, 3).cpu().numpy()
+        World_2_ObjBase_quat_i = World_2_ObjBase_quat[0, 0, 0, :].view(-1, 4).cpu().numpy()
 
-        step_euler_i = World_2_ObjBase_euler[:, :, :, 0, 0, 0].view(-1, 3)
-        using_act_prob_i = using_act_prob[:, :, :, 0, 0, 0].view(-1, 1)
+        step_euler_i = World_2_ObjBase_euler[:, :, :, 0].view(-1, 3)
+        using_act_prob_i = using_act_prob[:, :, :, 0].view(-1, 1)
         # print(f"Euler Angle: {step_euler_i.unique(dim=0)}")
         # Strenthen the range to [0, 1.] to strengthen the color
         using_act_prob_i = (using_act_prob_i - using_act_prob_i.min()) / (using_act_prob_i.max() - using_act_prob_i.min() + 1e-10)

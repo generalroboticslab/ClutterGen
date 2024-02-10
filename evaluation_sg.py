@@ -76,7 +76,7 @@ def get_args():
 
     # RoboSensai Bullet parameters
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='union_objects_train', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
     parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
     parser.add_argument('--specific_scene', type=str, default="table")
     parser.add_argument('--num_pool_objs', type=int, default=10)
@@ -267,7 +267,7 @@ if __name__ == "__main__":
                         raw_act_range_low = (probs_mean - std_range*probs_std).squeeze(dim=0)
                         raw_act_range_high = (probs_mean + std_range*probs_std).squeeze(dim=0)
                         action_ranges = list(zip(raw_act_range_low.sigmoid(), raw_act_range_high.sigmoid()))
-                        act_sig_grid_tensor = create_mesh_grid(action_ranges=action_ranges, num_steps=[5]*6).to(device)
+                        act_sig_grid_tensor = create_mesh_grid(action_ranges=action_ranges, num_steps=[5]*len(action_ranges)).to(device)
                         raw_actions = inverse_sigmoid(act_sig_grid_tensor)
                         action_log_prob = probs.log_prob(raw_actions)
 
