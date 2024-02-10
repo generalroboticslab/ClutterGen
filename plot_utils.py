@@ -1,5 +1,4 @@
 from matplotlib import pyplot as plt
-import re
 import torch
 import numpy as np
 import seaborn as sns
@@ -9,19 +8,7 @@ import ast
 from PIL import Image
 import matplotlib.backends.backend_pdf
 sns.set_theme()
-
-
-def atoi(text):
-    return int(text) if text.isdigit() else text
-
-
-def natural_keys(text):
-    """
-    alist.sort(key=natural_keys) sorts in human order
-    http://nedbatchelder.com/blog/200712/human_sorting.html
-    (See Toothy's implementation in the comments)
-    """
-    return [atoi(c) for c in re.split(r'(\d+)', text)]
+from utils import natural_keys
 
 
 class Plot_Utils:

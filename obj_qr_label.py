@@ -127,6 +127,7 @@ class ObjectLabeler:
             print(f"Current object id: {self.cur_object_id}.")
             self.cur_obj_pc = pu.get_obj_pc_from_id(self.cur_object_id)
             self.cur_obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(self.cur_obj_pc)
+            pu.change_obj_color(self.cur_object_id, rgba_color=[0., 0., 0., 0.2])
             
             p.changeDynamics(self.cur_object_id, -1, mass=0.)
             obj_joints_num = pu.get_num_joints(self.cur_object_id)
@@ -405,13 +406,13 @@ class ObjectLabeler:
         
 
 if __name__ == '__main__':
-    Label = "obj"
+    Label = "scene"
     
     if Label == "obj":
-        source_folder_path = "assets/union_objects"
+        source_folder_path = "assets/YCB/ycb_urdf"
         target_folder_name = "selected_obj"
 
-        labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
+        labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=False)
         labeler.start()
     else:
         source_folder_path = "assets/union_scene"
