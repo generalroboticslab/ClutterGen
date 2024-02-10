@@ -36,7 +36,8 @@ def parse_args():
     # RoboSensai Env parameters (dataset)
     parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--min_num_placing_objs', type=int, default=1)
-    parser.add_argument('--max_num_placing_objs', type=int, default=5)
+    parser.add_argument('--train_step', type=int, default=1)
+    parser.add_argument('--max_num_placing_objs', type=int, default=10)
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_pool_scenes', type=int, default=1)
@@ -58,7 +59,6 @@ def parse_args():
     parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/360], nargs='+')
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
-    parser.add_argument('--train_step', type=int, default=1)
     parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use curriculum learning')
 
     # I/O hyper parameter
