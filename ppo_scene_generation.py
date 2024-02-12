@@ -294,6 +294,14 @@ if __name__ == "__main__":
     else:
         num_placing_objs_lst = [args.max_num_placing_objs]
 
+    # Global variables that will not be reset
+    update_iter = 0
+    reward_update_iters = 0
+    global_step = 0
+    i_episode = 0
+    mile_stone = 0
+    meta_data = {"milestone": {}, "training_info": {}}
+
     for num_placing_objs in num_placing_objs_lst:
         if args.num_envs > 1:
             envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
@@ -303,6 +311,12 @@ if __name__ == "__main__":
         args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps episodes to update
         args.batch_size = int(args.num_envs * args.num_steps)
         args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
+        meta_data["training_info"].update({
+            num_placing_objs: {
+                "batch_size": args.batch_size,
+                "num_steps": args.num_steps,
+            }
+        })
 
         # Storage
         seq_obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
@@ -315,9 +329,6 @@ if __name__ == "__main__":
         values = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
 
         # TRY NOT TO MODIFY: start the game
-        update_iter = 0
-        reward_update_iters = 0
-        global_step = 0
         start_time = time.time()
         next_seq_obs = torch.Tensor(envs.reset()).to(device)
         # Scene and obj feature tensor are keeping updated inplace
@@ -341,7 +352,7 @@ if __name__ == "__main__":
         pos_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
         ori_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
         act_p_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
-        best_acc = 0; i_episode = 0; mile_stone = 0; meta_data = {"milestone": {}, "training_info": {}}
+        best_acc = 0
 
         # training
         for update in range(1, num_updates + 1):
@@ -409,6 +420,13 @@ if __name__ == "__main__":
                             f"Reward:{episode_reward:.4f}")
                     
                     if args.collect_data:
+                        # Save success rate and placed objects number
+                        meta_data.update({
+                            "episode": i_episode,
+                            "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                            "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                        })
+
                         if args.wandb:
                             wandb.log({'episodes': i_episode, 
                                     'iterations': update_iter,
@@ -434,20 +452,7 @@ if __name__ == "__main__":
                                                 folder_name=args.final_name,
                                                 suffix=str(i_episode))
                             mile_stone = i_episode
-
-                        # Save success rate and placed objects number
-                        meta_data.update({
-                            "episode": i_episode,
-                            "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
-                            "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
-                        })
-                        meta_data["training_info"].update({
-                            num_placing_objs: {
-                                "batch_size": args.batch_size,
-                                "num_steps": args.num_steps,
-                            }
-                        })
-                        save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
+                            save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
 
 
             ####----- force action to test variance; Skip the training process ----####
