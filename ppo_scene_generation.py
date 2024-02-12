@@ -46,8 +46,8 @@ def parse_args():
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
-    parser.add_argument('--max_num_urdf_points', type=int, default=2048)
-    parser.add_argument('--max_num_scene_points', type=int, default=10240)
+    parser.add_argument('--max_num_urdf_points', type=int, default=1024)
+    parser.add_argument('--max_num_scene_points', type=int, default=20480)
     # RoboSensai Env parameters (training)
     parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
@@ -60,6 +60,7 @@ def parse_args():
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
     parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use curriculum learning')
+    parser.add_argument('--patience_iters', type=int, default=5000)
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
@@ -111,7 +112,7 @@ def parse_args():
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--sequence_len', type=int, default=5)
-    parser.add_argument('--reward_steps', type=int, default=5000)
+    parser.add_argument('--reward_episodes', type=int, default=5000)
     parser.add_argument('--cpus', type=int, default=[], nargs='+', help="run environments on specified cpus")
     parser.add_argument("--torch_deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
 
@@ -295,12 +296,17 @@ if __name__ == "__main__":
         num_placing_objs_lst = [args.max_num_placing_objs]
 
     # Global variables that will not be reset
-    update_iter = 0
-    reward_update_iters = 0
+    global_update_iter = 0
     global_step = 0
-    i_episode = 0
-    mile_stone = 0
+    global_episodes = 0
+    # Record episodes, iters, and steps are used to fill the reward buffer
+    reward_update_iters = 0
+    reward_steps = 0
+    reward_episodes = 0
+
+    save_mile_stone = 0
     meta_data = {"milestone": {}, "training_info": {}}
+    best_agent_state_dict, best_optimizer_state_dict = None, None
 
     for num_placing_objs in num_placing_objs_lst:
         if args.num_envs > 1:
@@ -310,7 +316,7 @@ if __name__ == "__main__":
             envs.args.max_num_placing_objs = num_placing_objs
             envs.reset_info()
         
-        args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps episodes to update
+        args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps global_episodes to update
         args.batch_size = int(args.num_envs * args.num_steps)
         args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
         meta_data["training_info"].update({
@@ -319,6 +325,14 @@ if __name__ == "__main__":
                 "num_steps": args.num_steps,
             }
         })
+
+        # Load the best parameters for next curriculum
+        if best_agent_state_dict is not None:
+            agent.load_state_dict(best_agent_state_dict)
+            best_agent_state_dict = None # Consume the best agent state dict
+        if best_optimizer_state_dict is not None:
+            optimizer.load_state_dict(best_optimizer_state_dict)
+            best_optimizer_state_dict = None # Consume the best optimizer state dict
 
         # Storage
         seq_obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
@@ -339,7 +353,7 @@ if __name__ == "__main__":
         reset_infos = envs.reset_infos if args.num_envs > 1 else [envs.info]
         agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, reset_infos, use_mask=True)
         next_done = torch.zeros(args.num_envs).to(device)
-        num_updates = args.total_timesteps // args.batch_size  # ?? same as episodes? No!! episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
+        num_updates = args.total_timesteps // args.batch_size  # ?? same as global_episodes? No!! global_episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
 
         # custom record information
         episode_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
@@ -347,14 +361,15 @@ if __name__ == "__main__":
         episode_ori_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
         episode_act_penalties = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
 
-        episode_rewards_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_success_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_placed_objs_box = torch.zeros((args.reward_steps, ), dtype=tensor_dtype).to(device)
+        episode_rewards_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+        episode_success_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+        episode_placed_objs_box = torch.zeros((args.reward_episodes, ), dtype=tensor_dtype).to(device)
+        iter_success_rate_box = torch.zeros((args.patience_iters, ), dtype=temp_env.tensor_dtype).to(device)
 
-        pos_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
-        ori_r_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
-        act_p_box = torch.zeros((args.reward_steps, ), dtype=temp_env.tensor_dtype).to(device)
-        best_acc = 0
+        pos_r_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+        ori_r_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+        act_p_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+        best_acc = 0; curri_episodes = 0; curri_steps = 0; curri_update_iters = 0; avg_buffer_reset = True
 
         # training
         for update in range(1, num_updates + 1):
@@ -368,7 +383,8 @@ if __name__ == "__main__":
                 optimizer.param_groups[0]["lr"] = lrnow
 
             for step in range(0, args.num_steps):
-                global_step += 1 * args.num_envs
+                global_step += args.num_envs
+                curri_steps += args.num_envs
                 seq_obs[step] = next_seq_obs
                 scene_ft_obs[step] = next_scene_ft_obs
                 obj_ft_obs[step] = next_obj_ft_obs
@@ -399,7 +415,8 @@ if __name__ == "__main__":
                 terminal_nums = terminal_index.sum().item()
                 # Compute the average episode rewards.
                 if terminal_nums > 0:
-                    i_episode += terminal_nums
+                    global_episodes += terminal_nums
+                    curri_episodes += terminal_nums
                     update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                     update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
                     update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
@@ -412,67 +429,87 @@ if __name__ == "__main__":
 
                     # Empty the episode rewards
                     episode_rewards[terminal_index] = 0.
-                    episode_reward = torch.mean(episode_rewards_box[-i_episode:]).item()
-                    episode_success_rate = torch.mean(episode_success_box[-i_episode:]).item()
-                    episode_placed_objs = torch.mean(episode_placed_objs_box[-i_episode:]).item()
+                    episode_reward = torch.mean(episode_rewards_box[-curri_episodes:]).item()
+                    episode_success_rate = torch.mean(episode_success_box[-curri_episodes:]).item()
+                    episode_placed_objs = torch.mean(episode_placed_objs_box[-curri_episodes:]).item()
 
                     if not args.quiet:
                         print(f"Global Steps:{global_step}/{args.total_timesteps}," 
-                            f"Episode:{i_episode}, Success Rate:{episode_success_rate:.2f},"
-                            f"Reward:{episode_reward:.4f}")
+                              f"Episode:{global_episodes}, Success Rate:{episode_success_rate:.2f},"
+                              f"Reward:{episode_reward:.4f}")
                     
                     if args.collect_data:
                         # Save success rate and placed objects number
                         meta_data['training_info'].update({
                             num_placing_objs: {
-                                "episodes": i_episode,
+                                "global_episodes": global_episodes,
+                                "global_steps": global_step,
                                 "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
                                 "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
                             }
                         })
 
                         if args.wandb:
-                            wandb.log({'episodes': i_episode, 
-                                       'iterations': update_iter,
+                            wandb.log({'global_episodes': global_episodes, 
+                                       'global_steps': global_step,
+                                       'global_iterations': global_update_iter,
                                        'reward/reward_train': episode_reward})
 
-                            if i_episode >= args.reward_steps:  # episode success rate
-                                if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
-                                wandb.log({'s_episodes': i_episode - args.reward_steps, 
-                                           's_iterations': update_iter - reward_update_iters,
+                            if curri_episodes >= args.reward_episodes:  # episode success rate
+                                if avg_buffer_reset: # Only add once per curriculum
+                                    reward_episodes += curri_episodes
+                                    reward_update_iters += curri_update_iters
+                                    reward_steps += curri_steps
+                                    avg_buffer_reset = False
+                                wandb.log({'s_episodes': global_episodes - reward_episodes, 
+                                           's_iterations': global_update_iter - reward_update_iters,
+                                           's_steps': global_step - reward_steps,
                                            'reward/success_rate': episode_success_rate,
                                            'reward/num_placed_objs': episode_placed_objs})
 
-                        if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
-                            best_acc = episode_success_rate;
+                        if curri_episodes > args.reward_episodes and episode_success_rate > best_acc:
+                            best_acc = episode_success_rate
+                            best_agent_state_dict = deepcopy(agent.state_dict())
+                            best_optimizer_state_dict = deepcopy(optimizer.state_dict())
                             agent.save_checkpoint(folder_path=args.checkpoint_dir,
                                                 folder_name=args.final_name, 
                                                 suffix='best')
-                            print(f"s_episodes: {i_episode - args.reward_steps} | " 
+                            print(f"s_episodes: {global_episodes - reward_episodes} | " 
                                   f"Now best accuracy is {best_acc * 100:.3f}% | " 
                                   f"Number of placed objects is {episode_placed_objs:.2f}")
-                        if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
+                        
+                        # about every args.reward_episodes (because of multi-envs) global_episodes to save one model
+                        if (global_episodes - save_mile_stone) >= args.reward_episodes:
                             agent.save_checkpoint(folder_path=args.checkpoint_dir, 
-                                                folder_name=args.final_name,
-                                                suffix=str(i_episode))
-                            mile_stone = i_episode
+                                                  folder_name=args.final_name,
+                                                  suffix=str(global_episodes))
+                            save_mile_stone = global_episodes
                             save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
 
 
             ####----- force action to test variance; Skip the training process ----####
             if args.random_policy: continue
-            if args.use_curriculum and num_placing_objs < args.max_num_placing_objs and best_acc >= 0.8:
-                if args.collect_data: 
-                    meta_data["milestone"].update({
-                            num_placing_objs: {
-                            "num_placing_objs": num_placing_objs,
-                            "update_iter": update_iter,
-                            "success_rate": best_acc,
-                            "episodes": i_episode,
-                        }
-                    })
-                    save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
-                break
+
+            ####----- Curriculum next stage checker ----####
+            update_tensor_buffer(iter_success_rate_box, torch.tensor([episode_success_rate], dtype=iter_success_rate_box.dtype, device=iter_success_rate_box.device))
+            if args.use_curriculum and \
+                num_placing_objs < args.max_num_placing_objs and \
+                curri_update_iters >= args.patience_iters:
+                if iter_success_rate_box.max()>=0.8 or \
+                    iter_success_rate_box.max()-iter_success_rate_box.min()<=0.01:
+                    if args.collect_data: 
+                        meta_data["milestone"].update({
+                                num_placing_objs: {
+                                "num_placing_objs": num_placing_objs,
+                                "success_rate": best_acc,
+                                's_episodes': global_episodes - reward_episodes, 
+                                's_iterations': global_update_iter - reward_update_iters,
+                                's_steps': global_step - reward_steps,
+                            }
+                        })
+                        save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
+                    print(f"Curriculum update: {num_placing_objs} -> {num_placing_objs + args.train_step}")
+                    break
 
 
             ####----- Compute advantage for each state in the markov chain ----####
@@ -568,29 +605,33 @@ if __name__ == "__main__":
                     nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                     optimizer.step()
 
-                    update_iter += 1
-
-                if args.target_kl is not None:
-                    if approx_kl > args.target_kl:
+                if args.target_kl is not None and approx_kl > args.target_kl:
                         agent.load_state_dict(agent_params_store)
                         optimizer.load_state_dict(optim_params_store)
                         break
 
+            if args.target_kl is not None and approx_kl > args.target_kl:
+                continue # Skip the wandb log since the update is not successful
+
+            global_update_iter += 1
+            curri_update_iters += 1
             # To float32 is because it does support for bfloat16 to numpy
             y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
             if args.collect_data and args.wandb:
-                wandb.log({'steps': global_step, 
-                        'iterations': update_iter,
-                        'train/learning_rate': optimizer.param_groups[0]["lr"],
-                        'train/critic_loss': v_loss.item(),
-                        'train/policy_loss': pg_loss.item(),
-                        'train/entropy': entropy_loss.item(),
-                        'train/approx_kl': approx_kl.item(),
-                        'train/advantages': mb_advantages.mean().item(),
-                        'train/explained_variance': explained_var})
+                wandb.log({
+                    'steps': global_step, 
+                    'iterations': global_update_iter,
+                    'train/learning_rate': optimizer.param_groups[0]["lr"],
+                    'train/critic_loss': v_loss.item(),
+                    'train/policy_loss': pg_loss.item(),
+                    'train/entropy': entropy_loss.item(),
+                    'train/approx_kl': approx_kl.item(),
+                    'train/advantages': mb_advantages.mean().item(),
+                    'train/explained_variance': explained_var
+                })
 
             if not args.quiet:
                 print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)

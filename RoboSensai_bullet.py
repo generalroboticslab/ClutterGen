@@ -99,7 +99,7 @@ class RoboSensaiBullet:
         pu.change_obj_color(planeId, rgba_color=[1., 1., 1., 0.2])
         qr_pose, qr_ori, qr_half_extents = [0., 0., 0.], p.getQuaternionFromEuler([0., 0., 0.]), [1., 1., 1.]
         plane_pc_sample_region = self.to_numpy(planeHalfExtents)
-        plane_pc = self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_urdf_points, 3))
+        plane_pc = self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_qr_scene_points, 3))
         plane_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *planeHalfExtents]
         # self.fixed_scene_name_data["plane"] = {"id": planeId,
         #                                         "init_pose": [0., 0., 0.],
@@ -114,7 +114,7 @@ class RoboSensaiBullet:
         
         # Default region using table position and table half extents
         qr_pose, qr_ori, qr_half_extents = [0., 0., tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*tableHalfExtents[:2], 0.1]
-        table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_urdf_points, use_worldpos=False)
+        table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
         table_axes_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *tableHalfExtents]
         self.fixed_scene_name_data["table"] = {"id": tableId,
                                                "init_z_offset": 0.0,
@@ -144,7 +144,7 @@ class RoboSensaiBullet:
                 basePosition, baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
                 scene_id = self.loadURDF(scene_urdf_path, basePosition=basePosition, baseOrientation=baseOrientation, globalScaling=scene_label["globalScaling"], useFixedBase=True)
                 scene_mesh_num = pu.get_body_mesh_num(scene_id, client_id=self.client_id)
-                scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
+                scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
                 scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 init_z_offset = 5. if not self.args.eval_result else 0. # For training, we hang the scene in the air; For evaluation, we place the scene on the ground
@@ -298,6 +298,7 @@ class RoboSensaiBullet:
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
         self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
+        self.args.max_num_qr_scene_points = 10 * self.args.max_num_urdf_points
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
         self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
         self.args.use_traj_encoder = self.args.use_traj_encoder if hasattr(self.args, "use_traj_encoder") else False
