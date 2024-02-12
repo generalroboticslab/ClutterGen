@@ -306,10 +306,21 @@ class RoboSensaiBullet:
         self.args.step_sync = self.args.step_sync if hasattr(self.args, "step_sync") else False
         self.args.eval_result = self.args.eval_result if hasattr(self.args, "eval_result") else False
         # Buffer does not need to be reset
-        self.info = {'success': 0., 'stepping': 1., 'his_steps': 0, 'success_placed_obj_num': 0, 'selected_qr_scene_name': None, 
-                     'obj_success_rate': {}, 'scene_obj_success_num': {}, 'pc_change_indicator': 1.}
+        self.reset_info()
         self.num_episode = 0
         self.default_qr_region_z = 0.3
+
+    
+    def reset_info(self):
+        self.info = {
+            "success": 0., 
+            "stepping": 1., 
+            "his_steps": 0, 
+            "success_placed_obj_num": 0, 
+            "obj_success_rate": {}, 
+            "scene_obj_success_num": {}, 
+            "pc_change_indicator": 1.
+        }
 
     
     def reset_env(self):

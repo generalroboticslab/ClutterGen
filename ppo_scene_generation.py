@@ -305,8 +305,10 @@ if __name__ == "__main__":
     for num_placing_objs in num_placing_objs_lst:
         if args.num_envs > 1:
             envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
+            envs.env_method('reset_info') # reset the info to record the new training miscs
         else:
             envs.args.max_num_placing_objs = num_placing_objs
+            envs.reset_info()
         
         args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps episodes to update
         args.batch_size = int(args.num_envs * args.num_steps)
@@ -421,10 +423,12 @@ if __name__ == "__main__":
                     
                     if args.collect_data:
                         # Save success rate and placed objects number
-                        meta_data.update({
-                            "episode": i_episode,
-                            "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
-                            "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                        meta_data['training_info'].update({
+                            num_placing_objs: {
+                                "episodes": i_episode,
+                                "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                                "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                            }
                         })
 
                         if args.wandb:

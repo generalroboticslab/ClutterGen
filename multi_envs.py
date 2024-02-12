@@ -47,6 +47,10 @@ class CustomPyBulletEnv(gym.Env):
 
     def visualize_actor_prob(self, *args, **kwargs):
         return self.env.visualize_actor_prob(*args, **kwargs)
+    
+
+    def reset_info(self):
+        return self.env.reset_info()
 
 
     def render(self, mode='human'):
