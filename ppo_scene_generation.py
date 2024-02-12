@@ -429,15 +429,15 @@ if __name__ == "__main__":
 
                         if args.wandb:
                             wandb.log({'episodes': i_episode, 
-                                    'iterations': update_iter,
-                                    'reward/reward_train': episode_reward})
+                                       'iterations': update_iter,
+                                       'reward/reward_train': episode_reward})
 
                             if i_episode >= args.reward_steps:  # episode success rate
                                 if reward_update_iters == 0: reward_update_iters = update_iter # record the first update_iter when the avg buffer is full
                                 wandb.log({'s_episodes': i_episode - args.reward_steps, 
-                                        's_iterations': update_iter - reward_update_iters,
-                                        'reward/success_rate': episode_success_rate,
-                                        'reward/num_placed_objs': episode_placed_objs})
+                                           's_iterations': update_iter - reward_update_iters,
+                                           'reward/success_rate': episode_success_rate,
+                                           'reward/num_placed_objs': episode_placed_objs})
 
                         if episode_success_rate > best_acc and i_episode > args.reward_steps:  # at least after 500 episodes could consider as a good success
                             best_acc = episode_success_rate;
@@ -445,8 +445,8 @@ if __name__ == "__main__":
                                                 folder_name=args.final_name, 
                                                 suffix='best')
                             print(f"s_episodes: {i_episode - args.reward_steps} | " 
-                                f"Now best accuracy is {best_acc * 100:.3f}% | " 
-                                f"Number of placed objects is {episode_placed_objs:.2f}")
+                                  f"Now best accuracy is {best_acc * 100:.3f}% | " 
+                                  f"Number of placed objects is {episode_placed_objs:.2f}")
                         if (i_episode - mile_stone) >= args.reward_steps:  # about every args.reward_steps episodes to save one model
                             agent.save_checkpoint(folder_path=args.checkpoint_dir, 
                                                 folder_name=args.final_name,
