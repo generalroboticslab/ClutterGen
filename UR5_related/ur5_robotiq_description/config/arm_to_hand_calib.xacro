@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="arm_to_hand_calib">
+  <xacro:property name="hand_xyz_offset" value="0 0 0"/>
+  <xacro:property name="hand_rpy_offset" value="0 1.57079633 0"/>
+</robot>

@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+
+   <!-- Include ur5 robot -->
+   <xacro:include filename="$(find ur_description)/urdf/ur5.urdf.xacro" />
+
+   <xacro:arg name="transmission_hw_interface" default="hardware_interface/PositionJointInterface"/>
+
+   <!-- Include Robotiq Hand robot -->
+   <xacro:include filename="$(find robotiq_2f_85_gripper_visualization)/urdf/robotiq_arg2f_85_model_macro.xacro" />
+
+  <xacro:arg name="kinematics_config" default="$(find ur_description)/config/ur5_default.yaml"/>
+
+   <xacro:macro name="ur5_robotiq" params="prefix">
+      <!-- invoke ur5 macro -->
+      <xacro:ur5_robot prefix="${prefix}" joint_limited="false"
+         transmission_hw_interface="$(arg transmission_hw_interface)"
+         kinematics_file="${load_yaml('$(arg kinematics_config)')}"
+      />
+
+      <!-- invoke robotiq hand macro -->
+      <xacro:robotiq_arg2f_85 prefix="${prefix}"/>
+
+      <joint name="${prefix}ee_robotiq_joint" type="fixed">
+         <parent link="${prefix}ee_link"/>
+         <child link="${prefix}robotiq_arg2f_base_link"/>
+         <origin xyz="0.0 0.0 0.0" rpy="1.57 0.0 1.57" />
+         <!-- <origin xyz="0.0 0.0 0.0" rpy="0.0 1.57 0.0" /> -->
+      </joint>
+
+      <!-- GraspIt! reference frame is slight offset from b_hand_base_link -->
+      <joint name="${prefix}graspit_joint" type="fixed">
+				<parent link="${prefix}ee_link" />
+				<child link="${prefix}graspit_link" />
+				<origin rpy="1.57 0.0 0.0" xyz="0.0 0.0 0.0" />
+		</joint>
+		<link name="${prefix}graspit_link" />
+   </xacro:macro>
+
+</robot>
+
