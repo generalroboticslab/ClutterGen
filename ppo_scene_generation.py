@@ -602,7 +602,9 @@ if __name__ == "__main__":
 
                     optimizer.zero_grad()
                     loss.backward()
-                    nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+                    # Clip grad norm seperately to avoid large value gradients to affect the policy gradients
+                    nn.utils.clip_grad_norm_(agent.critic.parameters(), args.max_grad_norm)
+                    nn.utils.clip_grad_norm_(agent.actor.parameters(), args.max_grad_norm)
                     optimizer.step()
 
                 if args.target_kl is not None and approx_kl > args.target_kl:
