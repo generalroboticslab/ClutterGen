@@ -867,10 +867,8 @@ class RoboSensaiBullet:
         
         # Convert Object World2ObjBase velocity to QRsceneCenter2ObjCenter velocity
         World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True) # no rotation between the base and the center
-        World2ObjCenter_linvel = pu.quat_apply(World2ObjCenter_quat, World2ObjCenter_vel[:3])
-        QRsceneCenter2ObjCenter_linvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_linvel)
-        World2ObjCenter_rotvel = pu.quat_apply(World2ObjCenter_quat, World2ObjCenter_vel[3:])
-        QRsceneCenter2ObjCenter_rotvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_rotvel)
+        QRsceneCenter2ObjCenter_linvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_vel[:3])
+        QRsceneCenter2ObjCenter_rotvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_vel[3:])
         return (list(QRsceneCenter2ObjCenter_pos), list(QRsceneCenter2ObjCenter_quat)), \
                 self.to_numpy(list(QRsceneCenter2ObjCenter_linvel) + list(QRsceneCenter2ObjCenter_rotvel))
     
