@@ -96,7 +96,7 @@ def parse_args():
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=2., help="the target KL divergence threshold")
+    parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--deterministic", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Using deterministic policy instead of normal")
     parser.add_argument('--eval', type=bool, default=False, help='Evaluates a policy a policy every 10 episode (default: True)')
     parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor for reward (default: 0.95)')
@@ -297,6 +297,7 @@ if __name__ == "__main__":
 
     # Global variables that will not be reset
     global_update_iter = 0
+    skipped_update_iter = 0
     global_step = 0
     global_episodes = 0
     # Record episodes, iters, and steps are used to fill the reward buffer
@@ -613,6 +614,13 @@ if __name__ == "__main__":
                         break
 
             if args.target_kl is not None and approx_kl > args.target_kl:
+                skipped_update_iter += 1
+                if args.collect_data and args.wandb:
+                    wandb.log({
+                        'debug/skipped_update_iter': skipped_update_iter,
+                        'debug/skipped_kl': approx_kl.item(),
+                        'debug/skipped_adv': mb_advantages.mean().item()
+                    })
                 continue # Skip the wandb log since the update is not successful
 
             global_update_iter += 1

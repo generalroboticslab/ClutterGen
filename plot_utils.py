@@ -157,7 +157,7 @@ if __name__ == "__main__":
     # plot_utils.plot_success_steps()
 
     # Example usage
-    image_folder = "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_10_10/render_results"  # Update this path
+    image_folder = "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_ChangeTableSize_objRange_10_10/render_results"  # Update this path
     image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)  # Example for .png images
     pdf_output_path = os.path.join(image_folder, "combined.pdf")  # Update this path
 

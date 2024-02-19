@@ -160,6 +160,7 @@ class Agent(nn.Module):
         self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
 
         # Trajectory history encoder and Large sequence observation encoder
+        ### TODO: We probably need give both actor and critic the same encoder!!!
         if envs.args.use_tf_traj_encoder:
             self.traj_hist_encoder = Transfromer_Linear(
                 input_size=envs.traj_history_shape[1], 

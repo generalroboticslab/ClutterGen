@@ -3,8 +3,11 @@ import os, math, time
 from collections import namedtuple
 import pybullet as p
 import numpy as np
+from copy import deepcopy
 import pybullet_utils as pu
 import pybullet_data
+from UR5_related.RRT.RRTPlan import RRTPlanner
+from ikfastpy import ikfastpy
 
 
 def normalize_angle_positive(angle):
@@ -80,6 +83,7 @@ class UR5RobotiqPybulletController(object):
 
     JOINT_INDICES_DICT = {}
     EE_LINK_NAME = 'ee_link'
+    GRIPPER_BASE_NAME = 'robotiq_arg2f_base_link'
 
     TIP_LINK = "ee_link"
     BASE_LINK = "base_link"
@@ -100,20 +104,43 @@ class UR5RobotiqPybulletController(object):
         self.initial_pose_rng = np.random.default_rng(self.pose_rng_seed)
         self.client_id = client_id
         self.initial_joint_values = self.HOME
+        self.initial_base_pose = pu.get_link_pose(self.id, -1, client_id=self.client_id)
+        
         self.num_arm_joints = len(self.GROUPS["arm"])
         self.num_gripper_joints = len(self.GROUPS["gripper"])
         joint_infos = [p.getJointInfo(robot_id, joint_index, physicsClientId=self.client_id) \
                        for joint_index in range(p.getNumJoints(robot_id, physicsClientId=self.client_id))]
-        self.base_link_initial_pose = pu.get_link_pose(self.id, -1, client_id=self.client_id)
-
         self.JOINT_INDICES_DICT = {entry[1].decode('ascii'): entry[0] for entry in joint_infos}
         self.GROUP_INDEX = {key: [self.JOINT_INDICES_DICT[joint_name] for joint_name in self.GROUPS[key]] \
                             for key in self.GROUPS}
         self.EEF_LINK_INDEX = pu.link_from_name(robot_id, self.EE_LINK_NAME, client_id=self.client_id)
+        self.GRIPPER_BASE_INDEX = pu.link_from_name(robot_id, self.GRIPPER_BASE_NAME, client_id=self.client_id)
+        
+        # Compute EEF 2 Grasp transforms
+        self.GripperBase_2_Grasp = [[0, 0, 0.1], [0, 0, 0, 1]]
+        World_2_EEF = pu.get_link_pose(self.id, self.EEF_LINK_INDEX, client_id=self.client_id)
+        World_2_GRIPPERBase = pu.get_link_pose(self.id, self.GRIPPER_BASE_INDEX, client_id=self.client_id)
+        World_2_RobotBase = pu.get_link_pose(self.id, -1, client_id=self.client_id)
+        self.EEF_2_GRIPPERBase = p.multiplyTransforms(*p.invertTransform(World_2_EEF[0], World_2_EEF[1]),
+                                                       *World_2_GRIPPERBase)
+        self.Grasp_2_GRIPPERBase = p.invertTransform(self.GripperBase_2_Grasp[0], self.GripperBase_2_Grasp[1])
+        self.GRIPPERBase_2_EEF = p.invertTransform(self.EEF_2_GRIPPERBase[0], self.EEF_2_GRIPPERBase[1])
+        self.RobotBase_2_World = p.invertTransform(World_2_RobotBase[0], World_2_RobotBase[1])
 
         self.arm_max_joint_velocities = [pu.get_max_velocity(self.id, j_id, client_id=self.client_id) for j_id in self.GROUP_INDEX['arm']] # not use?
-        self.attach_cid = None
-        self.attach_object_id = None
+        self.attach_cid = None # attachment constraint id
+        self.attach_object_id = None # attached object id
+
+        # IK, RRT Motion Planner
+        self.rrt = RRTPlanner([self], client_id=self.client_id) # embed rrt planner in itself
+        # ikfast solver
+        self.ur5_kin = ikfastpy.PyKinematics()
+        # for motion planning; Actually need to put in to RRT planner; Future optimization.
+        self.arm_difference_fn = pu.get_difference_fn(self.id, self.GROUP_INDEX['arm'], client_id=self.client_id)
+        self.arm_distance_fn = pu.get_distance_fn(self.id, self.GROUP_INDEX['arm'], client_id=self.client_id)
+        self.arm_sample_fn = pu.get_sample_fn(self.id, self.GROUP_INDEX['arm'], rng=self.rng, client_id=self.client_id)
+        self.arm_extend_fn = self.rrt.extend_fn
+        self.update_collision_check()
 
         # visualize
         self.initial_visualize = False
@@ -126,8 +153,7 @@ class UR5RobotiqPybulletController(object):
         if input_joint_values is not None:
             self.start_joint_values = input_joint_values
         else:
-            if initial: self.start_joint_values = self.initial_joint_values
-            else: self.start_joint_values = self.random_initial(box_ext=0.15)
+            self.start_joint_values = self.initial_joint_values
         self.set_arm_joints(self.start_joint_values)
         self.set_gripper_joints(self.OPEN_POSITION)
         self.arm_discretized_plan = None
@@ -140,8 +166,8 @@ class UR5RobotiqPybulletController(object):
 
     def attach_object(self, target_id):
         target_pose = pu.get_body_pose(target_id, client_id=self.client_id)
-        eef_pose = self.get_eef_pose()
-        eef_P_world = p.invertTransform(eef_pose[0], eef_pose[1])
+        eef_grasp_pose = self.get_eef_pose()
+        eef_P_world = p.invertTransform(eef_grasp_pose[0], eef_grasp_pose[1])
         eef_P_target = p.multiplyTransforms(
             eef_P_world[0], eef_P_world[1], 
             target_pose[0], target_pose[1],
@@ -177,6 +203,11 @@ class UR5RobotiqPybulletController(object):
         self.gripper_wp_target_index = 1
 
 
+    def update_collision_check(self, disabled_collisions=[]):
+        attached_bodies = [self.attach_object_id] if self.attach_object_id is not None else []
+        self.collision_fn_full = self.rrt.get_collision_fn(attachments=attached_bodies, disabled_targets=disabled_collisions)  # recompute all collision combinations because scene change
+
+
     def set_arm_joints(self, joint_values):
         pu.set_joint_positions(self.id, self.GROUP_INDEX['arm'], joint_values, client_id=self.client_id)
         pu.control_joints(self.id, self.GROUP_INDEX['arm'], joint_values, client_id=self.client_id)
@@ -193,6 +224,11 @@ class UR5RobotiqPybulletController(object):
 
     def control_gripper_joints(self, joint_values, control_type='limited'):
         pu.control_joints(self.id, self.GROUP_INDEX['gripper'], joint_values, control_type, client_id=self.client_id)
+
+
+    def open_gripper(self, realtime=False):
+        waypoints = self.plan_gripper_joint_values(self.OPEN_POSITION)
+        self.execute_gripper_plan(waypoints, realtime)
 
 
     def close_gripper(self, realtime=False):
@@ -225,11 +261,13 @@ class UR5RobotiqPybulletController(object):
 
 
     def get_arm_fk_pybullet(self, joint_values): # pybullet need to set joint then set back which pollutes visualization
-        return pu.forward_kinematics(self.id, 
+        Robot_2_EEF =  pu.forward_kinematics(self.id, 
                                      self.GROUP_INDEX['arm'], 
                                      joint_values, 
                                      self.EEF_LINK_INDEX, 
                                      client_id=self.client_id)
+        World_2_EEF = p.multiplyTransforms(*self.initial_base_pose, *Robot_2_EEF)
+        return World_2_EEF
 
 
     def get_arm_fk_ikfast(self, joint_values): # fk_ikfast position is right but orientation is wrong -> need further fix
@@ -239,7 +277,7 @@ class UR5RobotiqPybulletController(object):
         ee_orientation = self.quaternion_from_matrix(ee_matrix)
         ee_position = ee_pose[:, 3].tolist()
         ee_pose = (ee_position, ee_orientation)
-        base_correction = (self.base_link_initial_pose[0], [0.0, 0.0, 1.0, 0.0]) # why correction?
+        base_correction = (self.initial_base_pose[0], [0.0, 0.0, 1.0, 0.0]) # why correction?
         ee_2_wrist3 = ([0.0, 0.0, 0.0], [-0.5, 0.5, -0.5, 0.5])  # also could use pybullet ee_2_wrist3 = p.multiplyTransform(p.invertTransform(wrist3), ee_pose)
         ee_pose_adjust = pu.multiply_multi_transforms(base_correction, ee_pose, p.invertTransform(*ee_2_wrist3))
         return ee_pose_adjust
@@ -296,10 +334,15 @@ class UR5RobotiqPybulletController(object):
         return q
 
 
-    def get_arm_ik(self, pose_2d, avoid_collisions=False, solver='ikpybullet'): # default use ikfast, lift use pybullet
+    def get_arm_ik(self, World_2_Grasp, avoid_collisions=False, solver='ikpybullet'): # default use ikfast, lift use pybullet
+        """
+        pose_2d: (position, orientation); This is in the world frame; World_2_Grasp
+        """
+        Robot_2_EEF = pu.multiply_multi_transforms(self.RobotBase_2_World, World_2_Grasp, self.Grasp_2_GRIPPERBase, self.GRIPPERBase_2_EEF)
+        
         if solver == 'ikpybullet':
-            return self.get_arm_ik_pybullet(pose_2d, avoid_collisions=avoid_collisions)
-        else: return self.get_ik_fast(pose_2d, avoid_collisions=avoid_collisions)
+            return self.get_arm_ik_pybullet(Robot_2_EEF, avoid_collisions=avoid_collisions)
+        else: return self.get_ik_fast(Robot_2_EEF, avoid_collisions=avoid_collisions)
 
 
     def get_arm_ik_pybullet(self, pose_2d, arm_joint_values=None, gripper_joint_values=None, avoid_collisions=True):
@@ -311,8 +354,8 @@ class UR5RobotiqPybulletController(object):
                                                     pose_2d[0],
                                                     pose_2d[1],
                                                     currentPositions=list(arm_joint_values) + gripper_joint_values,
-                                                    physicsClientId=self.client_id
-                                                    # maxNumIterations=100,
+                                                    physicsClientId=self.client_id,
+                                                    maxNumIterations=100,
                                                     # residualThreshold=.01
                                                     )
         ik_result = list(joint_values[:6])
@@ -340,50 +383,41 @@ class UR5RobotiqPybulletController(object):
         return None
 
 
-    def get_ik_fast(self, eef_pose, avoid_collisions=True, arm_joint_values=None, ignore_last_joint=True,
-                    use_grasp_roll_duality=True): # no ik would return None; ik_fast return joint angle within [-pi, pi] !!!
+    def get_ik_fast(self, eef_grasp_pose, avoid_collisions=True, arm_joint_values=None, ignore_last_joint=True): # no ik would return None; ik_fast return joint angle within [-pi, pi] !!!
         arm_joint_values = self.get_arm_joint_values()
-        ik_results = self.get_ik_fast_full(eef_pose)
+        ik_results = self.get_ik_fast_full(eef_grasp_pose)
         if avoid_collisions:
             # avoid all collision
             collision_free = [not self.collision_fn_full(ik) for ik in ik_results]
             ik_results = np.array(ik_results)[np.where(collision_free)]
-        else:
-            # only allow collision with target object
-            collision_free = [not self.collision_fn_notarget(ik) for ik in ik_results]
-            ik_results = np.array(ik_results)[np.where(collision_free)]
         if not ik_results.any():
             return None
+        
+        # Select the closest joint configuration
         if arm_joint_values is not None:
             if ignore_last_joint:
                 jv_dists = np.linalg.norm(ik_results[:, :-1] - np.array(arm_joint_values)[:-1], axis=1)
             else:
                 jv_dists = np.linalg.norm(ik_results - np.array(arm_joint_values), axis=1)
             ik_result = ik_results[np.argsort(jv_dists)[0]]
-            if use_grasp_roll_duality:
-                # parrallel jaw grasp roll duality
-                reference = normalize_angle(arm_joint_values[-1])
-                original = normalize_angle(ik_result[-1])
-                dual = normalize_angle(ik_result[-1] + np.pi)
-                if np.abs(dual - reference) < np.abs(original - reference):
-                    ik_result[-1] = dual
         else:
             ik_result = ik_results[0]
+        
         ik_result = np.array(self.convert_range(ik_result))
         return ik_result # TODO why I use numpy array return rather than list??
 
 
-    def get_ik_fast_full(self, eef_pose):
+    def get_ik_fast_full(self, eef_grasp_pose):
 
         # base_2_shoulder = gu.get_transform('base_link', 'shoulder_link')
         # base_2_shoulder = ([0.0, 0.0, 0.089159], [0.0, 0.0, 1.0, 0.0])
         # the z-offset (0.089159) is from kinematics_file config in ur_description
-        base_correction = (self.base_link_initial_pose[0], [0.0, 0.0, 1.0, 0.0]) # why correction? Because ikfast assume your base is [0, 0, 0], [0, 0, 0, 1]
+        base_correction = (self.initial_base_pose[0], [0.0, 0.0, 1.0, 0.0]) # why correction? Because ikfast assume your base is [0, 0, 0], [0, 0, 0, 1]
 
         # ee_2_wrist3 = gu.get_transform('ee_link', 'wrist_3_link')
         ee_2_wrist3 = ([0.0, 0.0, 0.0], [-0.5, 0.5, -0.5, 0.5])  # also could use pybullet ee_2_wrist3 = p.multiplyTransform(p.invertTransform(wrist3), ee_pose)
 
-        wrist_3_pose_in_shoulder = pu.multiply_multi_transforms(p.invertTransform(*base_correction), eef_pose, ee_2_wrist3)
+        wrist_3_pose_in_shoulder = pu.multiply_multi_transforms(p.invertTransform(*base_correction), eef_grasp_pose, ee_2_wrist3)
 
         wrist_3_pose_in_shoulder = pu.pose2d_matrix(wrist_3_pose_in_shoulder)[:3]
         joint_configs = self.ur5_kin.inverse(wrist_3_pose_in_shoulder.reshape(-1).tolist())
@@ -392,6 +426,34 @@ class UR5RobotiqPybulletController(object):
         n_solutions = int(len(joint_configs) / n_joints)
         joint_configs = np.asarray(joint_configs).reshape(n_solutions, n_joints)
         return joint_configs
+    
+
+    def plan_arm_motion(self, grasp_jv, planner='birrt', maximum_planning_time=2.):
+        """ plan a discretized motion for the arm """
+        print("Planning")
+        if grasp_jv is None: return 0., None
+        if isinstance(maximum_planning_time, np.ndarray): maximum_planning_time = maximum_planning_time[0] # if input action is numpy version
+        if maximum_planning_time == 0: maximum_planning_time = 1e-8 # Avoid 0 being considered as None.
+        
+        if self.arm_discretized_plan is not None:
+            future_target_index = min(self.arm_wp_target_index, len(self.arm_discretized_plan) - 1)
+            start_joint_values = self.arm_discretized_plan[future_target_index]
+            start_joint_velocities = None
+            # use previous jv to compute joint start velocities
+            # next_joint_values = self.arm_discretized_plan[min(future_target_index + 1, len(self.robot.arm_discretized_plan) - 1)]
+            # start_joint_velocities = ((np.array(next_joint_values) - np.array(start_joint_values)) / (1. / 240)).tolist()  # confirm that getting joint velocity this way is right
+            # previous_discretized_plan = self.arm_discretized_plan[future_target_index:] if self.use_seed_trajectory else None
+            arm_discretized_plan, planning_time = self.plan_arm_joint_values(grasp_jv, start_joint_values=start_joint_values,
+                                                                                previous_discretized_plan=None,
+                                                                                start_joint_velocities=start_joint_velocities,
+                                                                                maximum_planning_time=maximum_planning_time,
+                                                                                planner=planner)
+            self.arm_future_start_index = future_target_index
+        else:
+            arm_discretized_plan, planning_time = self.plan_arm_joint_values(grasp_jv, maximum_planning_time=maximum_planning_time, planner=planner)
+        
+        print(f"Planning Done; Planning Time: {planning_time}")
+        return planning_time, arm_discretized_plan
 
 
     def plan_arm_joint_values(self, goal_joint_values, start_joint_values=None, maximum_planning_time=0.05,
@@ -429,11 +491,11 @@ class UR5RobotiqPybulletController(object):
         return waypoints
 
 
-    def plan_straight_line(self, eef_pose, start_joint_values=None, ee_step=0.05,
+    def plan_straight_line(self, eef_grasp_pose, start_joint_values=None, ee_step=0.05,
                            jump_threshold=3.0, avoid_collisions=False):
         if start_joint_values is None: start_joint_values = self.get_arm_joint_values()
         start_joint_values_converted = self.convert_range(start_joint_values)
-        discretized_plan = self.rrt.plan_straight_line(start_joint_values_converted, eef_pose, ee_step=ee_step, 
+        discretized_plan = self.rrt.plan_straight_line(start_joint_values_converted, eef_grasp_pose, ee_step=ee_step, 
                                                        avoid_collisions=avoid_collisions)
         return discretized_plan
 
@@ -556,14 +618,13 @@ class UR5RobotiqPybulletController(object):
             p.stepSimulation(physicsClientId=self.client_id)
             if realtime:
                 time.sleep(1. / 240.)
-        pu.step(2, client_id=self.client_id)
 
 
     def step(self, fix_turn_around=True):
         """ step the robot for 1/240 second """
         # calculate the latest conf and control array
         if self.arm_discretized_plan is None:
-            self.control_arm_joints(self.start_joint_values)   # no grasp pose just not move or fall down
+            pass
         elif self.arm_wp_target_index == len(self.arm_discretized_plan):
             self.control_arm_joints(self.arm_discretized_plan[-1])  # stay pose, do not fall down!
         else:
@@ -641,7 +702,17 @@ class UR5RobotiqPybulletController(object):
 
     def get_eef_pose(self):
         return pu.get_link_pose(self.id, self.EEF_LINK_INDEX, client_id=self.client_id)
+    
 
+    def get_gripper_base_pose(self):
+        return pu.get_link_pose(self.id, self.GRIPPER_BASE_INDEX, client_id=self.client_id)
+
+
+    def get_eef_grasp_pose(self):
+        World_2_GripperBase = self.get_gripper_base_pose()
+        World_2_Grasp = p.multiplyTransforms(*World_2_GripperBase, *self.GripperBase_2_Grasp)
+        return [list(item) for item in World_2_Grasp]
+    
 
     def move_gripper_joint_values(self, joint_values, duration=1.0, num_steps=10):
         """ this method has nothing to do with moveit """
@@ -652,6 +723,18 @@ class UR5RobotiqPybulletController(object):
             p.setJointMotorControlArray(self.id, self.GROUP_INDEX['gripper'], p.POSITION_CONTROL,
                                         position_trajectory[i], forces=[200] * len(joint_values), physicsClientId=self.client_id)
             time.sleep(duration / num_steps)
+
+
+    def arm_traj_complete(self):
+        if self.arm_discretized_plan is None:
+            return True
+        return self.arm_wp_target_index == len(self.arm_discretized_plan)
+    
+
+    def gripper_traj_complete(self):
+        if self.gripper_discretized_plan is None:
+            return True
+        return self.gripper_wp_target_index == len(self.gripper_discretized_plan)
 
 
     # Reset inertial rng generator
@@ -688,12 +771,40 @@ if __name__=="__main__":
     client_id = p.connect(p.GUI)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0, 0, -9.81, physicsClientId=client_id)
-    p.loadURDF("plane.urdf", physicsClientId=client_id)
-    robot_id, urdf_path = load_ur_robotiq_robot(client_id=client_id)
-    robot = UR5RobotiqPybulletController(robot_id, rng=None, client_id=client_id)
-    robot.reset()
+    plane_id = p.loadURDF("plane.urdf", physicsClientId=client_id)
+    pu.change_obj_color(plane_id, rgba_color=[1., 1., 1., 0.3])
     
-    eef_pose = robot.get_eef_pose()
+    tableHalfExtents = [0.4, 0.5, 0.35]
+    tablepos = [0.7, 0., tableHalfExtents[2]]
+    tableId = pu.create_box_body(position=tablepos, orientation=p.getQuaternionFromEuler([0., 0., 0.]),
+                                          halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=client_id)
+    test_object = p.loadURDF("assets/group_objects/group0_dinning_table/005_tomato_soup_can/0/mobility.urdf", 
+                             basePosition=[tablepos[0], 0, 0.8], useFixedBase=False)
+    pu.set_mass(test_object, 5, client_id=client_id)
+    
+    vis_gripper_id = p.loadURDF("UR5_related/ur5_robotiq_description/urdf/robotiq_2f_85_gripper_visualization/urdf/robotiq_arg2f_85_model.urdf", 
+                                basePosition=[0, 0, 0.], 
+                                useFixedBase=True)
+
+    pu.change_obj_color(vis_gripper_id, rgba_color=[0., 0., 0., .2])
+    gripper_links_num = pu.get_num_links(vis_gripper_id, client_id=client_id)
+    for link_id in [-1]+list(range(gripper_links_num)):
+        p.setCollisionFilterGroupMask(vis_gripper_id, link_id, 0, 0, physicsClientId=client_id)
+    gripper_face_direction = [0., 0., 1.]
+
+    robot_id, urdf_path = load_ur_robotiq_robot(robot_initial_pose=[[0., 0., 0.79], [0., 0., 0., 1.]], client_id=client_id)
+    robot = UR5RobotiqPybulletController(robot_id, rng=None, client_id=client_id)
+    robot.update_collision_check(disabled_collisions=[vis_gripper_id])
+    robot.reset()
+
+    obj_pc = pu.get_obj_pc_from_id(test_object, client_id=client_id)
+    obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
+    x_half_extent = obj_bbox[7] + 0.02
+    objBase_2_ObjBbox = [obj_bbox[0:3], obj_bbox[3:7]]
+    grasp_pos = [-x_half_extent, 0., 0.]; grasp_direction = [-v for v in grasp_pos] # point to the object center
+    objBbox_2_grasppose = [grasp_pos, pu.getQuaternionFromTwoVectors(gripper_face_direction, grasp_direction)]
+
+    eef_grasp_pose = robot.get_eef_grasp_pose()
     with keyboard.Events() as events:
         while True:
             key = None
@@ -702,17 +813,56 @@ if __name__=="__main__":
                 if isinstance(event, events.Press) and hasattr(event.key, 'char'):
                     key = event.key.char
             if key is not None:
+                euler_angle = list(p.getEulerFromQuaternion(eef_grasp_pose[1]))
                 if key == 's':
-                    eef_pose[0][0] += 0.01
-                elif key == 'w':
-                    eef_pose[0][0] -= 0.01
-                elif key == 'a':
-                    eef_pose[0][1] += 0.01
-                elif key == 'd':
-                    eef_pose[0][1] -= 0.01
-                print(eef_pose)
-            joint_values = robot.get_arm_ik(eef_pose)
-            robot.control_arm_joints(joint_values)
+                    world_2_objBase = pu.get_link_pose(test_object, -1, client_id=client_id)
+                    world_2_grasp = pu.multiply_multi_transforms(world_2_objBase, objBase_2_ObjBbox, objBbox_2_grasppose)
+                    world_2_gripperbase = pu.multiply_multi_transforms(world_2_grasp, robot.Grasp_2_GRIPPERBase)
+                    pu.set_pose(vis_gripper_id, world_2_gripperbase, client_id=client_id)
+                    joint_values = robot.get_arm_ik(world_2_grasp)
+                    _, trajectory = robot.plan_arm_motion(joint_values)
+                    robot.update_arm_motion_plan(trajectory)
+                
+                if key == 'c':
+                    close_gripper = robot.plan_gripper_joint_values(robot.CLOSED_POSITION)
+                    robot.attach_object(test_object)
+                    robot.update_gripper_motion_plan(close_gripper)
+                    close_pose = deepcopy(robot.get_eef_grasp_pose())
+                    lift_pose = deepcopy(robot.get_eef_grasp_pose())
+                
+                if key == 'o':
+                    open_gripper = robot.plan_gripper_joint_values(robot.OPEN_POSITION)
+                    robot.detach()
+                    robot.update_gripper_motion_plan(open_gripper)
+                
+                if key == 'l':
+                    lift_pose[0][2] += 0.05
+                    jv_goal = robot.get_arm_ik(lift_pose, avoid_collisions=False)
+                    if jv_goal is not None:
+                        jv_start = robot.get_arm_joint_values()
+                        trajectory = np.linspace(jv_start, jv_goal, 240)
+                        robot.update_arm_motion_plan(trajectory)
+
+                if key == 'k':
+                    jv_goal = robot.get_arm_ik(close_pose, avoid_collisions=False)
+                    if jv_goal is not None:
+                        jv_start = robot.get_arm_joint_values()
+                        trajectory = np.linspace(jv_start, jv_goal, 240)
+                        robot.update_arm_motion_plan(trajectory)
+
+                if key == 'q':
+                    _, trajectory = robot.plan_arm_motion(robot.HOME)
+                    robot.update_arm_motion_plan(trajectory)
+
+                if key == 'r':
+                    robot.reset()
+                    pu.set_pose(test_object, [[tablepos[0], 0, 0.8], [0., 0., 0., 1.]], client_id=client_id)
+
+            robot.step()
+            # if robot.arm_traj_complete():
+            #     robot.close_gripper()
+            #     robot.open_gripper()
             p.stepSimulation(physicsClientId=client_id)
+            eef_grasp_pose = robot.get_eef_grasp_pose()
             time.sleep(1./240.)
 

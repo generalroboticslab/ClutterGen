@@ -109,13 +109,16 @@ class RoboSensaiBullet:
         
         # Table
         tableHalfExtents = [0.4, 0.5, 0.35]
+        if hasattr(self.args, "change_table_size") and self.args.change_table_size:
+            tableHalfExtents = [0.4, 0.25, 0.35]
         tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
                                           halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
         
         # Default region using table position and table half extents
         qr_pose, qr_ori, qr_half_extents = [0., 0., tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*tableHalfExtents[:2], 0.1]
         table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
-        table_axes_bbox = [0., 0., 0., *p.getQuaternionFromEuler([0, 0, 0]), *tableHalfExtents]
+        table_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(table_pc)
+        self.convert_BaseLinkPC_2_BboxCenterPC(table_pc, table_axes_bbox)
         self.fixed_scene_name_data["table"] = {"id": tableId,
                                                "init_z_offset": 0.0,
                                                "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
@@ -146,6 +149,7 @@ class RoboSensaiBullet:
                 scene_mesh_num = pu.get_body_mesh_num(scene_id, client_id=self.client_id)
                 scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
                 scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
+                self.convert_BaseLinkPC_2_BboxCenterPC(scene_pc, scene_axes_bbox)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 init_z_offset = 5. if not self.args.eval_result else 0. # For training, we hang the scene in the air; For evaluation, we place the scene on the ground
                 assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
@@ -189,6 +193,7 @@ class RoboSensaiBullet:
                 obj_mesh_num = pu.get_body_mesh_num(object_id, client_id=self.client_id)
                 obj_pc = self.get_obj_pc_from_id(object_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
                 obj_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
+                self.convert_BaseLinkPC_2_BboxCenterPC(obj_pc, obj_axes_bbox)
                 obj_init_pos_z = obj_axes_bbox[9] - obj_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 self.obj_name_data[obj_uni_name] = {
                                                     "id": object_id,
@@ -405,27 +410,31 @@ class RoboSensaiBullet:
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
         action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
         self.last_raw_action = action.copy()
+        action[:] = 0.5
         
         # action = [x, y, z, roll, pitch, yaw]
-        World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        QRscene_2_QRregion = self.selected_qr_region
-        half_extents = QRscene_2_QRregion[7:]
-        QRregion_2_ObjBboxCenter = action[:3] * (2 * half_extents) - half_extents
-        QRregion_2_ObjBase_xyz = p.multiplyTransforms(QRregion_2_ObjBboxCenter, [0, 0, 0, 1.], -self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
-        # In the qr_scene baseLink frame
-        QRsceneBase_2_ObjBase_xyz = p.multiplyTransforms(QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7], QRregion_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
+        QRsceneCenter_2_QRregionCenter = self.selected_qr_region
+        QRregion_half_extents = QRsceneCenter_2_QRregionCenter[7:]
+        QRregionCenter_2_ObjBboxCenter = action[:3] * (2 * QRregion_half_extents) - QRregion_half_extents
+        QRregionCenter_2_ObjBase_xyz = p.multiplyTransforms(QRregionCenter_2_ObjBboxCenter, [0, 0, 0, 1.], -self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
+        # In the qr_scene center frame
+        QRsceneCenter_2_ObjBase_xyz = p.multiplyTransforms(QRsceneCenter_2_QRregionCenter[:3], QRsceneCenter_2_QRregionCenter[3:7], QRregionCenter_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
+        QRsceneCenter_2_ObjBase_quat = p.getQuaternionFromEuler((np.array([0., 0., action[3]], dtype=self.numpy_dtype)* 2*np.pi))
         # In the simulator world frame
-        World_2_ObjBase_xyz = p.multiplyTransforms(World_2_QRscene[0], World_2_QRscene[1], QRsceneBase_2_ObjBase_xyz, [0., 0., 0., 1.])[0]
-        World_2_ObjBase_quat = p.getQuaternionFromEuler((np.array([0., 0., action[3]], dtype=self.numpy_dtype)* 2*np.pi))
+        World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
+        World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
+        World_2_ObjBase_xyz, World_2_ObjBase_quat \
+              = p.multiplyTransforms(World_2_QRsceneCenter[0], World_2_QRsceneCenter[1], QRsceneCenter_2_ObjBase_xyz, QRsceneCenter_2_ObjBase_quat)
 
         if self.args.rendering:
-            world2qr_region = p.multiplyTransforms(*World_2_QRscene, QRscene_2_QRregion[:3], QRscene_2_QRregion[3:7])
-            if hasattr(self, "last_world2qr_region") and world2qr_region == self.last_world2qr_region: pass
+            World_2_QRregionCenter = p.multiplyTransforms(*World_2_QRsceneCenter, QRsceneCenter_2_QRregionCenter[:3], QRsceneCenter_2_QRregionCenter[3:7])
+            if hasattr(self, "last_World_2_QRregionCenter") and World_2_QRregionCenter == self.last_World_2_QRregionCenter: pass
             else:
                 if hasattr(self, "region_vis_id"): p.removeBody(self.region_vis_id, physicsClientId=self.client_id)
-                self.region_vis_id = pu.draw_box_body(position=world2qr_region[0], orientation=world2qr_region[1],
-                                                      halfExtents=half_extents, rgba_color=[1, 0, 0, 0.1], client_id=self.client_id)
-                self.last_world2qr_region = world2qr_region
+                self.region_vis_id = pu.draw_box_body(position=World_2_QRregionCenter[0], orientation=World_2_QRregionCenter[1],
+                                                      halfExtents=QRregion_half_extents, rgba_color=[1, 0, 0, 0.1], client_id=self.client_id)
+                self.last_World_2_QRregionCenter = World_2_QRregionCenter
 
         return World_2_ObjBase_xyz, World_2_ObjBase_quat
 
@@ -450,8 +459,8 @@ class RoboSensaiBullet:
         for self.his_steps in range(self.args.max_traj_history_len):
             self.simstep(1/240)
             self.blender_record()
-            obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-            obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True)
+            
+            (obj_pos, obj_quat), obj_vel = self.get_QRsceneCenter2ObjCenter_pose_vel()
             # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]; Left Shift
             self.traj_history.pop(0)
             self.traj_history.append(obj_pos + obj_quat + obj_vel.tolist())
@@ -835,6 +844,40 @@ class RoboSensaiBullet:
                     pu.set_pose(self.replay_obj_dict_id[obj_name], obj_pose, client_id=self.client_id)
 
     
+    ######################################
+    ######### Rigid Body Transformation ############
+    ######################################
+
+    def get_QRsceneCenter2ObjCenter_pose_vel(self):
+        # Convert Object World2ObjBase pose to QRsceneCenter2ObjCenter pose
+        World2ObjBase_pos, World2ObjBase_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
+        World2ObjCenter_pos, World2ObjCenter_quat = p.multiplyTransforms(World2ObjBase_pos, World2ObjBase_quat, self.selected_obj_bbox[:3], [0., 0., 0., 1.])
+        World2QRsceneBase_pos, World2QRsceneBase_quat = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        World2QRsceneCenter_pos, World2QRsceneCenter_quat = p.multiplyTransforms(World2QRsceneBase_pos, World2QRsceneBase_quat, self.selected_qr_scene_bbox[:3], self.selected_qr_scene_bbox[3:7])
+        QRsceneCenter2World_pos, QRsceneCenter2World_quat = p.invertTransform(World2QRsceneCenter_pos, World2QRsceneCenter_quat)
+        QRsceneCenter2ObjCenter_pos, QRsceneCenter2ObjCenter_quat = \
+            p.multiplyTransforms(
+                QRsceneCenter2World_pos, QRsceneCenter2World_quat,
+                World2ObjCenter_pos, World2ObjCenter_quat
+            )
+        
+        # Convert Object World2ObjBase velocity to QRsceneCenter2ObjCenter velocity
+        World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True) # no rotation between the base and the center
+        World2ObjCenter_linvel = pu.quat_apply(World2ObjCenter_quat, World2ObjCenter_vel[:3])
+        QRsceneCenter2ObjCenter_linvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_linvel)
+        World2ObjCenter_rotvel = pu.quat_apply(World2ObjCenter_quat, World2ObjCenter_vel[3:])
+        QRsceneCenter2ObjCenter_rotvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_rotvel)
+        return (list(QRsceneCenter2ObjCenter_pos), list(QRsceneCenter2ObjCenter_quat)), \
+                self.to_numpy(list(QRsceneCenter2ObjCenter_linvel) + list(QRsceneCenter2ObjCenter_rotvel))
+    
+
+    def convert_BaseLinkPC_2_BboxCenterPC(self, pc, Base2BboxCenter):
+        BboxCenter2Base = p.invertTransform(Base2BboxCenter[:3], [0., 0., 0., 1.])
+        for i, Base2point in enumerate(pc):
+            pc[i] = p.multiplyTransforms(*BboxCenter2Base, Base2point, [0., 0., 0., 1.])[0]
+        return pc
+
+
     ######################################
     ######### Utils FUnctions ############
     ######################################

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict, deque, namedtuple
 from itertools import product, combinations, count
 import open3d as o3d
-from math import ceil
+from math import ceil, sqrt, sin, cos
 import xml.etree.ElementTree as ET
 
 
@@ -1088,6 +1088,48 @@ def multiply_multi_transforms(*args):
         for i in range(2, len(args)):
             accumulate_pose = p.multiplyTransforms(*accumulate_pose, *args[i])
         return accumulate_pose
+    
+
+def quat_apply(quat, vec):
+    return p.multiplyTransforms([0, 0, 0.], quat, vec, [0, 0, 0, 1])[0]
+    
+
+def getQuaternionFromAxisAngle(axis, angle):
+    # Normalize the axis
+    axis_length = sqrt(sum([i**2 for i in axis]))
+    normalized_axis = [i/axis_length for i in axis]
+    
+    # Calculate the sine and cosine of half the angle
+    sin_theta_over_2 = sin(angle / 2.0)
+    cos_theta_over_2 = cos(angle / 2.0)
+    
+    # Compute the quaternion
+    w = cos_theta_over_2
+    x = normalized_axis[0] * sin_theta_over_2
+    y = normalized_axis[1] * sin_theta_over_2
+    z = normalized_axis[2] * sin_theta_over_2
+    
+    return [w, x, y, z]
+
+
+def getQuaternionFromTwoVectors(v0, v1):
+    # Normalize input vectors
+    v0 = v0 / np.linalg.norm(v0)
+    v1 = v1 / np.linalg.norm(v1)
+    
+    # Compute the cross product and dot product
+    cross_prod = np.cross(v0, v1)
+    dot_prod = np.dot(v0, v1)
+    
+    # Calculate the components of the quaternion
+    q = np.zeros(4)
+    q[0] = np.sqrt(np.sum(v0**2) * np.sum(v1**2)) + dot_prod  # w component
+    q[1:] = cross_prod  # x, y, z components
+    
+    # Normalize the quaternion
+    q = q / np.linalg.norm(q)
+    
+    return q
     
 
 ######### RoboSensai Specified #########
