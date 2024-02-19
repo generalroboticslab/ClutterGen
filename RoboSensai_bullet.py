@@ -377,8 +377,7 @@ class RoboSensaiBullet:
             print(f"Current Sequence Index: {self.cur_seq_index}; NUmber of pool objs: {len(selected_obj_pool)}")
         else:
             while True:
-                candidate_obj_name = self.rng.choice(selected_obj_pool) if self.args.random_select_placing else selected_obj_pool[0]
-                selected_obj_pool.remove(candidate_obj_name)
+                candidate_obj_name = selected_obj_pool.pop(0)
                 if candidate_obj_name == self.selected_qr_scene_name: continue
 
                 # Use scene bbox and obj bbox to do a simple filtering (especially for the "in" relation)
@@ -395,6 +394,10 @@ class RoboSensaiBullet:
                     raise NotImplementedError(f"Scene region {self.selected_qr_scene_region} is not implemented!")
                 
                 if len(self.unplaced_objs_name) >= self.args.max_num_placing_objs or len(selected_obj_pool)==0: break
+            
+            # TODO: Check whether this kind of curriculu will overfitting training or not.
+            if self.args.random_select_placing:
+                self.rng.shuffle(self.unplaced_objs_name)
 
 
     def update_unquery_scenes(self):
@@ -410,7 +413,6 @@ class RoboSensaiBullet:
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
         action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
         self.last_raw_action = action.copy()
-        action[:] = 0.5
         
         # action = [x, y, z, roll, pitch, yaw]
         QRsceneCenter_2_QRregionCenter = self.selected_qr_region

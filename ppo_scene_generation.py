@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/360], nargs='+')
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
-    parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use curriculum learning')
+    parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use curriculum learning')
     parser.add_argument('--patience_iters', type=int, default=5000)
 
     # I/O hyper parameter
