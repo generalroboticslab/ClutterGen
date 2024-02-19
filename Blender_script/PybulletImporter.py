@@ -387,7 +387,7 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
 animation = False
 render_nums = 40
 set_blender_engine(render_engine='CYCLES')
-directory = "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_10_10"
+directory = "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_ChangeTableSize_objRange_10_10"
 filename_ext = ".pkl"
 # Listing all files in the specified directory.
 filepaths = [join(directory, filename) for filename in listdir(directory) if filename.endswith(filename_ext) and "success" in filename][:render_nums]
@@ -398,7 +398,7 @@ for i, filepath in enumerate(filepaths):
     delete_collection(specific_name=None)
     delete_scene_objects()
 
-    # Add a table
+    # Add a table; The size might be different from the original size!
     add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.4, 0.5, 0.35), texture_path=None)
     # Add a plane as the ground with wooden texture
     add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)

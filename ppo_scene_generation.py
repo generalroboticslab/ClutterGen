@@ -492,12 +492,9 @@ if __name__ == "__main__":
             if args.random_policy: continue
 
             ####----- Curriculum next stage checker ----####
-            update_tensor_buffer(iter_success_rate_box, torch.tensor([episode_success_rate], dtype=iter_success_rate_box.dtype, device=iter_success_rate_box.device))
-            if args.use_curriculum and \
-                num_placing_objs < args.max_num_placing_objs and \
-                curri_update_iters >= args.patience_iters:
-                if iter_success_rate_box.max()>=0.8 or \
-                    iter_success_rate_box.max()-iter_success_rate_box.min()<=0.01:
+            # update_tensor_buffer(iter_success_rate_box, torch.tensor([episode_success_rate], dtype=iter_success_rate_box.dtype, device=iter_success_rate_box.device))
+            if args.use_curriculum and num_placing_objs < args.max_num_placing_objs:
+                if best_acc>=0.4:
                     if args.collect_data: 
                         meta_data["milestone"].update({
                                 num_placing_objs: {
