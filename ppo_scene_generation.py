@@ -35,8 +35,8 @@ def parse_args():
 
     # RoboSensai Env parameters (dataset)
     parser.add_argument('--num_pool_objs', type=int, default=10)
-    parser.add_argument('--min_num_placing_objs', type=int, default=1)
-    parser.add_argument('--train_step', type=int, default=1)
+    parser.add_argument('--min_num_placing_objs', type=int, default=2)
+    parser.add_argument('--train_step', type=int, default=2)
     parser.add_argument('--max_num_placing_objs', type=int, default=10)
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
@@ -83,7 +83,7 @@ def parse_args():
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=80, help="the number of steps to run in each environment per policy rollout per object")
-    parser.add_argument("--pc_batchsize", type=int, default=None, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--pc_batchsize", type=int, default=20, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--use_relu", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use Relu or tanh.")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use GAE for advantage computation")
@@ -310,6 +310,8 @@ if __name__ == "__main__":
     best_agent_state_dict, best_optimizer_state_dict = None, None
 
     for num_placing_objs in num_placing_objs_lst:
+        torch.cuda.empty_cache()
+
         if args.num_envs > 1:
             envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
             envs.env_method('reset_info') # reset the info to record the new training miscs
@@ -374,8 +376,6 @@ if __name__ == "__main__":
 
         # training
         for update in range(1, num_updates + 1):
-
-            # torch.cuda.empty_cache()
 
             # Annealing the rate if instructed to do so.
             if args.anneal_lr:  # schedule learning rate
