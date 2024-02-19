@@ -334,11 +334,13 @@ class RoboSensaiBullet:
         for obj_name in self.obj_name_data.keys():
             pu.set_pose(body=self.obj_name_data[obj_name]["id"], 
                 pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+            pu.set_mass(self.obj_name_data[obj_name]["id"], mass=0., client_id=self.client_id)
         
         # Place all scenes to the prepare area
         for scene_name in self.fixed_scene_name_data.keys():
             pu.set_pose(body=self.fixed_scene_name_data[scene_name]["id"], 
                 pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+            pu.set_mass(self.obj_name_data[obj_name]["id"], mass=0., client_id=self.client_id)
         
         # Scene
         self.placed_obj_poses = {}
