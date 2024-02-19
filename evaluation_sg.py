@@ -255,7 +255,7 @@ if __name__ == "__main__":
         while num_episodes < eval_args.num_trials:
             ################ agent evaluation ################
             if eval_args.random_policy:
-                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 5 # [-5, 5] before sigmoid
+                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 4 # [-5, 5] before sigmoid
             elif eval_args.heuristic_policy:
                 assert not eval_args.fixed_qr_region, "Heuristic policy only support fixed_qr_region"
                 action = torch.zeros((eval_args.num_envs, temp_env.action_shape[1]), device=device)

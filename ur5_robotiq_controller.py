@@ -117,7 +117,7 @@ class UR5RobotiqPybulletController(object):
         self.GRIPPER_BASE_INDEX = pu.link_from_name(robot_id, self.GRIPPER_BASE_NAME, client_id=self.client_id)
         
         # Compute EEF 2 Grasp transforms
-        self.GripperBase_2_Grasp = [[0, 0, 0.1], [0, 0, 0, 1]]
+        self.GripperBase_2_Grasp = [[0, 0, 0.15], [0, 0, 0, 1]]
         World_2_EEF = pu.get_link_pose(self.id, self.EEF_LINK_INDEX, client_id=self.client_id)
         World_2_GRIPPERBase = pu.get_link_pose(self.id, self.GRIPPER_BASE_INDEX, client_id=self.client_id)
         World_2_RobotBase = pu.get_link_pose(self.id, -1, client_id=self.client_id)
@@ -204,6 +204,8 @@ class UR5RobotiqPybulletController(object):
 
 
     def update_collision_check(self, disabled_collisions=[]):
+        if hasattr(self, "visual_objects"):
+            disabled_collisions.extend(self.visual_objects)
         attached_bodies = [self.attach_object_id] if self.attach_object_id is not None else []
         self.collision_fn_full = self.rrt.get_collision_fn(attachments=attached_bodies, disabled_targets=disabled_collisions)  # recompute all collision combinations because scene change
 
@@ -738,6 +740,12 @@ class UR5RobotiqPybulletController(object):
 
 
     # Reset inertial rng generator
+    def register_visual_objects(self, visual_objects):
+        if not hasattr(self, 'visual_objects'):
+            self.visual_objects = []
+        self.visual_objects.extend(visual_objects)
+
+
     def reset_inner_rng(self):
         self.initial_pose_rng = np.random.default_rng(self.pose_rng_seed)
 
@@ -794,15 +802,24 @@ if __name__=="__main__":
 
     robot_id, urdf_path = load_ur_robotiq_robot(robot_initial_pose=[[0., 0., 0.79], [0., 0., 0., 1.]], client_id=client_id)
     robot = UR5RobotiqPybulletController(robot_id, rng=None, client_id=client_id)
-    robot.update_collision_check(disabled_collisions=[vis_gripper_id])
+    robot.register_visual_objects([vis_gripper_id])
+    robot.update_collision_check()
     robot.reset()
 
+    # Generate a top down grasp pose
     obj_pc = pu.get_obj_pc_from_id(test_object, client_id=client_id)
     obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
-    x_half_extent = obj_bbox[7] + 0.02
+    grasp_insert = 0.02
+    z_half_extent = obj_bbox[9]
+    x_half_extent = obj_bbox[7]
+
     objBase_2_ObjBbox = [obj_bbox[0:3], obj_bbox[3:7]]
-    grasp_pos = [-x_half_extent, 0., 0.]; grasp_direction = [-v for v in grasp_pos] # point to the object center
+    grasp_pos = [-(x_half_extent-grasp_insert), 0., 0.]
+    grasp_pos = [0., 0., z_half_extent-grasp_insert]
+    print(grasp_pos)
+    grasp_direction = [-v for v in grasp_pos] # point to the object center
     objBbox_2_grasppose = [grasp_pos, pu.getQuaternionFromTwoVectors(gripper_face_direction, grasp_direction)]
+    print(objBbox_2_grasppose)
 
     eef_grasp_pose = robot.get_eef_grasp_pose()
     with keyboard.Events() as events:
@@ -826,6 +843,7 @@ if __name__=="__main__":
                 if key == 'c':
                     close_gripper = robot.plan_gripper_joint_values(robot.CLOSED_POSITION)
                     robot.attach_object(test_object)
+                    robot.update_collision_check()
                     robot.update_gripper_motion_plan(close_gripper)
                     close_pose = deepcopy(robot.get_eef_grasp_pose())
                     lift_pose = deepcopy(robot.get_eef_grasp_pose())
@@ -833,6 +851,7 @@ if __name__=="__main__":
                 if key == 'o':
                     open_gripper = robot.plan_gripper_joint_values(robot.OPEN_POSITION)
                     robot.detach()
+                    robot.update_collision_check()
                     robot.update_gripper_motion_plan(open_gripper)
                 
                 if key == 'l':

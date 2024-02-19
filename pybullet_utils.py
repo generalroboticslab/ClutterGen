@@ -1109,28 +1109,39 @@ def getQuaternionFromAxisAngle(axis, angle):
     y = normalized_axis[1] * sin_theta_over_2
     z = normalized_axis[2] * sin_theta_over_2
     
-    return [w, x, y, z]
+    return [x, y, z, w]
 
 
 def getQuaternionFromTwoVectors(v0, v1):
     # Normalize input vectors
-    v0 = v0 / np.linalg.norm(v0)
-    v1 = v1 / np.linalg.norm(v1)
+    v0_normalized = v0 / np.linalg.norm(v0)
+    v1_normalized = v1 / np.linalg.norm(v1)
     
     # Compute the cross product and dot product
-    cross_prod = np.cross(v0, v1)
-    dot_prod = np.dot(v0, v1)
+    cross_prod = np.cross(v0_normalized, v1_normalized)
+    dot_prod = np.dot(v0_normalized, v1_normalized)
     
-    # Calculate the components of the quaternion
-    q = np.zeros(4)
-    q[0] = np.sqrt(np.sum(v0**2) * np.sum(v1**2)) + dot_prod  # w component
-    q[1:] = cross_prod  # x, y, z components
-    
-    # Normalize the quaternion
-    q = q / np.linalg.norm(q)
+    # If the vectors are parallel, we need to pick an arbitrary axis
+    if np.isclose(dot_prod, -1.0):
+        # Vectors are antiparallel, pick an arbitrary perpendicular axis
+        if abs(v0_normalized[0]) < abs(v0_normalized[1]) and abs(v0_normalized[0]) < abs(v0_normalized[2]):
+            orthogonal_axis = np.array([1, 0, 0])
+        elif abs(v0_normalized[1]) < abs(v0_normalized[2]):
+            orthogonal_axis = np.array([0, 1, 0])
+        else:
+            orthogonal_axis = np.array([0, 0, 1])
+        
+        # Quaternion for 180 degrees rotation around the orthogonal axis
+        q = np.array([*orthogonal_axis * np.sin(np.pi / 2), np.cos(np.pi / 2)])  # sin(π/2) = 1, cos(π/2) = 0
+    elif np.isclose(dot_prod, 1.0):
+        # Vectors are parallel, no rotation needed
+        q = np.array([0.0, 0.0, 0.0, 1.0])
+    else:
+        # General case for non-parallel vectors
+        q = np.array([*cross_prod, 1.0 + dot_prod])
+        q = q / np.linalg.norm(q)  # Normalize quaternion
     
     return q
-    
 
 ######### RoboSensai Specified #########
 def sample_pc_from_mesh(mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, visualize=False):

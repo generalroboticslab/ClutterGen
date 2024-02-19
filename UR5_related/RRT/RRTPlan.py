@@ -69,10 +69,13 @@ class RRTPlanner: # could multi
         if self_collisions:
             check_link_pairs += pu.get_self_link_pairs(self.ur5_controller.id, self.ur5_controller.GROUP_INDEX['arm'], disabled_self_collisions, client_id=self.client_id)
         moving_bodies = self.robot_ids + [attachment for attachment in attachments]
-        if len(obstacles) == 0: obstacles = list(set(pu.get_bodies(client_id=self.client_id)) - set(moving_bodies))
-        if len(disabled_targets) > 0: [obstacles.remove(disabled_t) for disabled_t in disabled_targets if disabled_t in obstacles] # multi target needs to use loop
+        if len(obstacles) == 0: 
+            obstacles = list(set(pu.get_bodies(client_id=self.client_id)) - set(moving_bodies))
+        if len(disabled_targets) > 0: 
+            [obstacles.remove(disabled_t) for disabled_t in disabled_targets if disabled_t in obstacles] # multi target needs to use loop
+        
         print(f'obstacles: {obstacles}; All ids {pu.get_bodies(client_id=self.client_id)}')
-        check_body_pairs = list(product(moving_bodies, obstacles)) + list(combinations(moving_bodies, 2))
+        check_body_pairs = list(product(moving_bodies, obstacles)) # + list(combinations(moving_bodies, 2))
         def collision_fn(q): # set may consume time? reset ought to make outside
             col_FLAG = False
             ### Ur5 arm joints are all rotable joints / no circular limits ###
