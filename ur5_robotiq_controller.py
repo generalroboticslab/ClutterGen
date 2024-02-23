@@ -165,6 +165,8 @@ class UR5RobotiqPybulletController(object):
 
 
     def attach_object(self, target_id):
+        self.detach() # We only allow one object to be attached at a time
+
         target_pose = pu.get_body_pose(target_id, client_id=self.client_id)
         eef_grasp_pose = self.get_eef_pose()
         eef_P_world = p.invertTransform(eef_grasp_pose[0], eef_grasp_pose[1])
@@ -430,7 +432,7 @@ class UR5RobotiqPybulletController(object):
         return joint_configs
     
 
-    def plan_arm_motion(self, grasp_jv, planner='birrt', maximum_planning_time=2.):
+    def plan_arm_motion(self, grasp_jv, planner='birrt', maximum_planning_time=3.):
         """ plan a discretized motion for the arm """
         print("Planning")
         if grasp_jv is None: return 0., None
@@ -598,9 +600,10 @@ class UR5RobotiqPybulletController(object):
         """
         execute a discretized arm plan (list of waypoints)
         """
+        if plan is None: return
         index = 0
         for wp in plan:
-            index += 1; print(index)
+            index += 1
             self.control_arm_joints(wp)
             p.stepSimulation(physicsClientId=self.client_id)
             # too short time to get stable performance for control
@@ -608,18 +611,21 @@ class UR5RobotiqPybulletController(object):
                 time.sleep(1. / 240.)
             if not realtime and sleep:
                 time.sleep(sleep)
-        pu.step(2, client_id=self.client_id)
+        # It seems the arm needs more simulation time to get target pose (control)
+        pu.step(2, self.client_id)
 
 
     def execute_gripper_plan(self, plan, realtime=False):
         """
         execute a discretized gripper plan (list of waypoints)
         """
+        if plan is None: return
         for wp in plan:
             self.control_gripper_joints(wp)
             p.stepSimulation(physicsClientId=self.client_id)
             if realtime:
                 time.sleep(1. / 240.)
+        pu.step(2, self.client_id)
 
 
     def step(self, fix_turn_around=True):
@@ -788,7 +794,7 @@ if __name__=="__main__":
                                           halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=client_id)
     test_object = p.loadURDF("assets/group_objects/group0_dinning_table/005_tomato_soup_can/0/mobility.urdf", 
                              basePosition=[tablepos[0], 0, 0.8], useFixedBase=False)
-    pu.set_mass(test_object, 5, client_id=client_id)
+    pu.set_mass(test_object, 1., client_id=client_id)
     
     vis_gripper_id = p.loadURDF("UR5_related/ur5_robotiq_description/urdf/robotiq_2f_85_gripper_visualization/urdf/robotiq_arg2f_85_model.urdf", 
                                 basePosition=[0, 0, 0.], 
@@ -821,7 +827,6 @@ if __name__=="__main__":
     objBbox_2_grasppose = [grasp_pos, pu.getQuaternionFromTwoVectors(gripper_face_direction, grasp_direction)]
     print(objBbox_2_grasppose)
 
-    eef_grasp_pose = robot.get_eef_grasp_pose()
     with keyboard.Events() as events:
         while True:
             key = None
@@ -830,7 +835,6 @@ if __name__=="__main__":
                 if isinstance(event, events.Press) and hasattr(event.key, 'char'):
                     key = event.key.char
             if key is not None:
-                euler_angle = list(p.getEulerFromQuaternion(eef_grasp_pose[1]))
                 if key == 's':
                     world_2_objBase = pu.get_link_pose(test_object, -1, client_id=client_id)
                     world_2_grasp = pu.multiply_multi_transforms(world_2_objBase, objBase_2_ObjBbox, objBbox_2_grasppose)

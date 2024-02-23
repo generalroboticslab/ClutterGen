@@ -45,7 +45,7 @@ class Plot_Utils:
         trained_obj_label = 'Trained'; trained_obj_label_act = trained_obj_label
         for checkpoint_name in self.data_full.keys():
             data, trained_objs = self.data_full[checkpoint_name]
-            num_obj = data["num_placing_objs"]
+            num_obj = data["max_num_placing_objs"]
             success_rate = data["success_rate"]
             axes[0].plot(num_obj, success_rate, '-o', label=checkpoint_name, linewidth=2, markersize=8)
             if 'best' in checkpoint_name:
@@ -70,7 +70,7 @@ class Plot_Utils:
         trained_obj_label_act = trained_obj_label
         for checkpoint_name in self.data_full.keys():
             data, trained_objs = self.data_full[checkpoint_name]
-            num_obj = data["num_placing_objs"]
+            num_obj = data["max_num_placing_objs"]
             unstable_steps = data["unstable_steps"]
             axes[1].plot(num_obj, unstable_steps, '-o', label=checkpoint_name, linewidth=2, markersize=8)
 
@@ -147,22 +147,70 @@ def images_to_pdf(image_paths, pdf_path, images_per_row=3, dpi=300, title_ratio=
     plt.close(fig)
 
 
+# Images to GIF
+from PIL import Image, ImageSequence
+import os
+import random
+
+def create_gif_from_multiple_folders(source_folders, output_filename, num_images=10, duration=500):
+    """
+    Creates a GIF from a random selection of images across multiple folders.
+
+    Parameters:
+    - source_folders: List of folders containing the images.
+    - output_filename: Filename for the output GIF.
+    - num_images: Number of images to include in the GIF.
+    - duration: Duration of each frame in the GIF (in milliseconds).
+    """
+    if isinstance(source_folders, str):
+        source_folders = [source_folders]
+
+    # Initialize a list to hold all eligible image files
+    all_image_files = []; num_images_each_folder = num_images // len(source_folders)
+
+    # Iterate over each source folder and collect image files
+    for folder in source_folders:
+        image_files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(('.png', '.jpg', '.jpeg'))]
+        selected_files = random.sample(image_files, min(num_images_each_folder, len(image_files)))
+        all_image_files.extend(selected_files.copy())
+
+    # Open images and append to list
+    images = [Image.open(f) for f in all_image_files]
+    
+    # Ensure all images are converted to a compatible mode
+    images = [image.convert("RGBA") for image in images]
+
+    # Create GIF
+    images[0].save(output_filename, save_all=True, append_images=images[1:], duration=duration, loop=0)
+
 
 if __name__ == "__main__":
-    # plot_utils = Plot_Utils()
-    # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-22_02:32_FC_FT_Rand_placing_Goal_10_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="10p_best", trained_objs=[1, 5, 10])
+    plot_utils = Plot_Utils()
+    plot_utils.read_file("eval_res/Union/CSV/Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_1_10.csv", checkpoint_name="RoboSensai")
     # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-28_01:10_FC_FT_Rand_placing_Goal_12_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="12p_best", trained_objs=[1, 5, 10, 12])
-    # # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-30_21:39_FC_FT_Rand_placing_Goal_16_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="16p_best", trained_objs=[1, 5, 10, 12, 16])
-    # plot_utils.read_file("eval_res/YCB/CSV/EVAL_RandomPolicy_Setup.csv", checkpoint_name="RejectionSampling")
-    # plot_utils.plot_success_steps()
+    # plot_utils.read_file("eval_res/YCB/CSV/YCB_11-30_21:39_FC_FT_Rand_placing_Goal_16_maxstable50_Weight_rewardPobj100.0_EVALbest_Setup.csv", checkpoint_name="16p_best", trained_objs=[1, 5, 10, 12, 16])
+    plot_utils.read_file("eval_res/Union/CSV/EVAL_RandPolicy_objRange_1_10.csv", checkpoint_name="RejectionSampling")
+    plot_utils.plot_success_steps()
 
     # Example usage
-    image_folder = "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_ChangeTableSize_objRange_10_10/render_results"  # Update this path
-    image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)  # Example for .png images
-    pdf_output_path = os.path.join(image_folder, "combined.pdf")  # Update this path
+    # image_folder = "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_ChangeTableSize_objRange_10_10/render_results"  # Update this path
+    # image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)  # Example for .png images
+    # pdf_output_path = os.path.join(image_folder, "combined.pdf")  # Update this path
 
-    images_to_pdf(image_files, 
-                  pdf_output_path, 
-                  images_per_row=5,
-                  dpi=500,
-                  fig_ratio=1.2)
+    # images_to_pdf(image_files, 
+    #               pdf_output_path, 
+    #               images_per_row=5,
+    #               dpi=500,
+    #               fig_ratio=1.2)
+
+
+    # Create GIF
+    # source_folders = [
+    #     "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10/render_results",
+    #     "eval_res/Union/blender/Union_02-04_04:37Sync_PCExtractor_FineTune_Relu_Rand_ObjPlace_QRRegion_Goal_maxObjNum8_maxPool10_maxScene1_maxStable60_contStable20_maxQR1Scene_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step81_trial5_EVAL_best_objRange_10_10/render_results",
+    #     "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_ChangeTableSize_objRange_10_10/render_results",
+    #     "eval_res/Union/blender/Union_02-20_01:11Sync_storage_furniture_5_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_8_8/render_results"
+    #     ]  # Update this path
+    
+    # output_filename = "eval_res/Union/blender/combined.gif"  # Update this path
+    # create_gif_from_multiple_folders(source_folders, output_filename, num_images=40, duration=1000)

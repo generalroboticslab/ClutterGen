@@ -28,7 +28,7 @@ class RRTPlanner: # could multi
             self.min_velocity.append(min(min_velocity))
 
         self.resolutions = 1 / 240 * self.min_velocity[0] if self.min_velocity[0] < 4.8 else 0.02 # adjust resolution to fit velocity
-        self.resolutions *= 0.8  # smooth the resolutions to give some space to avoid collision
+        self.resolutions *= 0.6  # smooth the resolutions to give some space to avoid collision
         self.extend_fn = self.get_extend_fn(self.resolutions)
 
     

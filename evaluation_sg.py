@@ -11,6 +11,7 @@ import os
 import random
 import time
 from distutils.util import strtobool
+import pickle
 
 from PPO.PPO_continuous_sg import *
 from RoboSensai_bullet import *
@@ -92,6 +93,9 @@ def get_args():
     parser.add_argument('--actor_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--blender_record', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--change_table_size', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
+
+    # Downstream task parameters
+    parser.add_argument('--stable_placement', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
 
     eval_args = parser.parse_args()
@@ -273,10 +277,14 @@ if __name__ == "__main__":
                         raw_actions = inverse_sigmoid(act_sig_grid_tensor)
                         action_log_prob = probs.log_prob(raw_actions)
 
-                        prob_pos_heatmap = [envs.visualize_actor_prob(raw_actions, action_log_prob, action)]
+                        prob_pos_heatmap = envs.visualize_actor_prob(raw_actions, action_log_prob, action)
 
-                        actor_traj_log_dict[0]["prob_pos_heatmap"].append(prob_pos_heatmap)
-                        actor_traj_log_dict[0]["probs_mean_std"].append((probs.mean.cpu().numpy(), probs.stddev.cpu().numpy()))
+                        frame_index = None
+                        if eval_args.blender_record:
+                            frame_index = envs.pybullet_recorder.frame_index
+
+                        actor_traj_log_dict[0]["prob_pos_heatmap"].append((frame_index, prob_pos_heatmap))
+                        actor_traj_log_dict[0]["probs_mean_std"].append((frame_index, probs.mean.cpu().numpy(), probs.stddev.cpu().numpy()))
                         
             next_seq_obs, reward, done, infos = envs.step(action)
             if agent is not None:
@@ -310,9 +318,8 @@ if __name__ == "__main__":
 
                         if eval_args.actor_visualize:
                             success_sufix = 'success' if env_id in success_ids else 'failure'
-                            torch.save(actor_traj_log_dict[env_id.item()], \
-                                       os.path.join(eval_args.trajectory_dir, \
-                                       f"{max_num_placing_objs}Objs_{num_episodes + i}eps_{success_sufix}_actor_traj_log.pkl"))
+                            path = os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_{num_episodes + i}eps_{success_sufix}_actor_traj_log.pkl")
+                            pickle.dump(actor_traj_log_dict[env_id.item()], open(path, 'wb'))
                             actor_traj_log_dict[env_id.item()] = {
                                 "prob_pos_heatmap": [],
                                 "probs_mean_std": [],

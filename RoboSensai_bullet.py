@@ -171,6 +171,10 @@ class RoboSensaiBullet:
                 
                 # If the scene has joints, we need to set the joints to the lower limit
                 self.fixed_scene_name_data[scene_uni_name]["joint_limits"] = self.set_obj_joints_to_lower_limit(scene_id)
+                
+                # Only for evaluation
+                if self.args.eval_result:
+                    self.fixed_scene_name_data[scene_uni_name]["joint_limits"] = self.set_obj_joints_to_higher_limit(scene_id)
             
             except p.error as e:
                 print(f"Failed to load scene {scene_uni_name} | Error: {e}")
@@ -235,6 +239,10 @@ class RoboSensaiBullet:
         self.load_objects()
         if self.args.blender_record: 
             self.pybullet_recorder = PyBulletRecorder(client_id=self.client_id)
+        
+        # Only for evaluation
+        if self.args.eval_result and self.args.stable_placement:
+            self.stable_placement_task_init()
 
 
     def post_checker(self, verbose=False):
@@ -400,6 +408,13 @@ class RoboSensaiBullet:
             # TODO: Check whether this kind of curriculu will overfitting training or not.
             if self.args.random_select_placing:
                 self.rng.shuffle(self.unplaced_objs_name)
+            
+            # Only for evaluation
+            if self.args.eval_result and self.args.stable_placement:
+                # Move the stable queried object to the end of the list
+                assert self.ingrasp_obj_name in self.unplaced_objs_name, f"Stable queried object {self.ingrasp_obj_name} is not in the unplaced list!"
+                self.unplaced_objs_name.remove(self.ingrasp_obj_name)
+                self.unplaced_objs_name.append(self.ingrasp_obj_name)
 
 
     def update_unquery_scenes(self):
@@ -587,7 +602,7 @@ class RoboSensaiBullet:
             if hasattr(self, "selected_qr_scene_id"): # Move the previous scene to the prepare area
                 pu.set_pose(body=self.selected_qr_scene_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id) # Reset the pose of the scene
             while True:
-                self.selected_qr_scene_name = self.rng.choice(list(self.unquried_scene_name))
+                self.selected_qr_scene_name = self.unquried_scene_name[0]
                 self.scene_name_data = self.obj_name_data if self.selected_qr_scene_name in self.obj_name_data.keys() else self.fixed_scene_name_data
                 self.selected_qr_scene_id = self.scene_name_data[self.selected_qr_scene_name]["id"]
                 self.selected_qr_scene_pc = self.scene_name_data[self.selected_qr_scene_name]["pc"]
@@ -613,7 +628,7 @@ class RoboSensaiBullet:
         # Choose query object placement order
         if self.obj_done:
             self.obj_done = False
-            self.selected_obj_name = self.rng.choice(list(self.unplaced_objs_name))
+            self.selected_obj_name = self.unplaced_objs_name[0]
             self.selected_obj_id = self.obj_name_data[self.selected_obj_name]["id"]
             self.selected_obj_pc = self.obj_name_data[self.selected_obj_name]["pc"]
             self.selected_obj_pc_ft = self.obj_name_data[self.selected_obj_name]["pc_feature"]
@@ -732,6 +747,11 @@ class RoboSensaiBullet:
             # Must deepcopy the recorder since it will be reset before the info gets returned (stablebaseline3 will reset the environment after done is True)
             if self.args.blender_record:
                 self.info['blender_recorder'] = deepcopy(self.pybullet_recorder) 
+            
+            if self.args.eval_result and self.args.stable_placement:
+                sp_workwell = self.stable_placement_task_step()
+                if not sp_workwell: 
+                    self.stable_placement_reset()
         
         return done
         
@@ -746,26 +766,44 @@ class RoboSensaiBullet:
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
         action = raw_actions.sigmoid() # Map action to (0, 1)
         # action = [x, y, z, yaw]
-        World_2_QRscene = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        World_2_QRscene_pos, World_2_QRscene_ori = self.to_torch(World_2_QRscene[0]), self.to_torch(World_2_QRscene[1])
-        QRscene_2_QRregion = self.to_torch(self.selected_qr_region)
-        QRregion_half_extents = QRscene_2_QRregion[7:]
-        QRregion_2_ObjBboxCenter = action[..., :3] * (2 * QRregion_half_extents) - QRregion_half_extents
+
+        QRsceneCenter_2_QRregionCenter = self.to_torch(self.selected_qr_region)
+        QRregion_half_extents = QRsceneCenter_2_QRregionCenter[7:]
+        QRregionCenter_2_ObjBboxCenter_xyz = action[..., :3] * (2 * QRregion_half_extents) - QRregion_half_extents
         # Compute the grid half extents to compute the voxel size
-        temp_QRregion_2_ObjBboxCenter = QRregion_2_ObjBboxCenter.view(-1, 3) # view so that max and min are easier to commpute
-        Grid_half_extents = (temp_QRregion_2_ObjBboxCenter.max(dim=0)[0] - temp_QRregion_2_ObjBboxCenter.min(dim=0)[0]) / 2
+        temp_QRregionCenter_2_ObjBboxCenter_xyz = QRregionCenter_2_ObjBboxCenter_xyz.view(-1, 3) # view, so that max and min are easier to commpute
+        Grid_half_extents = (temp_QRregionCenter_2_ObjBboxCenter_xyz.max(dim=0)[0] - temp_QRregionCenter_2_ObjBboxCenter_xyz.min(dim=0)[0]) / 2
         # In the qr_scene baseLink frame
-        QRregion_2_ObjBboxCenter_shape_head = QRregion_2_ObjBboxCenter.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
-        QRscene_2_QRregion_xyz, QRscene_2_QRregion_quat = QRscene_2_QRregion[:3].repeat(*QRregion_2_ObjBboxCenter_shape_head, 1), QRscene_2_QRregion[3:7].repeat(*QRregion_2_ObjBboxCenter_shape_head, 1)
-        QRsceneBase_2_ObjBboxCenter_xyz = tf_combine(QRscene_2_QRregion_quat, QRscene_2_QRregion_xyz, self.to_torch([0., 0., 0., 1.]).repeat(*QRregion_2_ObjBboxCenter_shape_head, 1), QRregion_2_ObjBboxCenter)[1]
+        QRregionCenter_2_ObjBboxCenter_shape_head = QRregionCenter_2_ObjBboxCenter_xyz.shape[:-1] # tf_combine requires all the dimensions are equal; we need repeat
+        QRsceneCenter_2_QRregionCenter_xyz, QRsceneCenter_2_QRregionCenter_quat = \
+            QRsceneCenter_2_QRregionCenter[:3].repeat(*QRregionCenter_2_ObjBboxCenter_shape_head, 1), QRsceneCenter_2_QRregionCenter[3:7].repeat(*QRregionCenter_2_ObjBboxCenter_shape_head, 1)
+        QRsceneCenter_2_ObjBboxCenter_xyz = \
+            tf_combine(
+                QRsceneCenter_2_QRregionCenter_quat, QRsceneCenter_2_QRregionCenter_xyz, 
+                self.to_torch([0., 0., 0., 1.]).repeat(*QRregionCenter_2_ObjBboxCenter_shape_head, 1), QRregionCenter_2_ObjBboxCenter_xyz
+            )[1]
+        QRsceneCenter_2_ObjBboxCenter_euler = torch.zeros(action.shape[:-1]+(3, ), dtype=self.tensor_dtype, device=action.device)
+        QRsceneCenter_2_ObjBboxCenter_euler[..., 2] = action[..., 3] * 2*np.pi
+        QRsceneCenter_2_ObjBboxCenter_quat = quat_from_euler(QRsceneCenter_2_ObjBboxCenter_euler)
+        
         # In the simulator world frame
-        QRsceneBase_2_ObjBboxCenter_xyz_shape_head = QRsceneBase_2_ObjBboxCenter_xyz.shape[:-1]
-        World_2_QRscene_pos, World_2_QRscene_ori = World_2_QRscene_pos.repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1), World_2_QRscene_ori.repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1)
-        World_2_ObjBboxCenter_xyz = tf_combine(World_2_QRscene_ori, World_2_QRscene_pos, self.to_torch([0., 0., 0., 1.]).repeat(*QRsceneBase_2_ObjBboxCenter_xyz_shape_head, 1), QRsceneBase_2_ObjBboxCenter_xyz)[1]
-        # Convert Rotation to Quaternion
-        World_2_ObjBase_euler = torch.zeros(action.shape[:-1]+(3, ), dtype=self.torch_dtype, device=action.device)
-        World_2_ObjBase_euler[..., 3] = action[..., 3] * 2*np.pi
-        World_2_ObjBase_quat = quat_from_euler(World_2_ObjBase_euler)
+        World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        World_2_QRsceneBase_pos, World_2_QRsceneBase_ori = self.to_torch(World_2_QRsceneBase[0]), self.to_torch(World_2_QRsceneBase[1])
+        QRsceneBase_2_QRsceneCenter = self.to_torch(self.selected_qr_scene_bbox)
+        QRsceneBase_2_QRsceneCenter_pos, QRsceneBase_2_QRsceneCenter_quat = QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7]
+        World_2_QRsceneCenter_quat, World_2_QRsceneCenter_pos = \
+            tf_combine(
+                World_2_QRsceneBase_ori, World_2_QRsceneBase_pos, 
+                QRsceneBase_2_QRsceneCenter_quat, QRsceneBase_2_QRsceneCenter_pos
+            )
+        QRsceneCenter_2_ObjBboxCenter_xyz_shape_head = QRsceneCenter_2_ObjBboxCenter_xyz.shape[:-1]
+        World_2_QRsceneCenter_pos, World_2_QRsceneCenter_quat = \
+            World_2_QRsceneCenter_pos.repeat(*QRsceneCenter_2_ObjBboxCenter_xyz_shape_head, 1), World_2_QRsceneCenter_quat.repeat(*QRsceneCenter_2_ObjBboxCenter_xyz_shape_head, 1)
+        
+        World_2_ObjBboxCenter_quat, World_2_ObjBboxCenter_xyz = tf_combine(
+            World_2_QRsceneCenter_quat, World_2_QRsceneCenter_pos, 
+            QRsceneCenter_2_ObjBboxCenter_quat, QRsceneCenter_2_ObjBboxCenter_xyz
+        )
 
         # act_log_prob shape is [dim_x, dim_y, dim_z, dim_roll, dim_pitch, dim_yaw, 6]
         # 6 represents one prob of certain combination of x, y, z, r, p, y
@@ -779,9 +817,9 @@ class RoboSensaiBullet:
 
         # We did not fill the x,y rotation but we need to make sure the last dimension is 6 before, now we removed it.
         World_2_ObjBboxCenter_xyz_i = World_2_ObjBboxCenter_xyz[:, :, :, 0].view(-1, 3).cpu().numpy()
-        World_2_ObjBase_quat_i = World_2_ObjBase_quat[0, 0, 0, :].view(-1, 4).cpu().numpy()
+        World_2_ObjBboxCenter_quat_i = World_2_ObjBboxCenter_quat[0, 0, 0, :].view(-1, 4).cpu().numpy()
 
-        step_euler_i = World_2_ObjBase_euler[:, :, :, 0].view(-1, 3)
+        step_euler_i = QRsceneCenter_2_ObjBboxCenter_euler[:, :, :, 0].view(-1, 3)
         using_act_prob_i = using_act_prob[:, :, :, 0].view(-1, 1)
         # print(f"Euler Angle: {step_euler_i.unique(dim=0)}")
         # Strenthen the range to [0, 1.] to strengthen the color
@@ -808,12 +846,202 @@ class RoboSensaiBullet:
                                                      halfExtents=[voxel_half_x, voxel_half_y, voxel_half_z], 
                                                      client_id=self.client_id, rgba_color=rgba_color)
                     self.act_vs_box_ids.append(act_vs_box_id)
-            time.sleep(3.)
         
-        return World_2_ObjBboxCenter_xyz_i, using_act_prob_i.cpu().numpy(), \
-               World_2_ObjBase_quat_i, r_act_prob.cpu().numpy(), \
-               World_2_ObjBboxCenterPlace_xyz, World_2_ObjBasePlace_quat
+        actor_step_data = {
+            "World_2_ObjBboxCenter_xyz_i": World_2_ObjBboxCenter_xyz_i,
+            "World_2_ObjBboxCenter_quat_i": World_2_ObjBboxCenter_quat_i,
+            "visual_voxel_half_extents": [voxel_half_x, voxel_half_y, voxel_half_z],
+            "using_act_prob_i": using_act_prob_i.cpu().numpy(),
+            "r_act_prob": r_act_prob.cpu().numpy(),
+            "World_2_ObjBboxCenterPlace_xyz": World_2_ObjBboxCenterPlace_xyz,
+            "World_2_ObjBasePlace_quat": World_2_ObjBasePlace_quat
+        }
+
+        return actor_step_data
     
+
+    ######################################
+    ####### Stable Placement Task ########
+    ######################################
+    def init_camera(self):
+        cameraEyePosition = [2, 0, 2]
+        cameraTargetPosition = [0, 0, 0.35]
+        cameraUpVector = [0, 0, 1]
+        self.camera_view_matrix = p.computeViewMatrix(cameraEyePosition, cameraTargetPosition, cameraUpVector)
+
+    
+    def get_camera_image(self):
+        width, height, rgbImg, depthImg, segImg = p.getCameraImage(
+            width=224, height=224, 
+            viewMatrix=self.camera_view_matrix, 
+            renderer=p.ER_BULLET_HARDWARE_OPENGL, 
+            flags=p.ER_NO_SEGMENTATION_MASK,
+            physicsClientId=self.client_id)
+        return rgbImg, depthImg, segImg
+    
+    
+    def stable_placement_task_init(self):
+        from ur5_robotiq_controller import UR5RobotiqPybulletController, load_ur_robotiq_robot
+
+        self.ingrasp_obj_name = "005_tomato_soup_can_0"
+        ingrasp_obj_file_info = self.obj_uni_names_dataset[self.ingrasp_obj_name]
+        ingrasp_obj_urdf_path, ingrasp_obj_label = ingrasp_obj_file_info["urdf"], ingrasp_obj_file_info["label"]
+        rand_basePosition, rand_baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
+        self.ingrasp_obj_id = self.loadURDF(
+            ingrasp_obj_urdf_path, 
+            basePosition=rand_basePosition, 
+            baseOrientation=rand_baseOrientation, 
+            globalScaling=ingrasp_obj_label["globalScaling"]
+        )  # Load an object at position [0, 0, 1]
+        self.ingrasp_obj_data = self.obj_name_data[self.ingrasp_obj_name]
+        pu.set_pose(body=self.ingrasp_obj_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        pu.set_mass(self.ingrasp_obj_id, 1., client_id=self.client_id)
+        pu.change_obj_color(self.obj_name_data[self.ingrasp_obj_name]["id"], rgba_color=[0, 0, 0., 0.3], client_id=self.client_id)
+
+        # Load the robot; We need to use relative pose for the robot later
+        robot_id, urdf_path = load_ur_robotiq_robot(robot_initial_pose=[[-0.7, 0., 0.79], [0., 0., 0., 1.]], client_id=self.client_id)
+        self.robot = UR5RobotiqPybulletController(robot_id, rng=None, client_id=self.client_id)
+        self.robot.update_collision_check()
+        self.robot.reset()
+
+        # Generate a top-down grasp pose for the object
+        self.ingrasp_obj_bbox = self.ingrasp_obj_data["bbox"]
+        grasp_insert = 0.02
+        z_half_extent = self.ingrasp_obj_bbox[9]
+        x_half_extent = self.ingrasp_obj_bbox[7]
+
+        gripper_face_direction = [0., 0., 1.]
+        self.objBase_2_objBbox = [self.ingrasp_obj_bbox[0:3], self.ingrasp_obj_bbox[3:7]]
+        self.objBbox_2_objBase = p.invertTransform(*self.objBase_2_objBbox)
+        grasp_pos_for_ingrasp_obj = [-(x_half_extent-grasp_insert), 0., 0.]
+        grasp_pos_for_ingrasp_obj = [0., 0., z_half_extent-grasp_insert]
+        grasp_direction_for_ingrasp_obj = [-v for v in grasp_pos_for_ingrasp_obj] # point to the object center
+        self.objBbox_2_grasppose = [grasp_pos_for_ingrasp_obj, pu.getQuaternionFromTwoVectors(gripper_face_direction, grasp_direction_for_ingrasp_obj)]
+        self.grasppose_2_objBbox = p.invertTransform(*self.objBbox_2_grasppose)
+        
+        # Set the camera for data collection
+        self.init_camera()
+        self.stable_placement_reset()
+
+
+    def stable_placement_reset(self):
+        self.robot.reset()
+        World2grasppose = self.robot.get_eef_grasp_pose()
+        World2graspObjBase = pu.multiply_multi_transforms(World2grasppose, self.grasppose_2_objBbox, self.objBbox_2_objBase)
+        pu.set_pose(self.ingrasp_obj_id, World2graspObjBase, client_id=self.client_id)
+        # Close the gripper
+        close_gripper = self.robot.plan_gripper_joint_values(self.robot.CLOSED_POSITION)
+        self.robot.attach_object(self.ingrasp_obj_id)
+        self.robot.update_collision_check()
+        self.robot.execute_gripper_plan(close_gripper, realtime=self.args.realtime)
+    
+
+    def stable_placement_task_step(self):
+        if self.ingrasp_obj_name in self.placed_obj_poses.keys():
+            World2Ingrasp_obj_BasePose = self.placed_obj_poses[self.ingrasp_obj_name]
+            pu.set_pose(self.obj_name_data[self.ingrasp_obj_name]["id"], (self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        else:
+            return True
+        self.get_camera_image()
+        WorkWell = self.stable_placement_place_open_back(World2Ingrasp_obj_BasePose)
+        if not WorkWell: return WorkWell
+        self.get_camera_image()
+        if self.args.rendering:
+            time.sleep(2.)
+        World2Ingrasp_obj_BasePose = pu.get_body_pose(self.ingrasp_obj_id, client_id=self.client_id)
+        WorkWell = self.stable_placement_reach_close_back(World2Ingrasp_obj_BasePose)
+        if not WorkWell: return WorkWell
+        return True
+
+
+    def stable_placement_reach_close_back(self, World2Ingrasp_obj_BasePose):
+        world_2_grasp = pu.multiply_multi_transforms(World2Ingrasp_obj_BasePose, self.objBase_2_objBbox, self.objBbox_2_grasppose)
+        world_2_gripperbase = pu.multiply_multi_transforms(world_2_grasp, self.robot.Grasp_2_GRIPPERBase)
+        
+        maximum_motion_trials = 3
+        rtol = 0.2
+        for i in range(maximum_motion_trials):
+            joint_values = self.robot.get_arm_ik(world_2_grasp)
+            _, trajectory = self.robot.plan_arm_motion(joint_values)
+            if trajectory is None: return
+
+            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+            cur_grasp_pose = self.robot.get_eef_grasp_pose()
+            if np.isclose(cur_grasp_pose[0], world_2_grasp[0], rtol=rtol).all():
+                break
+            elif i==maximum_motion_trials-1:
+                print(f"Reach Stage: Failed to reach the grasp pose {i} times!")
+                return False
+
+        # Close the gripper
+        close_gripper = self.robot.plan_gripper_joint_values(self.robot.CLOSED_POSITION)
+        self.robot.attach_object(self.ingrasp_obj_id)
+        self.robot.update_collision_check()
+        self.robot.execute_gripper_plan(close_gripper, realtime=self.args.realtime)
+
+        # lift the object
+        lift_pose = deepcopy(self.robot.get_eef_grasp_pose())
+        lift_pose[0][2] += 0.1
+        jv_goal = self.robot.get_arm_ik(lift_pose, avoid_collisions=False)
+        if jv_goal is not None:
+            jv_start = self.robot.get_arm_joint_values()
+            trajectory = np.linspace(jv_start, jv_goal, 240)
+            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+
+        # Go to the waiting pose
+        for i in range(maximum_motion_trials):
+            _, trajectory = self.robot.plan_arm_motion(self.robot.HOME)
+            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+            if i==maximum_motion_trials-1 and trajectory is None:
+                print(f"Place Stage: Failed to reach the waiting pose {i} times!")
+                return False
+        return True
+
+
+    def stable_placement_place_open_back(self, World2Ingrasp_obj_BasePose):
+        pre_place_World2Ingrasp_obj_BasePose = deepcopy(World2Ingrasp_obj_BasePose)
+        pre_place_World2Ingrasp_obj_BasePose[0][2] += 0.1
+        world_2_preplace = pu.multiply_multi_transforms(pre_place_World2Ingrasp_obj_BasePose, self.objBase_2_objBbox, self.objBbox_2_grasppose)
+        world_2_place = pu.multiply_multi_transforms(World2Ingrasp_obj_BasePose, self.objBase_2_objBbox, self.objBbox_2_grasppose)
+        world_2_gripperbase = pu.multiply_multi_transforms(world_2_preplace, self.robot.Grasp_2_GRIPPERBase)
+        
+        maximum_motion_trials = 3
+        rtol = 0.2
+        for i in range(maximum_motion_trials):
+            joint_values = self.robot.get_arm_ik(world_2_preplace)
+            _, trajectory = self.robot.plan_arm_motion(joint_values)
+            if trajectory is None: return
+
+            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+            cur_grasp_pose = self.robot.get_eef_grasp_pose()
+            if np.isclose(cur_grasp_pose[0], world_2_preplace[0], rtol=rtol).all():
+                break
+            elif i==maximum_motion_trials-1:
+                print(f"Place Stage: Failed to reach the placement pose {i} times!")
+                return False
+
+        # Go down to the place pose
+        jv_goal = self.robot.get_arm_ik(world_2_place, avoid_collisions=False)
+        if jv_goal is not None:
+            jv_start = self.robot.get_arm_joint_values()
+            trajectory = np.linspace(jv_start, jv_goal, 240)
+            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+
+        # open the gripper
+        trajectory = self.robot.plan_gripper_joint_values(self.robot.OPEN_POSITION)
+        self.robot.detach()
+        self.robot.update_collision_check()
+        self.robot.execute_gripper_plan(trajectory, realtime=self.args.rendering)
+
+        # Go to the waiting pose
+        for i in range(maximum_motion_trials):
+            _, trajectory = self.robot.plan_arm_motion(self.robot.HOME)
+            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+            if i==maximum_motion_trials-1 and trajectory is None:
+                print(f"Place Stage: Failed to reach the waiting pose {i} times!")
+                return False
+        return True
+
 
     def replay_placement_scene(self, scene_dict_file):
         scene_dict = read_json(scene_dict_file)
@@ -945,6 +1173,15 @@ class RoboSensaiBullet:
             joints_limits = np.array([pu.get_joint_limits(obj_id, joint_i, client_id=self.client_id) for joint_i in range(joints_num)])
             pu.set_joint_positions(obj_id, list(range(joints_num)), joints_limits[:, 0], client_id=self.client_id)
             pu.control_joints(obj_id, list(range(joints_num)), joints_limits[:, 0], client_id=self.client_id)
+            return joints_limits
+        
+    
+    def set_obj_joints_to_higher_limit(self, obj_id):
+        joints_num = pu.get_num_joints(obj_id, client_id=self.client_id)
+        if joints_num > 0:
+            joints_limits = np.array([pu.get_joint_limits(obj_id, joint_i, client_id=self.client_id) for joint_i in range(joints_num)])
+            pu.set_joint_positions(obj_id, list(range(joints_num)), joints_limits[:, 1], client_id=self.client_id)
+            pu.control_joints(obj_id, list(range(joints_num)), joints_limits[:, 1], client_id=self.client_id)
             return joints_limits
     
 
