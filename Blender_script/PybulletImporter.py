@@ -16,6 +16,9 @@ from os import listdir, makedirs
 from mathutils import Vector
 import math
 import time
+import random
+import numpy as np
+import re
 
 
 def load_pkl(filepath=None):
@@ -148,6 +151,120 @@ def load_pkl(filepath=None):
     print('FINISHED')
 
     return collection, max_frames
+
+
+def load_actor_visualization(filepath=None):
+    # Setting up some initial variables.
+    # These include the directory of the files, file extension, frame skipping, and maximum frames.
+    skip_frames = 1
+    max_frames_limit = 100000
+
+    # Getting the current Blender context which contains data like current scene, selected objects etc.
+    context = bpy.context
+
+    # Iterating through each file in the directory.
+    # Constructing the full file path.
+    assert exists(filepath), f"File does not exist: {filepath}"
+    print(f'Processing {filepath}')
+
+    max_frames = 0
+    # Opening the .pkl (pickle) file which contains serialized Python object data.
+    with open(filepath, 'rb') as pickle_file:
+        print(f"Loading {filepath}")
+        data = pickle.load(pickle_file)
+
+    _, example_data = data["prob_pos_heatmap"][0]
+    num_visual_objs = example_data["World_2_ObjBboxCenter_xyz_i"].shape[0]
+
+    # Add visualization object
+    visual_objs = []
+    context = bpy.context
+    collection_name = "actor_visual"
+    collection = bpy.data.collections.new(collection_name)
+    context.scene.collection.children.link(collection)
+    context.view_layer.active_layer_collection = \
+        context.view_layer.layer_collection.children[-1]
+    bpy.ops.object.select_all(action='DESELECT')
+    for i in range(num_visual_objs):
+        location = [-1000, -1000, 0]
+        vis_obj = add_primitive_object(object_type='CUBE', location=location, scale=[1, 1, 1.], use_emission=True, texture_path=None, alpha=0.3)
+        visual_objs.append(vis_obj)
+
+    for frame_index, actor_visual_data in data["prob_pos_heatmap"]:
+        World_2_ObjBboxCenter_xyz_i = actor_visual_data["World_2_ObjBboxCenter_xyz_i"]
+        using_act_prob_i = actor_visual_data["using_act_prob_i"]
+        visual_voxel_half_extents = actor_visual_data["visual_voxel_half_extents"]
+        assert World_2_ObjBboxCenter_xyz_i.shape[0] == num_visual_objs
+        for i, obj in enumerate(visual_objs):
+            rgba_color = [1, 1, 0, using_act_prob_i[i]]
+            xyz_pos = World_2_ObjBboxCenter_xyz_i[i]
+            context.view_layer.objects.active = obj  # Correctly set each obj as active
+            # Assume you want to vary the frame for demonstration; adjust as needed
+            change_object_color(obj, color=rgba_color)
+            # TODO Change object scaling to match the scale at this frame
+            # Set initial location and rotation
+            obj.location = xyz_pos
+            obj.rotation_mode = 'QUATERNION'
+            obj.rotation_quaternion = (1, 0, 0, 0)
+            obj.keyframe_insert(data_path="location", frame=frame_index)
+            obj.keyframe_insert(data_path="rotation_quaternion", frame=frame_index)
+            obj.scale = visual_voxel_half_extents
+            obj.keyframe_insert(data_path="scale", frame=frame_index)
+
+            # Access the animation data of the object to change interpolation mode
+            if obj.animation_data and obj.animation_data.action:
+                for fcurve in obj.animation_data.action.fcurves:
+                    for keyframe_point in fcurve.keyframe_points:
+                        keyframe_point.interpolation = 'CONSTANT'
+        # Indicating the script has finished execution.
+    print('FINISHED')
+
+    return collection, max_frames
+
+
+def change_object_color(obj, color=(1.0, 1.0, 1.0, 1.0)):
+    """
+    Changes the color, transparency, and emission of a given Blender object. Ensures the object does not generate shadows.
+    
+    Parameters:
+        obj (bpy.types.Object): The Blender object to change the properties of.
+        color (tuple): A tuple representing the RGBA color and transparency.
+                       Each component should be a float between 0.0 and 1.0.
+    """
+    
+    # Ensure the object has a material
+    if not obj.data.materials:
+        # Create a new material if the object has none
+        mat = bpy.data.materials.new(name="NewMaterial")
+        obj.data.materials.append(mat)
+    else:
+        # Get the first material of the object
+        mat = obj.data.materials[0]
+    
+    # Ensure the material uses nodes and clear existing nodes
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    nodes.clear()
+
+    # Create necessary nodes
+    emission = nodes.new(type='ShaderNodeEmission')
+    emission.inputs['Color'].default_value = color  # Set color
+    emission.inputs['Strength'].default_value = 1.0  # Adjust as needed
+
+    transparent = nodes.new(type='ShaderNodeBsdfTransparent')
+    mix_shader = nodes.new(type='ShaderNodeMixShader')
+    material_output = nodes.new(type='ShaderNodeOutputMaterial')
+
+    # Set up node links
+    mix_shader.inputs['Fac'].default_value = 1.0 - color[3]
+    mat.node_tree.links.new(mix_shader.inputs[1], emission.outputs['Emission'])
+    mat.node_tree.links.new(mix_shader.inputs[2], transparent.outputs['BSDF'])
+    mat.shadow_method = 'NONE'
+
+    mat.node_tree.links.new(material_output.inputs['Surface'], mix_shader.outputs['Shader'])
+    
+    # Update the blend method for transparency
+    mat.blend_method = 'BLEND' if color[3] < 1.0 else 'OPAQUE'
 
 
 def set_blender_engine(render_engine='BLENDER_EEVEE'):
@@ -376,6 +493,20 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
     # Adjust material blend method for transparency
     mat.blend_method = 'BLEND' if alpha < 1.0 else 'OPAQUE'
 
+    return obj
+
+
+def atoi(text):
+    return int(text) if text.isdigit() else text
+
+
+def natural_keys(text):
+    """
+    alist.sort(key=natural_keys) sorts in human order
+    http://nedbatchelder.com/blog/200712/human_sorting.html
+    (See Toothy's implementation in the comments)
+    """
+    return [atoi(c) for c in re.split(r'(\d+)', text)]
 
 
 ##############################################################################################################
@@ -384,17 +515,23 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
 ##############################################################################################################
 # Can not use if __name__ == "__main__" here. Blender seems does not support it.
 # Only if you create the add-on operator, you can use it.
-animation = False
-render_nums = 40
-set_blender_engine(render_engine='CYCLES')
-directory = "eval_res/Union/blender/Union_02-10_18:50Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum1_objStep1_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_ChangeTableSize_objRange_10_10"
-filename_ext = ".pkl"
+animation = True
+render_nums = 2
+set_blender_engine(render_engine='BLENDER_EEVEE') # 'BLENDER_EEVEE', 'CYCLES'
+evaluation_name = "Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10"
+blender_traj_directory = join("eval_res/Union/blender", evaluation_name)
+actor_vis_traj_directory = join("eval_res/Union/trajectories", evaluation_name)
+blender_filename_ext = ".pkl"
+actor_vis_filename_ext = ".pkl"
 # Listing all files in the specified directory.
-filepaths = [join(directory, filename) for filename in listdir(directory) if filename.endswith(filename_ext) and "success" in filename][:render_nums]
-save_folder = join(directory, "render_results")
+blender_file_paths = []
+trajectory_file_paths = []
+blender_filepaths = sorted([join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
+actor_filepaths = sorted([join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
+save_folder = join(blender_traj_directory, "render_results")
 makedirs(save_folder, exist_ok=True)
 
-for i, filepath in enumerate(filepaths):
+for i, filepath in enumerate(blender_filepaths):
     delete_collection(specific_name=None)
     delete_scene_objects()
 
@@ -403,8 +540,13 @@ for i, filepath in enumerate(filepaths):
     # Add a plane as the ground with wooden texture
     add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
 
+    # Load the data from the pickle file.
+    _, max_frame = load_pkl(filepath)
+
     # Add visualization object
-    # add_primitive_object(object_type='SPHERE', location=(0, 0, 1.0), scale=(0.1, 0.1, 0.1), use_emission=True, texture_path=None, alpha=0.3)
+    if len(actor_filepaths) > 0:
+        print(f"Loading actor visualization from {actor_filepaths[i]}")
+        load_actor_visualization(actor_filepaths[i])
 
     # Add light
     add_light(location=(0, 0, 5), energy=5000, color=(1., 1., 1.))
@@ -415,25 +557,24 @@ for i, filepath in enumerate(filepaths):
         camera_start_location=(0, 3., 3.),
         rotation_angle=90,
         # frame_start=1,
-        # frame_end=3800
+        # frame_end=max_frame,
         frame_start=0,
         frame_end=1
     )
 
-    # Load the data from the pickle file.
-    _, max_frame = load_pkl(filepath)
-
-    skip_frames = 10
+    skip_frames = 5
     frame_rate = 240 // skip_frames
+    start_frame = max_frame if not animation else 1
+    max_frame = max_frame if not animation else max_frame + 100
 
     start_time = time.time()
-    output_name = basename(filepath).replace(filename_ext, '.mp4') \
-        if animation else basename(filepath).replace(filename_ext, '.png')
+    output_name = basename(filepath).replace(blender_filename_ext, '.mp4') \
+        if animation else basename(filepath).replace(blender_filename_ext, '.png')
     render_animation(f'{save_folder}/{output_name}', 
                     encoder='H264', 
                     resolution=(2560, 1440), 
                     skip_frames=skip_frames, 
-                    start_frame=max_frame, 
+                    start_frame=start_frame, 
                     end_frame=max_frame, 
                     quality=80, 
                     frame_rate=frame_rate,

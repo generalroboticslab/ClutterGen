@@ -55,6 +55,7 @@ class PyBulletRecorder:
     def __init__(self, client_id=0):
         self.states = []
         self.links = []
+        self.frame_index = 0
         self.client_id = client_id
         # Make sure PybulletRecorder is called in the main workspace
         self.workAbsFolderPath = getcwd()
@@ -104,6 +105,7 @@ class PyBulletRecorder:
         for link in self.links:
             current_state[link.name] = link.get_keyframe()
         self.states.append(current_state)
+        self.frame_index += 1
 
 
     def prompt_save(self):
@@ -134,6 +136,7 @@ class PyBulletRecorder:
         self.states = []
         if links:
             self.links = []
+        self.frame_index = 0
 
 
     def get_formatted_output(self):
@@ -143,7 +146,8 @@ class PyBulletRecorder:
                 'type': 'mesh',
                 'mesh_path': link.mesh_path,
                 'mesh_scale': link.mesh_scale,
-                # fake_pose (prepare area) if link not in state, it is probably that this link is registered later.
+                # fake_pose (prepare area) if link not in state, it is because this link is registered later.
+                # We place it in a fake position to make sure the frame of all objects are consistent.
                 'frames': [state.get(link.name, self.fake_pose) for state in self.states], 
             }
         return retval
