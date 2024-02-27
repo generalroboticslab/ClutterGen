@@ -562,6 +562,7 @@ for i, filepath in enumerate(blender_filepaths):
         camera_start_location = (0, 3., 3.)
         focus_point=(0, 0, 0.35)
         light_location = (0, 0, 5)
+        light_color = (1., 0.85, 0.72)
     elif json_data["specific_scene"] == "storage_furniture_5":
         camera_start_location = (0, 5., 1.8)
         focus_point = (0, 0, 0.35)
