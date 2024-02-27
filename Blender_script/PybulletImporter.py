@@ -19,6 +19,7 @@ import time
 import random
 import numpy as np
 import re
+import json
 
 
 def load_pkl(filepath=None):
@@ -515,12 +516,14 @@ def natural_keys(text):
 ##############################################################################################################
 # Can not use if __name__ == "__main__" here. Blender seems does not support it.
 # Only if you create the add-on operator, you can use it.
-animation = True
-render_nums = 2
+animation = False
+render_nums = 40
+
 set_blender_engine(render_engine='BLENDER_EEVEE') # 'BLENDER_EEVEE', 'CYCLES'
-evaluation_name = "Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10"
-blender_traj_directory = join("eval_res/Union/blender", evaluation_name)
-actor_vis_traj_directory = join("eval_res/Union/trajectories", evaluation_name)
+evalUniName = "Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10"
+json_file_path = join("eval_res/Union/Json", evalUniName+".json")
+blender_traj_directory = join("eval_res/Union/blender", evalUniName)
+actor_vis_traj_directory = join("eval_res/Union/trajectories", evalUniName)
 blender_filename_ext = ".pkl"
 actor_vis_filename_ext = ".pkl"
 # Listing all files in the specified directory.
@@ -531,30 +534,54 @@ actor_filepaths = sorted([join(actor_vis_traj_directory, filename) for filename 
 save_folder = join(blender_traj_directory, "render_results")
 makedirs(save_folder, exist_ok=True)
 
+# Read the json file
+with open(json_file_path, 'r') as f:
+    json_data = json.load(f)
+
 for i, filepath in enumerate(blender_filepaths):
     delete_collection(specific_name=None)
     delete_scene_objects()
 
-    # Add a table; The size might be different from the original size!
-    add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.4, 0.5, 0.35), texture_path=None)
     # Add a plane as the ground with wooden texture
     add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
+
+    # Add a table; The size might be different from the original size!
+    if json_data["specific_scene"] == "table":
+        add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.4, 0.5, 0.35), texture_path=None)
 
     # Load the data from the pickle file.
     _, max_frame = load_pkl(filepath)
 
-    # Add visualization object
+    # Add visualization object for actor visualization
     if len(actor_filepaths) > 0:
         print(f"Loading actor visualization from {actor_filepaths[i]}")
         load_actor_visualization(actor_filepaths[i])
 
+    # Adjust the camera and light
+    if json_data["specific_scene"] == "table":
+        camera_start_location = (0, 3., 3.)
+        focus_point=(0, 0, 0.35)
+        light_location = (0, 0, 5)
+    elif json_data["specific_scene"] == "storage_furniture_5":
+        camera_start_location = (0, 5., 1.8)
+        focus_point = (0, 0, 0.35)
+        light_location = (-4., 0, 4)
+        light_color = (1., 0.85, 0.72)
+    elif json_data["specific_scene"] == "storage_furniture_6":
+        camera_start_location = (0, 4.5, 1.8)
+        focus_point = (0, 0, 0.45)
+        light_location = (-3., 0, 2)
+        light_color = (1., 0.85, 0.72)
+    else:
+        raise ValueError(f"Unknown specific_scene: {json_data['specific_scene']}")
+
     # Add light
-    add_light(location=(0, 0, 5), energy=5000, color=(1., 1., 1.))
+    add_light(location=light_location, energy=5000, color=light_color)
 
     # Add camera
     animate_camera_focus_rotate(
-        focus_point=(0, 0, 0.35),
-        camera_start_location=(0, 3., 3.),
+        focus_point=focus_point,
+        camera_start_location=camera_start_location,
         rotation_angle=90,
         # frame_start=1,
         # frame_end=max_frame,
@@ -562,6 +589,7 @@ for i, filepath in enumerate(blender_filepaths):
         frame_end=1
     )
 
+    # Render the animation
     skip_frames = 5
     frame_rate = 240 // skip_frames
     start_frame = max_frame if not animation else 1

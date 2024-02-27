@@ -320,20 +320,21 @@ class RoboSensaiBullet:
         self.args.step_sync = self.args.step_sync if hasattr(self.args, "step_sync") else False
         self.args.eval_result = self.args.eval_result if hasattr(self.args, "eval_result") else False
         # Buffer does not need to be reset
-        self.reset_info()
+        self.create_info_buffer()
         self.num_episode = 0
         self.default_qr_region_z = 0.3
 
     
-    def reset_info(self):
+    def create_info_buffer(self):
         self.info = {
             "success": 0., 
             "stepping": 1., 
-            "his_steps": 0, 
             "success_placed_obj_num": 0, 
             "obj_success_rate": {}, 
             "scene_obj_success_num": {}, 
-            "pc_change_indicator": 1.
+            "pc_change_indicator": 1.,
+            "placement_trajs": {},
+            "placement_trajs_temp": {},
         }
 
     
@@ -366,6 +367,9 @@ class RoboSensaiBullet:
         self.last_seq_obs = np.zeros(self.raw_act_hist_qr_obs_shape[1:], dtype=self.numpy_dtype)
         # Rewards
         self.accm_vel_reward = 0.
+        # Information reset (some information does not need to be reset!)
+        self.info["placement_trajs"] = deepcopy(self.info["placement_trajs_temp"])
+        self.info["placement_trajs_temp"] = {}
 
         # Blender record
         if self.args.blender_record: 
@@ -489,90 +493,19 @@ class RoboSensaiBullet:
             if self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel):
                 self.continue_stable_steps += 1
                 if self.continue_stable_steps >= self.args.min_continue_stable_steps: 
-                    self.info['his_steps'] = self.his_steps
                     break
 
             self.prev_obj_vel = obj_vel
 
+        self.record_placement_traj((pose_xyz, pose_quat), self.his_steps)
         reward = self.compute_reward() # Must compute reward before observation since we use the velocity to compute reward
         done = self.compute_done()
         observation = self.compute_observations() if not done else self.last_seq_obs # This point should be considered as the start of the episode!
+        self.reset_placed_obj_poses()
 
-        # Reset placed object pose | when reset, the placed_obj_poses will be empty 
-        obj_names, obj_poses = dict2list(self.placed_obj_poses)
-        for i, obj_name in enumerate(obj_names):
-            pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
-
+        # 1 Env we do not use stableBaseline which will ask for manually reset
         if self.args.num_envs == 1:
-            observation = self.reset() if done else observation # 1 Env we do not use stableBaseline which will ask for manually reset
-            return np.expand_dims(observation, axis=0), np.array([reward]), \
-                   np.array([done]), [self.info]
-        else:
-            return observation, reward, done, self.info
-
-
-    def step_async(self, action):
-        # stepping == 1 means this action is from the agent and is meaningful
-        # Pre-physical step
-        if self.info['stepping'] == 1.:
-            pose_xyz, pose_quat = self.convert_actions(action)
-            pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
-            self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
-            self.accm_vel_reward = 0.
-            self.prev_obj_vel = np.array([0.]*6, dtype=self.numpy_dtype)
-            self.his_steps = 0
-            self.continue_stable_steps = 0
-            self.info['stepping'] = 0.
-            self.info['his_steps'] = 0
-            self.info['pc_change_indicator'] = 0.
-        
-        # stepping == 0 means previous action is still running, we need to wait until the object is stable
-        # TODO: Stable check is not only based on the placed object, but the maximum vel in the whole scene!!
-        # In-pysical step
-        if self.info['stepping'] == 0.:
-            for _ in range(ceil(self.args.max_traj_history_len/self.args.step_divider)):
-                self.simstep(1/240)
-                self.blender_record()
-
-                obj_pos, obj_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-                obj_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True, client_id=self.client_id)
-                # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]; Left Shift
-                self.traj_history.pop(0)
-                self.traj_history.append(obj_pos + obj_quat + obj_vel.tolist())
-                # Accumulate velocity reward
-                self.accm_vel_reward += -obj_vel[:].__abs__().sum()
-                # Jump out if the object is not moving (in the future, we might need to add acceleration checker)
-                self.his_steps += 1
-                if (self.vel_checker(obj_vel) and self.acc_checker(self.prev_obj_vel, obj_vel)):
-                    self.continue_stable_steps += 1
-                    if self.continue_stable_steps >= self.args.min_continue_stable_steps: 
-                        self.info['stepping'] = 1.
-                        self.info['his_steps'] = self.his_steps
-                        break
-                else: self.continue_stable_steps = 0
-
-                if self.his_steps >= self.args.max_traj_history_len:
-                    self.info['stepping'] = 1.
-                    self.info['his_steps'] = self.his_steps
-                    break
-
-                self.prev_obj_vel = obj_vel
-        
-        # Post-physical step
-        reward = self.compute_reward() if self.info['stepping']==1 else 0. # Must compute reward before observation since the velocity will be reset in the observaion. Only stepping environment will be recorded
-        done = self.compute_done() if self.info['stepping']==1 else False
-        # This point should be considered as the start of the episode! Stablebaseline3 will automatically reset the environment when done is True; Therefore our environment does not have reset function called, it is called outside.
-        if self.info['stepping'] == 1. and not done: observation = self.compute_observations()
-        else: observation = self.last_seq_obs
-
-        # Reset successfully placed object pose
-        if self.info['stepping'] == 1.:
-            obj_names, obj_poses = dict2list(self.placed_obj_poses)
-            for i, obj_name in enumerate(obj_names):
-                pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
-
-        if self.args.num_envs == 1:
-            observation = self.reset() if done else observation # 1 Env we do not use stableBaseline which will ask for manually reset
+            observation = self.reset() if done else observation 
             return np.expand_dims(observation, axis=0), np.array([reward]), \
                    np.array([done]), [self.info]
         else:
@@ -669,7 +602,8 @@ class RoboSensaiBullet:
             print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
 
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
-        if self.his_steps <= self.args.max_stable_steps: 
+        if self.his_steps <= self.args.max_stable_steps:
+            print(f"His steps: {self.his_steps} | Max steps: {self.args.max_stable_steps}")
             # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
             self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
             self.unplaced_objs_name.remove(self.selected_obj_name)
@@ -726,8 +660,10 @@ class RoboSensaiBullet:
             final_scene_obj_pose_dict = deepcopy(self.placed_obj_poses)
             scene_pos, scene_quat = self.scene_init_stable_pose
             scene_init_z_offset = self.fixed_scene_name_data[self.selected_qr_scene_name]["init_z_offset"]
-            final_scene_obj_pose_dict[self.selected_qr_scene_name] = [[scene_pos[0], scene_pos[1], scene_pos[2] - scene_init_z_offset], scene_quat]
-
+            
+            self.info['qr_scene_pose'] = [[scene_pos[0], scene_pos[1], scene_pos[2] - scene_init_z_offset], 
+                                           scene_quat, 
+                                           self.selected_qr_scene_bbox.tolist()]
             self.info['placed_obj_poses'] = final_scene_obj_pose_dict
             self.info['success_placed_obj_num'] = self.success_obj_num
                                     
@@ -1124,6 +1060,25 @@ class RoboSensaiBullet:
     def blender_save(self, save_path=None):
         save_path = save_path if save_path is not None else self.args.blender_record_path
         if self.args.blender_record: self.pybullet_recorder.save(save_path)
+
+    
+    def record_placement_traj(self, obj_pose, stable_steps):
+        # Record the placement trajectory
+        if self.args.eval_result:
+            if self.selected_obj_name not in self.info["placement_trajs_temp"].keys():
+                self.info["placement_trajs_temp"][self.selected_obj_name] = {
+                    "pose": [],
+                    "stable_steps": []
+                }
+            self.info["placement_trajs_temp"][self.selected_obj_name]["pose"].append(obj_pose)
+            self.info["placement_trajs_temp"][self.selected_obj_name]["stable_steps"].append(stable_steps)
+
+    
+    def reset_placed_obj_poses(self):
+        # Reset placed object pose | when reset, the placed_obj_poses will be empty
+        obj_names, obj_poses = dict2list(self.placed_obj_poses)
+        for i, obj_name in enumerate(obj_names):
+            pu.set_pose(self.obj_name_data[obj_name]["id"], obj_poses[i], client_id=self.client_id)
 
     
     def step_manual(self):

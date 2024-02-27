@@ -160,8 +160,10 @@ def get_args():
 
     if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.result_file_path):
         response = input(f"Find existing result file {eval_args.result_file_path}! Whether remove or not (y/n):")
-        if response == 'y' or response == 'Y': os.remove(eval_args.result_file_path)
-        else: raise Exception("Give up this evaluation because of exsiting evluation result.")
+        if response == 'y' or response == 'Y': 
+            os.remove(eval_args.result_file_path)
+        else: 
+            raise Exception("Give up this evaluation because of exsiting evluation result.")
     if eval_args.save_to_assets:  # directly save new assets file to a_new_assets
         if eval_args.use_benchmark: raise Exception("Can not set save_to_assets and use_benchmark to be both true at the same time!") # can not
         if eval_args.collect_data or eval_args.generate_benchmark:
@@ -234,10 +236,9 @@ if __name__ == "__main__":
 
         num_episodes = 0 
         episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
-        episode_timesteps = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
         episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
-        scene_cfg_dict = {}; success_scene_cfg_dict = {}; actor_traj_log_dict = {}
+        scene_cfg_dict = {}; success_scene_cfg_dict = {}; actor_traj_log_dict = {}; placement_traj_dict = {}
         for i in range(eval_args.num_envs):
             actor_traj_log_dict[i] = {
                 "prob_pos_heatmap": [],
@@ -305,14 +306,14 @@ if __name__ == "__main__":
                 update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                 success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
                 update_tensor_buffer(episode_success_box, success_buf)
-                steps_buf = torch.Tensor(combine_envs_float_info2list(infos, 'his_steps', terminal_ids)).to(device)
-                update_tensor_buffer(episode_timesteps, steps_buf)
                 success_ids = terminal_ids[success_buf.to(torch.bool)]
                 
                 if eval_args.collect_data:
                     scene_cfg = combine_envs_float_info2list(infos, 'placed_obj_poses', terminal_ids)
+                    placement_trajs = combine_envs_float_info2list(infos, "placement_trajs", terminal_ids)
                     for i, env_id in enumerate(terminal_ids):
                         scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
+                        placement_traj_dict.update({num_episodes + i: [placement_trajs[i], success_buf[i].item()]})
                         if env_id in success_ids:
                             success_scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
 
@@ -344,7 +345,6 @@ if __name__ == "__main__":
                 
         episode_reward = torch.mean(episode_rewards_box).item()
         success_rate = torch.mean(episode_success_box).item()
-        unstable_steps = torch.mean(episode_timesteps).item()
         machine_time = time.time() - start_time
         
         print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
@@ -356,19 +356,21 @@ if __name__ == "__main__":
                 "max_num_placing_objs": max_num_placing_objs, 
                 "num_trials": eval_args.num_trials,
                 "success_rate": success_rate,
-                "unstable_steps": unstable_steps,
                 "avg_reward": episode_reward,
                 "machine_time": machine_time
             }
             write_csv_line(eval_args.result_file_path, csv_result)
+            print(f"Saved evaluation CSV to {eval_args.result_file_path}")
 
             # Save success rate and placed objects number
             meta_data = {
                 "episode": num_episodes,
                 "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                "qr_scene_pose": combine_envs_float_info2list(infos, 'qr_scene_pose')[0],
                 "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
-                "scene_cfg": scene_cfg_dict,
-                "success_scene_cfg": success_scene_cfg_dict,
+                "scene_cfgs": scene_cfg_dict,
+                "success_scene_cfgs": success_scene_cfg_dict,
+                "placement_trajs": placement_traj_dict
             }
             save_json(meta_data, os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_meta_data.json"))
 

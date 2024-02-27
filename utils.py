@@ -116,3 +116,52 @@ def natural_keys(text):
     (See Toothy's implementation in the comments)
     """
     return [atoi(c) for c in re.split(r'(\d+)', text)]
+
+
+# Transformation
+
+def quaternions_to_euler_array(quaternions):
+    """
+    Convert an array of quaternions into Euler angles (roll, pitch, and yaw) using the ZYX convention.
+    
+    Parameters:
+    quaternions: A numpy array of shape (N, 4) where each row contains the components of a quaternion [x, y, z, w]
+    
+    Returns:
+    euler_angles: A numpy array of shape (N, 3) where each row contains the Euler angles [roll, pitch, yaw]
+    """
+    if quaternions.ndim == 1:
+        quaternions = quaternions[np.newaxis, :]
+        flatten_flag = True
+    else:
+        flatten_flag = False
+
+    # Preallocate the output array
+    euler_angles = np.zeros((quaternions.shape[0], 3))
+    
+    # Extract components
+    w, x, y, z = quaternions[:, 3], quaternions[:, 0], quaternions[:, 1], quaternions[:, 2]
+    
+    # Roll (x-axis rotation)
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x**2 + y**2)
+    roll = np.arctan2(sinr_cosp, cosr_cosp)
+    
+    # Pitch (y-axis rotation)
+    sinp = 2 * (w * y - z * x)
+    pitch = np.where(np.abs(sinp) >= 1, np.sign(sinp) * np.pi / 2, np.arcsin(sinp))
+    
+    # Yaw (z-axis rotation)
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y**2 + z**2)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
+    
+    # Combine the angles
+    euler_angles[:, 0] = roll
+    euler_angles[:, 1] = pitch
+    euler_angles[:, 2] = yaw
+    
+    if flatten_flag:
+        euler_angles = euler_angles.flatten()
+
+    return euler_angles
