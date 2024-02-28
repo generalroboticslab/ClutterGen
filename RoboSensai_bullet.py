@@ -603,7 +603,6 @@ class RoboSensaiBullet:
 
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
         if self.his_steps <= self.args.max_stable_steps:
-            print(f"His steps: {self.his_steps} | Max steps: {self.args.max_stable_steps}")
             # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
             self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
             self.unplaced_objs_name.remove(self.selected_obj_name)
