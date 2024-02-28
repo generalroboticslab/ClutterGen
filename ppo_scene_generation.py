@@ -314,10 +314,10 @@ if __name__ == "__main__":
 
         if args.num_envs > 1:
             envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
-            envs.env_method('reset_info') # reset the info to record the new training miscs
+            envs.env_method('create_info_buffer') # reset the info to record the new training miscs
         else:
             envs.args.max_num_placing_objs = num_placing_objs
-            envs.reset_info()
+            envs.create_info_buffer()
         
         args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps global_episodes to update
         args.batch_size = int(args.num_envs * args.num_steps)
