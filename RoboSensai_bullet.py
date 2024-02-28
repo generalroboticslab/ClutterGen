@@ -501,7 +501,7 @@ class RoboSensaiBullet:
         reward = self.compute_reward() # Must compute reward before observation since we use the velocity to compute reward
         done = self.compute_done()
         observation = self.compute_observations() if not done else self.last_seq_obs # This point should be considered as the start of the episode!
-        self.reset_placed_obj_poses()
+        self.re_place_placed_obj_poses()
 
         # 1 Env we do not use stableBaseline which will ask for manually reset
         if self.args.num_envs == 1:
@@ -611,23 +611,35 @@ class RoboSensaiBullet:
             self.update_running_avg(record_dict=self.info['obj_success_rate'],
                                     key_name=self.selected_obj_name,
                                     new_value=1.)
-            # Record the successful object pose
-            selected_obj_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-            self.placed_obj_poses[self.selected_obj_name] = selected_obj_pose
-            # vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
-            vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) \
-                          if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
-                          else self.args.reward_pobj
+            # Record the successful object base pose; Merge the placed object points cloud to the scene points cloud (scene center frame)
+            World2SelectedObjBase_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
+            World2SelectedObjCenter_pose = p.multiplyTransforms(
+                World2SelectedObjBase_pose[0], World2SelectedObjBase_pose[1], 
+                self.selected_obj_bbox[:3], self.selected_obj_bbox[3:7]
+            )
+            self.placed_obj_poses[self.selected_obj_name] = World2SelectedObjBase_pose
             # Update the scene observation | transform the selected object point cloud to world frame using the current pose
-            scene_obj_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-            scene_obj2_selected_obj_pose = p.multiplyTransforms(*p.invertTransform(*scene_obj_pose), selected_obj_pose[0], selected_obj_pose[1])
-            transformed_selected_obj_pc = self.to_numpy([p.multiplyTransforms(*scene_obj2_selected_obj_pose, point, [0., 0., 0., 1.])[0] for point in self.selected_obj_pc])
-            # transformed_selected_obj_pc = tf_apply(self.to_torch(selected_obj_pose[1]), self.to_torch(selected_obj_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
+            World2QRsceneBase_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+            World2QRsceneCenter_pose = p.multiplyTransforms(
+                World2QRsceneBase_pose[0], World2QRsceneBase_pose[1], 
+                self.selected_qr_scene_bbox[:3], self.selected_qr_scene_bbox[3:7]
+            )
+            QRsceneCenter_2_SelectedObjCenter = pu.multiply_multi_transforms(
+                p.invertTransform(*World2QRsceneCenter_pose), 
+                World2SelectedObjCenter_pose
+            )
+            transformed_selected_obj_pc = self.to_numpy([p.multiplyTransforms(*QRsceneCenter_2_SelectedObjCenter, point, [0., 0., 0., 1.])[0] for point in self.selected_obj_pc])
+            # transformed_selected_obj_pc = tf_apply(self.to_torch(World2SelectedObjBase_pose[1]), self.to_torch(World2SelectedObjBase_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
             self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
             self.info["selected_init_qr_scene_ft"] = None # The scene points need to be re-extracted
             self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
             # Run one inference needs ~0.5s!
+
+            # vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
+            vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) \
+                          if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
+                          else self.args.reward_pobj
 
             # pu.visualize_pc(self.selected_qr_scene_pc)
             # pu.visualize_pc(self.selected_obj_pc)
@@ -688,6 +700,9 @@ class RoboSensaiBullet:
                 sp_workwell = self.stable_placement_task_step()
                 if not sp_workwell: 
                     self.stable_placement_reset()
+            
+            if self.args.eval_result and self.args.sp_data_collection:
+                self.stable_placement_data_collection()
         
         return done
         
@@ -1012,6 +1027,49 @@ class RoboSensaiBullet:
                     pu.set_pose(self.replay_obj_dict_id[obj_name], obj_pose, client_id=self.client_id)
 
     
+    # Below is the data collection for the stable placement task
+    def stable_placement_data_collection(self):
+        # We focus on the table top scene
+        World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+        QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
+        World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
+        QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_region[9]], [0., 0., 0., 1.]]
+        World_2_QRsceneSurfaceCenter = pu.multiply_multi_transforms(
+            World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
+        )
+        QRscene_half_extents = self.selected_qr_scene_bbox[7:]
+        # The scene points cloud
+        QRsceneSurface_pc = self.rng.uniform(-QRscene_half_extents, QRscene_half_extents, size=(self.args.max_num_qr_scene_points, 3))
+        
+        self.QRsceneSurface_2_placed_obj_poses = deepcopy(self.placed_obj_poses)
+        for placed_obj_name in self.placed_obj_poses.keys():
+            World_2_objBase = self.placed_obj_poses[placed_obj_name]
+            objBase_2_objCenter = [self.obj_name_data[placed_obj_name]["bbox"][:3], [0., 0., 0., 1.]]
+            World_2_objCenter = pu.multiply_multi_transforms(
+                World_2_objBase, objBase_2_objCenter
+            )
+            QRsceneSurface_2_objCenter = pu.multiply_multi_transforms(
+                p.invertTransform(*World_2_QRsceneSurfaceCenter), World_2_objCenter
+            )
+            self.QRsceneSurface_2_placed_obj_poses[placed_obj_name] = QRsceneSurface_2_objCenter
+
+        for placed_obj_name in self.QRsceneSurface_2_placed_obj_poses.keys():
+            cur_scene_pc = [QRsceneSurface_pc]
+            # To avoid overfitting, we only take one random trajectory for each placed object (A9_9=362880 is too much)
+            obj_names = list(self.QRsceneSurface_2_placed_obj_poses.keys())
+            other_obj_names = self.rng.permutation([name for name in obj_names if name != placed_obj_name])
+            for num_other_obj in range(len(other_obj_names)):
+                for i in range(num_other_obj):
+                    other_obj_name = other_obj_names[i]
+                    other_obj_pc = self.obj_name_data[other_obj_name]["pc"] # in the object center frame
+                    QRsceneSurface_2_otherObjCenter = self.QRsceneSurface_2_placed_obj_poses[other_obj_name]
+                    transformed_selected_obj_pc = self.to_numpy([p.multiplyTransforms(*QRsceneSurface_2_otherObjCenter, point, [0., 0., 0., 1.])[0] for point in other_obj_pc])
+                    cur_scene_pc.append(transformed_selected_obj_pc)
+                    np_cur_scene_pc = np.concatenate(cur_scene_pc, axis=0)
+                    pu.visualize_pc(np_cur_scene_pc)
+
+
+    
     ######################################
     ######### Rigid Body Transformation ############
     ######################################
@@ -1074,7 +1132,7 @@ class RoboSensaiBullet:
             self.info["placement_trajs_temp"][self.selected_obj_name]["stable_steps"].append(stable_steps)
 
     
-    def reset_placed_obj_poses(self):
+    def re_place_placed_obj_poses(self):
         # Reset placed object pose | when reset, the placed_obj_poses will be empty
         obj_names, obj_poses = dict2list(self.placed_obj_poses)
         for i, obj_name in enumerate(obj_names):
