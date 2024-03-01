@@ -76,9 +76,9 @@ def get_args():
     parser.add_argument('--num_gms', type=int, default=1000)
 
     # RoboSensai Bullet parameters
-    parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
-    parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
+    # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
+    # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
+    # parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
     # parser.add_argument('--specific_scene', type=str, default="table")
     parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
@@ -94,8 +94,9 @@ def get_args():
     parser.add_argument('--blender_record', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--change_table_size', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
-    # Downstream task parameters
+    # Downstream task1 stable placement parameters
     parser.add_argument('--stable_placement', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
+    parser.add_argument('--sp_data_collection', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='collect stable placement data')
 
 
     eval_args = parser.parse_args()
@@ -182,7 +183,7 @@ def get_args():
 
     # create blender folder
     eval_args.blender_dir = os.path.join(eval_args.save_dir, 'blender', eval_args.final_name)
-    if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.blender_dir): shutil.rmtree(eval_args.blender_dir)
+    # if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.blender_dir): shutil.rmtree(eval_args.blender_dir)
     if eval_args.collect_data and eval_args.blender_record and not os.path.exists(eval_args.blender_dir):
         os.makedirs(eval_args.blender_dir)
 
@@ -191,6 +192,14 @@ def get_args():
     if eval_args.collect_data and not os.path.exists(eval_args.json_dir):
         os.makedirs(eval_args.json_dir)
     eval_args.json_file = os.path.join(eval_args.json_dir, eval_args.final_name + '.json')
+
+    # create SP dataset folder
+    eval_args.sp_dataset_dir = os.path.join("StablePlacement", 'SP_Dataset')
+    if eval_args.collect_data and eval_args.sp_data_collection:
+        os.makedirs(eval_args.sp_dataset_dir, exist_ok=True)
+    os.makedirs(eval_args.sp_dataset_dir, exist_ok=True)
+    sp_dataset_name = f"{eval_args.specific_scene}_{max(eval_args.max_num_placing_objs_lst)}_{os.path.basename(eval_args.object_pool_folder)}"
+    eval_args.sp_dataset_path = os.path.join(eval_args.sp_dataset_dir, sp_dataset_name + '.h5')
 
     return eval_args
 
@@ -348,7 +357,7 @@ if __name__ == "__main__":
         machine_time = time.time() - start_time
         
         print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
-        print(f"Time: {machine_time} | Num of Env: {eval_args.num_envs} | Episode Steps: {unstable_steps}", end='\n\n')
+        print(f"Time: {machine_time} | Num of Env: {eval_args.num_envs}", end='\n\n')
         
         # Save the evaluation result
         if eval_args.collect_data:
@@ -374,5 +383,21 @@ if __name__ == "__main__":
             }
             save_json(meta_data, os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_meta_data.json"))
 
+        # Save the stable placement dataset
+        if eval_args.sp_data_collection:
+            sp_dataset_lst = combine_envs_float_info2list(infos, 'sp_dataset')
+            # Merge the dataset
+            sp_dataset = {}
+            for sp_data in sp_dataset_lst:
+                for k, v in sp_data.items():
+                    if k not in sp_dataset: 
+                        sp_dataset[k] = v
+                        continue
+                    else:
+                        sp_dataset[k].extend(v)
+            # import ipdb; ipdb.set_trace()
+
+            save_h5py(sp_dataset, eval_args.sp_dataset_path)
+    
     print('Process Over')
     envs.close()
