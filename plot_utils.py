@@ -133,7 +133,7 @@ class Plot_Misc_Utils:
                                     
         num_episodes = self.evalMeta_dict["episode"]
         obj_success_rate = self.evalMeta_dict["obj_success_rate"]
-        scene_cfgs = self.evalMeta_dict["scene_cfgs"]
+        scene_cfgs = self.evalMeta_dict["success_scene_cfgs"]
 
         objs_name_poss = {}
         objs_name_eulers = {}
