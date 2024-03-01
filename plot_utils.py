@@ -124,12 +124,12 @@ class Plot_Misc_Utils:
         Compute the coverage rate of the evaluation trajectory.
         """
         # Read the evaluation trajectory
-
         qr_scene_name = self.evalJson_dict["specific_scene"]
         qr_scene_pose = self.evalMeta_dict["qr_scene_pose"]
+        qr_scene_pos = qr_scene_pose[0]
         qr_scene_bbox = qr_scene_pose[2]
         qr_scene_half_extents = np.array(qr_scene_bbox[7:10])
-        qr_scene_corner_pos = np.array([-qr_scene_half_extents, qr_scene_half_extents])
+        qr_scene_corner_pos = np.array([-qr_scene_half_extents, qr_scene_half_extents]) + np.array(qr_scene_pos)
                                     
         num_episodes = self.evalMeta_dict["episode"]
         obj_success_rate = self.evalMeta_dict["obj_success_rate"]
@@ -159,6 +159,7 @@ class Plot_Misc_Utils:
         axes = axes.flatten() if num_rows * images_per_row != 1 else [axes]
 
         # Compute the coverage rate, which is the mean of x, y, z and the standard deviation of the x, y, z
+        # plot the x-y position
         objs_name_poss_converage = {}
         for i, obj_name in enumerate(objs_name_poss.keys()):
             objs_name_poss[obj_name] = np.array(objs_name_poss[obj_name])
@@ -172,11 +173,11 @@ class Plot_Misc_Utils:
 
             #Draw the table (a cube)
             axes[i].plot([qr_scene_corner_pos[0, 0], qr_scene_corner_pos[1, 0], qr_scene_corner_pos[1, 0], qr_scene_corner_pos[0, 0], qr_scene_corner_pos[0, 0]], 
-                        [qr_scene_corner_pos[0, 1], qr_scene_corner_pos[0, 1], qr_scene_corner_pos[1, 1], qr_scene_corner_pos[1, 1], qr_scene_corner_pos[0, 1]], 
-                        'k--', linewidth=3, label="Table Area")
+                         [qr_scene_corner_pos[0, 1], qr_scene_corner_pos[0, 1], qr_scene_corner_pos[1, 1], qr_scene_corner_pos[1, 1], qr_scene_corner_pos[0, 1]], 
+                         'k--', linewidth=3, label="Table Area")
 
-            axes[i].scatter(objs_name_poss[obj_name][:, 0], objs_name_poss[obj_name][:, 1], s=10, c='b', label="Object Position")
-            axes[i].scatter(obj_pos_mean[0], obj_pos_mean[1], s=100, c='r', label="Mean Position")
+            axes[i].scatter(objs_name_poss[obj_name][:, 0], objs_name_poss[obj_name][:, 1], s=10, c='b', label="Object Position-XY")
+            axes[i].scatter(obj_pos_mean[0], obj_pos_mean[1], s=100, c='r', label="Mean Position-XY")
             axes[i].plot([coverage_corner_pos[0, 0], coverage_corner_pos[1, 0], coverage_corner_pos[1, 0], coverage_corner_pos[0, 0], coverage_corner_pos[0, 0]], 
                         [coverage_corner_pos[0, 1], coverage_corner_pos[0, 1], coverage_corner_pos[1, 1], coverage_corner_pos[1, 1], coverage_corner_pos[0, 1]], 
                         'r-', linewidth=1, label="Coverage Area")
@@ -188,11 +189,49 @@ class Plot_Misc_Utils:
             axes[i].set_ylim([-qr_scene_half_extents[1], qr_scene_half_extents[1]])
             axes[i].set_aspect('equal')
 
-        # Only Add legend to the last subplot
+        # Only Add legend to the first subplot
         axes[0].legend()
         plt.tight_layout()
         # Save the plot as a pdf under the same folder
-        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate.png"))
+        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate_x_y.png"))
+        plt.show()
+
+        # Plot the z-axis position
+        fig, axes = plt.subplots(num_rows, images_per_row, figsize=(15, 15))
+        axes = axes.flatten() if num_rows * images_per_row != 1 else [axes]
+
+        # Compute the coverage rate, which is the mean of x, y, z and the standard deviation of the x, y, z
+        objs_name_poss_converage = {}
+        for i, obj_name in enumerate(objs_name_poss.keys()):
+            objs_name_poss[obj_name] = np.array(objs_name_poss[obj_name])
+            objs_name_eulers[obj_name] = np.array(objs_name_eulers[obj_name])
+            obj_pos_min = np.min(objs_name_poss[obj_name], axis=0)
+            obj_pos_max = np.max(objs_name_poss[obj_name], axis=0)
+            obj_pos_mean = np.mean(objs_name_poss[obj_name], axis=0)
+            obj_pos_std = np.std(objs_name_poss[obj_name], axis=0)
+            coverage_corner_pos = np.array([obj_pos_min, obj_pos_max])
+            coverage_rate = np.prod(np.abs(obj_pos_max - obj_pos_min)[:2]) / np.prod(qr_scene_half_extents[:2]*2)
+
+            axes[i].plot([qr_scene_corner_pos[0, 0], qr_scene_corner_pos[1, 0], qr_scene_corner_pos[1, 0], qr_scene_corner_pos[0, 0], qr_scene_corner_pos[0, 0]], 
+                         [qr_scene_corner_pos[0, 2], qr_scene_corner_pos[0, 2], qr_scene_corner_pos[1, 2], qr_scene_corner_pos[1, 2], qr_scene_corner_pos[0, 2]], 
+                         'k--', linewidth=3, label="Table Area")
+
+            # Draw side-view of the scene
+            axes[i].scatter(objs_name_poss[obj_name][:, 0], objs_name_poss[obj_name][:, 2], s=10, c='b', label="Object Position-Z")
+            axes[i].scatter(obj_pos_mean[0], obj_pos_mean[2], s=100, c='r', label="Mean Position-Z")
+            
+            axes[i].set_title(f"{obj_name}\nCoverage Rate: {coverage_rate:.2f}")
+            axes[i].set_xlabel("X")
+            axes[i].set_ylabel("Z")
+            # axes[i].set_xlim([-qr_scene_half_extents[0], qr_scene_half_extents[0]])
+            # axes[i].set_ylim([-qr_scene_half_extents[2], qr_scene_half_extents[2]])
+            axes[i].set_aspect('equal')
+
+        # Only Add legend to the first subplot
+        axes[0].legend()
+        plt.tight_layout()
+        # Save the plot as a pdf under the same folder
+        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate_z.png"))
         plt.show()
 
         objs_name_poss_converage[obj_name] = [obj_pos_mean, obj_pos_std, coverage_corner_pos, coverage_rate]
@@ -314,7 +353,7 @@ def create_gif_from_multiple_folders(source_folders, output_filename, num_images
 
 if __name__ == "__main__":
 
-    TASK_NAME = "SuccessRate"
+    TASK_NAME = "MiscInfo"
     if TASK_NAME == "SuccessRate":
         plot_utils = Plot_Utils()
         plot_utils.read_file("Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_1_10", checkpoint_name="RoboSensai")
@@ -323,7 +362,7 @@ if __name__ == "__main__":
     
     elif TASK_NAME == "Image2PDF":
         # Combine images to PDF
-        image_folder = "eval_res/Union/blender/Union_02-19_15:44Sync_storage_furniture_5_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_Curriculum_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_EVAL_best_objRange_10_10/render_results"  # Update this path
+        image_folder = "eval_res/Union/blender/Research_presentation_recording/Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10/render_results"  # Update this path
         image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)  # Example for .png images
         pdf_output_path = os.path.join(image_folder, "combined.pdf")  # Update this path
 
@@ -346,7 +385,7 @@ if __name__ == "__main__":
         create_gif_from_multiple_folders(source_folders, output_filename, num_images=40, duration=1000)
 
     elif TASK_NAME == "MiscInfo":
-        evalUniName = "Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10"
+        evalUniName = "1_pitcher_base_test_02-27_21:03_EVAL_best_objRange_1_1"
         plot_misc_utils = Plot_Misc_Utils()
         plot_misc_utils.read_file(evalUniName)
         plot_misc_utils.plot_obj_placement_success_rate()
