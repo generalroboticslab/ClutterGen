@@ -32,7 +32,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='Union_02-19_16:03Sync_storage_furniture_6_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -395,9 +395,10 @@ if __name__ == "__main__":
                         continue
                     else:
                         sp_dataset[k].extend(v)
-            # import ipdb; ipdb.set_trace()
-
+            
+            data_len = [len(v) for k, v in sp_dataset.items()]
             save_h5py(sp_dataset, eval_args.sp_dataset_path)
+            print(f"Saved stable placement dataset to {eval_args.sp_dataset_path}; Num Data Points: {data_len}")
     
     print('Process Over')
     envs.close()

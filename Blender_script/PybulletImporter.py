@@ -20,6 +20,19 @@ import random
 import numpy as np
 import re
 import json
+import argparse
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Pybullet Importer")
+    parser.add_argument("--blender_traj_directory", type=str, default="eval_res/Union/blender", help="The directory of blender trajectory files.")
+    parser.add_argument("--actor_vis_traj_directory", type=str, default="eval_res/Union/trajectories", help="The directory of actor visualization trajectory files.")
+    parser.add_argument("--json_file_directory", type=str, default="eval_res/Union/Json", help="The path of the json file.")
+    parser.add_argument("--evalUniName", type=str, default="Union_02-19_16:03Sync_storage_furniture_6_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10.json", help="The path of the json file.")
+    parser.add_argument("--render_nums", type=int, default=1, help="The number of renderings.")
+    parser.add_argument("--animation", action="store_true", help="Whether to render the animation.")
+    args = parser.parse_args()
+    return args
 
 
 def load_pkl(filepath=None):
@@ -516,11 +529,12 @@ def natural_keys(text):
 ##############################################################################################################
 # Can not use if __name__ == "__main__" here. Blender seems does not support it.
 # Only if you create the add-on operator, you can use it.
-animation = False
-render_nums = 40
+args = parse_args()
+animation = args.animation
+render_nums = args.render_nums
 
 set_blender_engine(render_engine='BLENDER_EEVEE') # 'BLENDER_EEVEE', 'CYCLES'
-evalUniName = "Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10"
+evalUniName = args.evalUniName
 json_file_path = join("eval_res/Union/Json", evalUniName+".json")
 blender_traj_directory = join("eval_res/Union/blender", evalUniName)
 actor_vis_traj_directory = join("eval_res/Union/trajectories", evalUniName)
