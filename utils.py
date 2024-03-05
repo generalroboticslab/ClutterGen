@@ -6,6 +6,7 @@ import pprint
 import numpy as np
 import torch
 import re
+import h5py
 
 
 def read_json(json_path):
@@ -17,6 +18,20 @@ def read_json(json_path):
 def save_json(data, json_path):
     with open(json_path, 'w') as f:
         json.dump(data, f, indent=4)
+
+
+def read_h5py_mem(h5py_path):
+    with h5py.File(h5py_path, 'r') as f:
+        data = {}
+        for k, v in f.items():
+            data[k] = v[:]
+    return data
+
+
+def save_h5py(data, h5py_path):
+    with h5py.File(h5py_path, 'w') as f:
+        for k, v in data.items():
+            f.create_dataset(k, data=v)
 
 
 def write_csv_line(result_file_path, result):
@@ -68,15 +83,16 @@ def get_in_bbox(bbox, z_half_extend:float=None):
     return np.array([*SceneCenter_2_QRregionCenter, *orientation, *QRregion_half_extents])
 
 
-def pc_random_downsample(pc_array, num_points):
-    """ Randomly downsample a point cloud
-        if num_points >= pc_array.shape[0], pad the point cloud with zeros 
+def pc_random_downsample(pc_array, num_points, autopad=False):
+    """ Randomly downsample/shuffle a point cloud
         Args:
         pc_array: (N, 3) numpy array
         num_points: int
     """
     if num_points >= pc_array.shape[0]: 
-        return pc_array
+        if autopad: # Pad the point cloud with zeros will make the next real scene points become sparse
+            pc_array = np.concatenate([pc_array, np.zeros((num_points - pc_array.shape[0], 3))], axis=0) 
+        return np.random.permutation(pc_array)
     else:
         idx = np.random.choice(pc_array.shape[0], num_points, replace=False)
         return pc_array[idx]
