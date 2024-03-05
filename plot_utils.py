@@ -12,6 +12,15 @@ sns.set_theme()
 from utils import natural_keys
 import random
 from utils import read_json
+import argparse
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Plotting Utils")
+    parser.add_argument("--task", type=str, default="MiscInfo", help="Task to perform")
+    parser.add_argument("--evalUniName", type=str, default="Union_03-04_22:24Sync_storage_furniture_6_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum1_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_seed56_EVAL_best_objRange_1_1", help="Evaluation Unique Name")
+    args = parser.parse_args()
+    return args
 
 
 class Plot_Utils:
@@ -352,8 +361,9 @@ def create_gif_from_multiple_folders(source_folders, output_filename, num_images
 
 
 if __name__ == "__main__":
+    args = parse_args()
 
-    TASK_NAME = "MiscInfo"
+    TASK_NAME = args.task
     if TASK_NAME == "SuccessRate":
         plot_utils = Plot_Utils()
         plot_utils.read_file("Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_1_10", checkpoint_name="RoboSensai")
@@ -385,7 +395,7 @@ if __name__ == "__main__":
         create_gif_from_multiple_folders(source_folders, output_filename, num_images=40, duration=1000)
 
     elif TASK_NAME == "MiscInfo":
-        evalUniName = "1_pitcher_base_test_02-27_21:03_EVAL_best_objRange_1_1"
+        evalUniName = args.evalUniName
         plot_misc_utils = Plot_Misc_Utils()
         plot_misc_utils.read_file(evalUniName)
         plot_misc_utils.plot_obj_placement_success_rate()
