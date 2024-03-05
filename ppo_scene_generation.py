@@ -102,9 +102,6 @@ def parse_args():
     parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor for reward (default: 0.95)')
     parser.add_argument('--tau', type=float, default=0.0005, metavar='G', help='target smoothing coefficient(τ) (default: 0.0005)')
     parser.add_argument('--lr', type=float, default=0.0001, metavar='G', help='learning rate (default: 0.00001)')  # first 0.0001 then 0.00005
-    parser.add_argument('--alpha', type=float, default=0.05, metavar='G', help='Temperature parameter α determines the relative importance of the entropy\
-                                    term against the reward (default: 0.2)')
-    parser.add_argument('--automatic_entropy_tuning', type=bool, default=False, metavar='G', help='Automaically adjust α (default: False)')
     parser.add_argument('--seed', type=int, default=123456, metavar='N', help='random seed (default: 123456)')
     parser.add_argument('--hidden_size', type=int, default=256, metavar='N', help='hidden size (default: 256)')
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
@@ -166,6 +163,7 @@ def parse_args():
     additional += f'_seq{args.sequence_len}'
     additional += f'_step{args.num_steps}'
     additional += f'_trial{args.max_trials}'
+    additional += f'_entropy{args.ent_coef}'
     additional += f'_seed{args.seed}'
 
     args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
