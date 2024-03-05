@@ -166,6 +166,7 @@ def parse_args():
     additional += f'_seq{args.sequence_len}'
     additional += f'_step{args.num_steps}'
     additional += f'_trial{args.max_trials}'
+    additional += f'_seed{args.seed}'
 
     args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
 
