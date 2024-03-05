@@ -244,6 +244,13 @@ class RoboSensaiBullet:
         if self.args.eval_result and self.args.stable_placement:
             self.stable_placement_task_init()
 
+        if self.args.eval_result and self.args.sp_data_collection:
+            self.sp_dataset = {
+                "scene_pc": [],
+                "qr_obj_pc": [],
+                "qr_obj_pose": [],
+            }
+
 
     def post_checker(self, verbose=False):
         self.failed_objs = []; headers = ["Type", "Env ID", "Name", "ID", "Value"]
@@ -701,7 +708,8 @@ class RoboSensaiBullet:
                     self.stable_placement_reset()
             
             if self.args.eval_result and self.args.sp_data_collection:
-                self.stable_placement_data_collection()
+                if self.info['success'] == 1.:
+                    self.stable_placement_data_collection()
         
         return done
         
@@ -1032,13 +1040,14 @@ class RoboSensaiBullet:
         World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
         QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
         World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
-        QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_region[9]], [0., 0., 0., 1.]]
+        QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
         World_2_QRsceneSurfaceCenter = pu.multiply_multi_transforms(
             World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
         )
         QRscene_half_extents = self.selected_qr_scene_bbox[7:]
-        # The scene points cloud
+        # The scene top surface points cloud
         QRsceneSurface_pc = self.rng.uniform(-QRscene_half_extents, QRscene_half_extents, size=(self.args.max_num_qr_scene_points, 3))
+        QRsceneSurface_pc[:, 2] = 0. # The z value is 0 for the top surface
         
         self.QRsceneSurface_2_placed_obj_poses = deepcopy(self.placed_obj_poses)
         for placed_obj_name in self.placed_obj_poses.keys():
@@ -1052,21 +1061,40 @@ class RoboSensaiBullet:
             )
             self.QRsceneSurface_2_placed_obj_poses[placed_obj_name] = QRsceneSurface_2_objCenter
 
-        for placed_obj_name in self.QRsceneSurface_2_placed_obj_poses.keys():
-            cur_scene_pc = [QRsceneSurface_pc]
-            # To avoid overfitting, we only take one random trajectory for each placed object (A9_9=362880 is too much)
-            obj_names = list(self.QRsceneSurface_2_placed_obj_poses.keys())
-            other_obj_names = self.rng.permutation([name for name in obj_names if name != placed_obj_name])
-            for num_other_obj in range(len(other_obj_names)):
-                for i in range(num_other_obj):
-                    other_obj_name = other_obj_names[i]
-                    other_obj_pc = self.obj_name_data[other_obj_name]["pc"] # in the object center frame
-                    QRsceneSurface_2_otherObjCenter = self.QRsceneSurface_2_placed_obj_poses[other_obj_name]
-                    transformed_selected_obj_pc = self.to_numpy([p.multiplyTransforms(*QRsceneSurface_2_otherObjCenter, point, [0., 0., 0., 1.])[0] for point in other_obj_pc])
-                    cur_scene_pc.append(transformed_selected_obj_pc)
-                    np_cur_scene_pc = np.concatenate(cur_scene_pc, axis=0)
-                    pu.visualize_pc(np_cur_scene_pc)
+        cur_scene_pc = [QRsceneSurface_pc]
+        obj_names = list(self.QRsceneSurface_2_placed_obj_poses.keys())
+        for j, query_obj_name in enumerate(self.QRsceneSurface_2_placed_obj_poses.keys()):
+            query_obj_pc = self.obj_name_data[query_obj_name]["pc"] # in the object center frame
+            QRsceneSurface_2_QRobjCenter = self.QRsceneSurface_2_placed_obj_poses[query_obj_name]
 
+            if j > 0: # Record the previous object point cloud
+                prev_query_obj_name = obj_names[j-1]
+                prev_query_obj_pc = self.obj_name_data[prev_query_obj_name]["pc"] # in the object center frame
+                QRsceneSurface_2_prevObjCenter = self.QRsceneSurface_2_placed_obj_poses[prev_query_obj_name]
+                transformed_selected_obj_pc = self.to_numpy(
+                    [p.multiplyTransforms(
+                        *QRsceneSurface_2_prevObjCenter, 
+                        point, [0., 0., 0., 1.])[0] for point in prev_query_obj_pc]
+                    )
+                cur_scene_pc.append(transformed_selected_obj_pc)
+            
+            np_cur_scene_pc = pc_random_downsample(
+                np.concatenate(cur_scene_pc, axis=0), 
+                self.args.max_num_scene_points, 
+                autopad=True # file.h5 requires the same number of points to create np array
+            )
+
+            self.sp_dataset["scene_pc"].append(np_cur_scene_pc)
+            self.sp_dataset["qr_obj_pc"].append(query_obj_pc)
+            self.sp_dataset["qr_obj_pose"].append(
+                self.to_numpy(QRsceneSurface_2_QRobjCenter[0]+QRsceneSurface_2_QRobjCenter[1])
+            )
+
+            # pu.visualize_pc(query_obj_pc)
+            # pu.visualize_pc(np_cur_scene_pc)
+
+        # Save the data
+        self.info["sp_dataset"] = self.sp_dataset
 
     
     ######################################

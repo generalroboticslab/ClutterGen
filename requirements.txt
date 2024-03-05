@@ -40,3 +40,4 @@ scp
 str2bool
 ipdb
 PySimpleGUI
+h5py
