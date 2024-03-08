@@ -81,6 +81,8 @@ if __name__ == "__main__":
                             qr_obj_pose[i, :3], qr_obj_pose[i, 3:], 
                             point, [0., 0., 0., 1.])[0] for point in qr_obj_pc[i]]
                         )
-                    pu.visualize_pc(np.concatenate([scene_pc[i], transformed_pred_qr_obj_pc, transformed_ground_truth_qr_obj_pc], axis=0))
+                    pu.visualize_pc_lst(
+                        [scene_pc[i], transformed_pred_qr_obj_pc, transformed_ground_truth_qr_obj_pc], 
+                        color=[[0, 0, 1], [1, 0, 0], [0, 1, 0]])
 
         test_loss /= len(sp_test_dataloader)
