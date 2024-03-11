@@ -175,7 +175,6 @@ class Agent(nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
         self.deterministic = envs.args.deterministic
-        self.xyz_entropy_only = envs.args.xyz_entropy_only
         self.hidden_size = envs.args.hidden_size
         self.action_logits_num = envs.action_shape[1] * 2 # 2 for mean and std
 
@@ -334,6 +333,7 @@ class Agent(nn.Module):
         action_alpha = torch.exp(action_logalpha)
         action_beta = torch.exp(action_logbeta)
         probs = Beta(action_alpha, action_beta)
+        self.probs = probs # Record the current probs for logging
         if action is None:
             action = probs.mean if self.deterministic else probs.sample()
 
@@ -341,8 +341,7 @@ class Agent(nn.Module):
         logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training
 
         self.prob_entropy = probs.entropy() # Record the current probs for logging
-        sub_entropy = self.prob_entropy[:, :3] if self.xyz_entropy_only else self.prob_entropy
-        entropy = sub_entropy.sum(1)
+        entropy = self.prob_entropy.sum(1)
         return action, logprob, entropy, self.critic(x)
 
 

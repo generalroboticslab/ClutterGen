@@ -61,7 +61,6 @@ def parse_args():
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
     parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use curriculum learning')
     parser.add_argument('--patience_iters', type=int, default=5000)
-    parser.add_argument('--xyz_entropy_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use only xyz entropy')
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
@@ -110,7 +109,7 @@ def parse_args():
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--sequence_len', type=int, default=5)
-    parser.add_argument('--reward_episodes', type=int, default=5000)
+    parser.add_argument('--reward_episodes', type=int, default=10000)
     parser.add_argument('--cpus', type=int, default=[], nargs='+', help="run environments on specified cpus")
     parser.add_argument("--torch_deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
 
@@ -139,24 +138,22 @@ def parse_args():
         additional += '_SeqObsEncoderTF' if args.use_tf_seq_obs_encoder else '_SeqObsEncoderFC'
     if args.use_pc_extractor: 
         additional += '_PCExtractor'
-    if args.checkpoint is not None: additional += '_FineTune'
-    if args.use_relu: additional += '_Relu'
-    else: additional += '_Tanh'
+    if args.checkpoint is not None: 
+        additional += '_FineTune'
+
     additional += '_Rand'
     if args.random_select_objs_pool: additional += '_ObjPool'
     if args.random_select_placing: additional += '_ObjPlace'
     if args.random_select_scene_pool: additional += '_ScenePool'
-    if not args.fixed_scene_only: additional += '_unFixedScene'
-    if not args.fixed_qr_region: additional += '_QRRegion'
     additional += '_Goal'
-    if args.use_curriculum: additional += '_Curriculum'
-    if args.min_num_placing_objs: additional += f'_minObjNum{args.min_num_placing_objs}'
-    if args.train_step: additional += f'_objStep{args.train_step}'
+    # if args.use_curriculum: additional += '_Curriculum'
+    # if args.min_num_placing_objs: additional += f'_minObjNum{args.min_num_placing_objs}'
+    # if args.train_step: additional += f'_objStep{args.train_step}'
     if args.max_num_placing_objs: additional += f'_maxObjNum{args.max_num_placing_objs}'
     if args.num_pool_objs: additional += f'_maxPool{args.num_pool_objs}'
     if args.num_pool_scenes: additional += f'_maxScene{args.num_pool_scenes}'
-    if args.max_stable_steps: additional += f'_maxStable{args.max_stable_steps}'
-    if args.min_continue_stable_steps: additional += f'_contStable{args.min_continue_stable_steps}'
+    if args.max_stable_steps: additional += f'_maxStab{args.max_stable_steps}'
+    if args.min_continue_stable_steps: additional += f'_contStab{args.min_continue_stable_steps}'
     if args.num_episode_to_replace_pool: additional += f'_Epis2Replace{args.num_episode_to_replace_pool}'
     additional += '_Weight'
     if args.reward_pobj > 0: additional += f'_rewardPobj{args.reward_pobj}'
@@ -629,6 +626,12 @@ if __name__ == "__main__":
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
             if args.collect_data and args.wandb:
+                concentration_alpha = agent.probs.concentration0.mean(dim=0)
+                concentration_beta = agent.probs.concentration1.mean(dim=0)
+                con_a_x, con_a_y, con_a_z, con_a_Rz = \
+                    concentration_alpha[0].item(), concentration_alpha[1].item(), concentration_alpha[2].item(), concentration_alpha[3].item()
+                con_b_x, con_b_y, con_b_z, con_b_Rz = \
+                    concentration_beta[0].item(), concentration_beta[1].item(), concentration_beta[2].item(), concentration_beta[3].item()
                 entropy_log = agent.prob_entropy.mean(dim=0)
                 entropy_x, entropy_y, entropy_z, entropy_Rz = \
                     entropy_log[0].item(), entropy_log[1].item(), entropy_log[2].item(), entropy_log[3].item()
@@ -641,11 +644,20 @@ if __name__ == "__main__":
                     'train/approx_kl': approx_kl.item(),
                     'train/advantages': mb_advantages.mean().item(),
                     'train/explained_variance': explained_var,
+                    
                     'entropy/entropy': entropy_loss.item(),
                     'entropy/entropy_x': entropy_x,
                     'entropy/entropy_y': entropy_y,
                     'entropy/entropy_z': entropy_z,
                     'entropy/entropy_Rz': entropy_Rz,
+                    'concentration_a/alpha_x': con_a_x,
+                    'concentration_a/alpha_y': con_a_y,
+                    'concentration_a/alpha_z': con_a_z,
+                    'concentration_a/alpha_Rz': con_a_Rz,
+                    'concentration_b/beta_x': con_b_x,
+                    'concentration_b/beta_y': con_b_y,
+                    'concentration_b/beta_z': con_b_z,
+                    'concentration_b/beta_Rz': con_b_Rz,
                 })
 
             if not args.quiet:
