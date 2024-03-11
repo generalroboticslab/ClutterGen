@@ -1,5 +1,4 @@
-from utils import read_json, dict2list, get_on_bbox, get_in_bbox, pc_random_downsample, natural_keys
-from torch_utils import tf_apply
+from utils import read_json, dict2list, get_on_bbox, get_in_bbox, pc_random_downsample, natural_keys, se3_transform_pc
 import time
 import os
 import numpy as np
@@ -23,7 +22,7 @@ from PointNet_Model.pointnet2_cls_ssg import get_model
 
 # Visualization
 from tabulate import tabulate
-from torch_utils import tf_combine, quat_from_euler
+from torch_utils import tf_combine, quat_from_euler, tf_apply
 from Blender_script.PybulletRecorder import PyBulletRecorder
 
 
@@ -108,9 +107,9 @@ class RoboSensaiBullet:
         #                                         "pc": plane_pc,
         
         # Table
-        tableHalfExtents = [0.4, 0.5, 0.35]
+        tableHalfExtents = [0.2, 0.3, 0.35]
         if hasattr(self.args, "change_table_size") and self.args.change_table_size:
-            tableHalfExtents = [0.4, 0.25, 0.35]
+            tableHalfExtents = [0.2, 0.15, 0.35]
         tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
                                           halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
         
@@ -439,7 +438,7 @@ class RoboSensaiBullet:
         
     def convert_actions(self, action):
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
-        action = action.squeeze(dim=0).sigmoid().cpu().numpy() # Map action to (0, 1)
+        action = action.squeeze(dim=0).cpu().numpy()
         self.last_raw_action = action.copy()
         
         # action = [x, y, z, roll, pitch, yaw]
@@ -490,7 +489,7 @@ class RoboSensaiBullet:
             self.simstep(1/240)
             self.blender_record()
             
-            (obj_pos, obj_quat), obj_vel = self.get_QRsceneCenter2ObjCenter_pose_vel()
+            (obj_pos, obj_quat), obj_vel = self.get_QRregionCenter2ObjCenter_pose_vel()
             # Update the trajectory history [0, 0, 0, ..., T0, T1..., Tn]; Left Shift
             self.traj_history.pop(0)
             self.traj_history.append(obj_pos + obj_quat + obj_vel.tolist())
@@ -591,8 +590,11 @@ class RoboSensaiBullet:
         else:
             raise NotImplementedError(f"Object {self.selected_qr_scene_name} Queried region {self.selected_qr_scene_region} is not implemented!")
 
-        # Update the queried scene points cloud
-        self.info["selected_qr_scene_pc"] = self.selected_qr_scene_pc
+        # Update the queried scene points cloud; All observations are in the query region center frame apart from the object point cloud (feature)
+        # TODO: np version multiplyTransforms
+        QRregionCenter_2_QRsceneCenter = p.invertTransform(self.selected_qr_region[:3], self.selected_qr_region[3:7])
+        QRregionCenter_2_QRscenePC = se3_transform_pc(*QRregionCenter_2_QRsceneCenter, self.selected_qr_scene_pc)
+        self.info["selected_qr_scene_pc"] = QRregionCenter_2_QRscenePC
         self.info["selected_obj_pc_ft"] = self.selected_obj_pc_ft
         # Update the sequence observation | pop the first observation and append the last observation
         his_traj = self.to_numpy(self.traj_history).flatten()
@@ -634,8 +636,7 @@ class RoboSensaiBullet:
                 p.invertTransform(*World2QRsceneCenter_pose), 
                 World2SelectedObjCenter_pose
             )
-            transformed_selected_obj_pc = self.to_numpy([p.multiplyTransforms(*QRsceneCenter_2_SelectedObjCenter, point, [0., 0., 0., 1.])[0] for point in self.selected_obj_pc])
-            # transformed_selected_obj_pc = tf_apply(self.to_torch(World2SelectedObjBase_pose[1]), self.to_torch(World2SelectedObjBase_pose[0]), self.to_torch(self.selected_obj_pc)).cpu().numpy()
+            transformed_selected_obj_pc = se3_transform_pc(*QRsceneCenter_2_SelectedObjCenter, self.selected_obj_pc)
             self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
             self.info["selected_init_qr_scene_ft"] = None # The scene points need to be re-extracted
@@ -722,7 +723,7 @@ class RoboSensaiBullet:
         World_2_ObjBboxCenterPlace_xyz = p.multiplyTransforms(World_2_ObjBasePlace_xyz, [0, 0, 0, 1.], self.selected_obj_bbox[:3], [0, 0, 0, 1.])[0]
 
         # action shape is (num_env, action_dim) / action is action logits we need to convert it to (0, 1)
-        action = raw_actions.sigmoid() # Map action to (0, 1)
+        action = raw_actions # Map action to (0, 1)
         # action = [x, y, z, yaw]
 
         QRsceneCenter_2_QRregionCenter = self.to_torch(self.selected_qr_region)
@@ -1071,11 +1072,7 @@ class RoboSensaiBullet:
                 prev_query_obj_name = obj_names[j-1]
                 prev_query_obj_pc = self.obj_name_data[prev_query_obj_name]["pc"] # in the object center frame
                 QRsceneSurface_2_prevObjCenter = self.QRsceneSurface_2_placed_obj_poses[prev_query_obj_name]
-                transformed_selected_obj_pc = self.to_numpy(
-                    [p.multiplyTransforms(
-                        *QRsceneSurface_2_prevObjCenter, 
-                        point, [0., 0., 0., 1.])[0] for point in prev_query_obj_pc]
-                    )
+                transformed_selected_obj_pc = se3_transform_pc(*QRsceneSurface_2_prevObjCenter, prev_query_obj_pc)
                 cur_scene_pc.append(transformed_selected_obj_pc)
             
             np_cur_scene_pc = pc_random_downsample(
@@ -1101,25 +1098,32 @@ class RoboSensaiBullet:
     ######### Rigid Body Transformation ############
     ######################################
 
-    def get_QRsceneCenter2ObjCenter_pose_vel(self):
-        # Convert Object World2ObjBase pose to QRsceneCenter2ObjCenter pose
+    def get_QRregionCenter2ObjCenter_pose_vel(self):
+        # Convert Object World2ObjBase pose to QRregionCenter2ObjCenter pose
         World2ObjBase_pos, World2ObjBase_quat = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
         World2ObjCenter_pos, World2ObjCenter_quat = p.multiplyTransforms(World2ObjBase_pos, World2ObjBase_quat, self.selected_obj_bbox[:3], [0., 0., 0., 1.])
         World2QRsceneBase_pos, World2QRsceneBase_quat = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
         World2QRsceneCenter_pos, World2QRsceneCenter_quat = p.multiplyTransforms(World2QRsceneBase_pos, World2QRsceneBase_quat, self.selected_qr_scene_bbox[:3], self.selected_qr_scene_bbox[3:7])
+        QRsceneCenter2QRregionCenter_pos, QRsceneCenter2QRregionCenter_quat = self.selected_qr_region[:3], self.selected_qr_region[3:7]
+        QRregionCenter2QRsceneCenter_pos, QRregionCenter2QRsceneCenter_quat = p.invertTransform(QRsceneCenter2QRregionCenter_pos, QRsceneCenter2QRregionCenter_quat)
         QRsceneCenter2World_pos, QRsceneCenter2World_quat = p.invertTransform(World2QRsceneCenter_pos, World2QRsceneCenter_quat)
-        QRsceneCenter2ObjCenter_pos, QRsceneCenter2ObjCenter_quat = \
+        QRregionCenter2World_pos, QRregionCenter2World_quat = \
             p.multiplyTransforms(
-                QRsceneCenter2World_pos, QRsceneCenter2World_quat,
+                QRregionCenter2QRsceneCenter_pos, QRregionCenter2QRsceneCenter_quat, 
+                QRsceneCenter2World_pos, QRsceneCenter2World_quat
+            )
+        QRregionCenter2ObjCenter_pos, QRregionCenter2ObjCenter_quat = \
+            p.multiplyTransforms(
+                QRregionCenter2World_pos, QRregionCenter2World_quat,
                 World2ObjCenter_pos, World2ObjCenter_quat
             )
         
         # Convert Object World2ObjBase velocity to QRsceneCenter2ObjCenter velocity
         World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True) # no rotation between the base and the center
-        QRsceneCenter2ObjCenter_linvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_vel[:3])
-        QRsceneCenter2ObjCenter_rotvel = pu.quat_apply(QRsceneCenter2World_quat, World2ObjCenter_vel[3:])
-        return (list(QRsceneCenter2ObjCenter_pos), list(QRsceneCenter2ObjCenter_quat)), \
-                self.to_numpy(list(QRsceneCenter2ObjCenter_linvel) + list(QRsceneCenter2ObjCenter_rotvel))
+        QRregionCenter2ObjCenter_linvel = pu.quat_apply(QRregionCenter2ObjCenter_quat, World2ObjCenter_vel[:3])
+        QRregionCenter2ObjCenter_rotvel = pu.quat_apply(QRregionCenter2ObjCenter_quat, World2ObjCenter_vel[3:])
+        return (list(QRregionCenter2ObjCenter_pos), list(QRregionCenter2ObjCenter_quat)), \
+                self.to_numpy(list(QRregionCenter2ObjCenter_linvel) + list(QRregionCenter2ObjCenter_rotvel))
     
 
     def convert_BaseLinkPC_2_BboxCenterPC(self, pc, Base2BboxCenter):

@@ -9,9 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.distributions.categorical import Categorical
-from torch.distributions.multivariate_normal import MultivariateNormal
-from torch.distributions.normal import Normal
+from torch.distributions import Normal, Categorical, MultivariateNormal, Beta
 
 # PointNet
 from PointNet_Model.pointnet2_cls_ssg import get_model
@@ -114,7 +112,7 @@ class Transfromer_Linear(nn.Module):
     
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=False, init_std=1., auto_flatten=False, flatten_start_dim=1):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=True, output_layernorm=False, init_std=1., auto_flatten=False, flatten_start_dim=1):
         super().__init__()
         self.activation = nn.ReLU() if use_relu else nn.Tanh()
         self.mlp = nn.Sequential() \
@@ -123,8 +121,11 @@ class MLP(nn.Module):
         for i in range(num_layers-1):
             input_shape = input_size if i==0 else hidden_size
             self.mlp.append(layer_init(nn.Linear(input_shape, hidden_size)))
+            self.mlp.append(nn.LayerNorm(hidden_size))
             self.mlp.append(self.activation)
         self.mlp.append(layer_init(nn.Linear(hidden_size, output_size), std=init_std))
+        if output_layernorm:
+            self.mlp.append(nn.LayerNorm(output_size))
     
     def forward(self, x):
         return self.mlp(x)
@@ -137,6 +138,34 @@ class AutoFlatten(nn.Module):
     
     def forward(self, x):
         return torch.flatten(x, start_dim=self.start_dim)
+    
+
+class PC_Encoder(nn.Module):
+    def __init__(self, channels=3, output_dim=256):
+        super().__init__()
+        # We only use xyz (channels=3) in this work
+        # while our encoder also works for xyzrgb (channels=6) in our experiments
+        self.mlp = nn.Sequential(
+            layer_init(nn.Linear(channels, 64)), 
+            nn.LayerNorm(64), 
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 128)), 
+            nn.LayerNorm(128), 
+            nn.ReLU(),
+            layer_init(nn.Linear(128, 256)), 
+            nn.LayerNorm(256), 
+            nn.ReLU()
+        )
+        self.projection = nn.Sequential(
+            layer_init(nn.Linear(256, output_dim)), 
+            nn.LayerNorm(output_dim)
+        )
+    def forward(self, x):
+        # x: B, N, 3
+        x = self.mlp(x) # B, N, 256
+        x = torch.max(x, 1)[0] # B, 256
+        x = self.projection(x) # B, Output_dim
+        return x
 
 
 class Agent(nn.Module):
@@ -146,8 +175,9 @@ class Agent(nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.activation = nn.Tanh() if not envs.args.use_relu else nn.ReLU()
         self.deterministic = envs.args.deterministic
+        self.xyz_entropy_only = envs.args.xyz_entropy_only
         self.hidden_size = envs.args.hidden_size
-        self.action_logits_num = envs.action_shape[1] # 2 for mean and std
+        self.action_logits_num = envs.action_shape[1] * 2 # 2 for mean and std
 
         # Layer Number
         self.traj_hist_encoder_num_linear = 2; self.traj_hist_encoder_num_transf = 2
@@ -219,9 +249,6 @@ class Agent(nn.Module):
             use_relu=envs.args.use_relu,
             init_std=0.01,
         ).to(self.device)
-
-        # is_leaf problem for nn.parameters/must set to() within it
-        self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.action_shape)).to(self.device), requires_grad=True) 
 
         self.to(envs.tensor_dtype)
 
@@ -297,29 +324,65 @@ class Agent(nn.Module):
 
 
     def get_action_and_value(self, obs_list, action=None):
+        # To EnforcE Action Boundaction range is [0, 1]; You can do any linear post-processing to fit the action range later
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         # We currently use cat to combine all features; Later we can try to use attention to combine them
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        action_mean = self.actor(x)
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
+        action_logalpha_logbeta = self.actor(x)
+        action_logalpha, action_logbeta = torch.chunk(action_logalpha_logbeta, 2, dim=-1)
+        action_alpha = torch.exp(action_logalpha)
+        action_beta = torch.exp(action_logbeta)
+        probs = Beta(action_alpha, action_beta)
         if action is None:
-            action = action_mean if self.deterministic else probs.sample()
-        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
-    
+            action = probs.mean if self.deterministic else probs.sample()
+
+        logprob = probs.log_prob(action).sum(1) # log_prb means prob density not mass! So it could be larger than 1
+        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training
+
+        self.prob_entropy = probs.entropy() # Record the current probs for logging
+        sub_entropy = self.prob_entropy[:, :3] if self.xyz_entropy_only else self.prob_entropy
+        entropy = sub_entropy.sum(1)
+        return action, logprob, entropy, self.critic(x)
+
 
     def select_action(self, obs_list):
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        action_mean = self.actor(x)
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
-        action = action_mean if self.deterministic else probs.sample()
+        action_logalpha_logbeta = self.actor(x)
+        action_logalpha, action_logbeta = torch.chunk(action_logalpha_logbeta, 2, dim=-1)
+        action_alpha = torch.exp(action_logalpha)
+        action_beta = torch.exp(action_logbeta)
+        probs = Beta(action_alpha, action_beta)
+        action = probs.mean if self.deterministic else probs.sample()
         return action, probs
+
+
+    # def get_action_and_value(self, obs_list, action=None):
+    #     # action range is [-1, 1]; You can do any linear post-processing to fit the action range later
+    #     seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
+    #     seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
+    #     # We currently use cat to combine all features; Later we can try to use attention to combine them
+    #     x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
+        # action_mean_logstd = self.actor(x)
+        # action_mean, action_logstd = torch.chunk(action_mean_logstd, 2, dim=-1)
+        # action_logstd = self.LOG_STD_MIN + 0.5 * (self.LOG_STD_MAX - self.LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
+        # action_std = torch.exp(action_logstd)
+        # probs = Normal(action_mean, action_std)
+        # if action is None:
+        #     raw_action = action_mean if self.deterministic else probs.sample()
+        #     action = torch.tanh(raw_action)
+        # else:
+        #     raw_action = torch.atanh(action)
+        # # Enforcing Action Bound
+        # log_prob = probs.log_prob(raw_action)
+        # log_prob -= torch.log((1 - action.pow(2)) + 1e-6)
+        # log_prob = log_prob.sum(1, keepdim=True)
+
+        # # We need Monte Carlo estimate of the entropy
+        # entropy = -log_prob.sum(1, keepdim=True)
+        # return action, log_prob, entropy, self.critic(x)
 
 
     def set_mode(self, mode='train'):

@@ -61,6 +61,7 @@ def parse_args():
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
     parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use curriculum learning')
     parser.add_argument('--patience_iters', type=int, default=5000)
+    parser.add_argument('--xyz_entropy_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use only xyz entropy')
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
@@ -93,7 +94,7 @@ def parse_args():
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
-    parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
+    parser.add_argument("--ent-coef", type=float, default=0.03, help="coefficient of the entropy")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
@@ -128,7 +129,7 @@ def parse_args():
         args.rendering = True
 
     # Uniformalize training name
-    additional = 'Sync'
+    additional = 'Sync_Beta'
     ###--- suffix for final name ---###
     if args.specific_scene is not None:
         additional += f'_{args.specific_scene}'
@@ -310,6 +311,7 @@ if __name__ == "__main__":
 
     for num_placing_objs in num_placing_objs_lst:
         torch.cuda.empty_cache()
+        torch.autograd.set_detect_anomaly(True)
 
         if args.num_envs > 1:
             envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
@@ -605,9 +607,9 @@ if __name__ == "__main__":
                     optimizer.step()
 
                 if args.target_kl is not None and approx_kl > args.target_kl:
-                        agent.load_state_dict(agent_params_store)
-                        optimizer.load_state_dict(optim_params_store)
-                        break
+                    agent.load_state_dict(agent_params_store)
+                    optimizer.load_state_dict(optim_params_store)
+                    break
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 skipped_update_iter += 1
@@ -627,16 +629,23 @@ if __name__ == "__main__":
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
             if args.collect_data and args.wandb:
+                entropy_log = agent.prob_entropy.mean(dim=0)
+                entropy_x, entropy_y, entropy_z, entropy_Rz = \
+                    entropy_log[0].item(), entropy_log[1].item(), entropy_log[2].item(), entropy_log[3].item()
                 wandb.log({
                     'steps': global_step, 
                     'iterations': global_update_iter,
                     'train/learning_rate': optimizer.param_groups[0]["lr"],
                     'train/critic_loss': v_loss.item(),
                     'train/policy_loss': pg_loss.item(),
-                    'train/entropy': entropy_loss.item(),
                     'train/approx_kl': approx_kl.item(),
                     'train/advantages': mb_advantages.mean().item(),
-                    'train/explained_variance': explained_var
+                    'train/explained_variance': explained_var,
+                    'entropy/entropy': entropy_loss.item(),
+                    'entropy/entropy_x': entropy_x,
+                    'entropy/entropy_y': entropy_y,
+                    'entropy/entropy_z': entropy_z,
+                    'entropy/entropy_Rz': entropy_Rz,
                 })
 
             if not args.quiet:

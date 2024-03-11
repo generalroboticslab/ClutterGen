@@ -22,7 +22,7 @@ class AutoFlatten(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=False, init_std=1., auto_flatten=False, flatten_start_dim=1):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, use_relu=True, output_layernorm=False, init_std=1., auto_flatten=False, flatten_start_dim=1):
         super().__init__()
         self.activation = nn.ReLU() if use_relu else nn.Tanh()
         self.mlp = nn.Sequential() \
@@ -31,12 +31,43 @@ class MLP(nn.Module):
         for i in range(num_layers-1):
             input_shape = input_size if i==0 else hidden_size
             self.mlp.append(layer_init(nn.Linear(input_shape, hidden_size)))
+            self.mlp.append(nn.LayerNorm(hidden_size))
             self.mlp.append(self.activation)
         self.mlp.append(layer_init(nn.Linear(hidden_size, output_size), std=init_std))
+        if output_layernorm:
+            self.mlp.append(nn.LayerNorm(output_size))
     
     def forward(self, x):
         return self.mlp(x)
-    
+
+
+class PC_Encoder(nn.Module):
+    def __init__(self, channels=3, output_dim=64):
+        super().__init__()
+        # We only use xyz (channels=3) in this work
+        # while our encoder also works for xyzrgb (channels=6) in our experiments
+        self.mlp = nn.Sequential(
+            layer_init(nn.Linear(channels, 64)), 
+            nn.LayerNorm(64), 
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 128)), 
+            nn.LayerNorm(128), 
+            nn.ReLU(),
+            layer_init(nn.Linear(128, 256)), 
+            nn.LayerNorm(256), 
+            nn.ReLU()
+        )
+        self.projection = nn.Sequential(
+            layer_init(nn.Linear(256, output_dim)), 
+            nn.LayerNorm(output_dim)
+        )
+    def forward(self, x):
+        # x: B, N, 3
+        x = self.mlp(x) # B, N, 256
+        x = torch.max(x, 1)[0] # B, 256
+        x = self.projection(x) # B, Output_dim
+        return x
+
 
 class StablePlacementModel(nn.Module):
     def __init__(self, num_linear=3, mlp_input=2048, mlp_output=7, device=None) -> None:
@@ -50,8 +81,10 @@ class StablePlacementModel(nn.Module):
         # Linear
         self.mlp = nn.Sequential(
             layer_init(nn.Linear(mlp_input, 1024)),
+            nn.LayerNorm(1024), 
             nn.ReLU(),
             layer_init(nn.Linear(1024, 512)),
+            nn.LayerNorm(512), 
             nn.ReLU(),
             layer_init(nn.Linear(512, mlp_output))
         )

@@ -94,8 +94,31 @@ def pc_random_downsample(pc_array, num_points, autopad=False):
             pc_array = np.concatenate([pc_array, np.zeros((num_points - pc_array.shape[0], 3))], axis=0) 
         return np.random.permutation(pc_array)
     else:
-        idx = np.random.choice(pc_array.shape[0], num_points, replace=False)
-        return pc_array[idx]
+        return farthest_point_sample(pc_array, num_points)
+    
+
+def farthest_point_sample(xyz, npoint):
+    """
+    Input:
+        xyz: pointcloud data, [N, 3]
+        npoint: number of samples
+    Return:
+        centroids: sampled pointcloud index, [npoint]
+        sampled_pc: sampled pointcloud data, [npoint, 3]
+    """
+    N, C = xyz.shape
+    centroids = np.zeros(npoint, dtype=int)
+    min_distance = np.ones(N) * 1e10 # min distance from the unsampled points to the sampled points
+    farthest_idx = np.random.randint(0, N)
+    for i in range(npoint):
+        centroids[i] = farthest_idx
+        centroid = xyz[farthest_idx, :]
+        dist = np.sum((xyz - centroid) ** 2, axis=-1)
+        mask = dist < min_distance
+        min_distance[mask] = dist[mask]
+        farthest_idx = np.argmax(min_distance, axis=-1)
+    sampled_pc = xyz[centroids]
+    return sampled_pc
 
 
 def inverse_sigmoid(x):
@@ -181,3 +204,63 @@ def quaternions_to_euler_array(quaternions):
         euler_angles = euler_angles.flatten()
 
     return euler_angles
+
+
+def normalize(x, eps: float = 1e-9):
+    # Normalize an array of vectors
+    return x / np.linalg.norm(x, axis=-1, keepdims=True).clip(min=eps, max=None)
+
+
+def quat_mul(a, b):
+    assert a.shape == b.shape
+    shape = a.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 4)
+
+    x1, y1, z1, w1 = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+    x2, y2, z2, w2 = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+    ww = (z1 + x1) * (x2 + y2)
+    yy = (w1 - y1) * (w2 + z2)
+    zz = (w1 + y1) * (w2 - z2)
+    xx = ww + yy + zz
+    qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
+    w = qq - ww + (z1 - y1) * (y2 - z2)
+    x = qq - xx + (x1 + w1) * (x2 + w2)
+    y = qq - yy + (w1 - x1) * (y2 + z2)
+    z = qq - zz + (z1 + y1) * (w2 - x2)
+
+    quat = np.stack([x, y, z, w], axis=-1).reshape(shape)
+    return quat
+
+
+def quat_apply(a, b):
+    shape = b.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 3)
+    xyz = a[:, :3]
+    t = np.cross(xyz, b, axis=-1) * 2
+    return (b + a[:, 3:] * t + np.cross(xyz, t, axis=-1)).reshape(shape)
+
+
+def tf_combine(t1, q1, t2, q2):
+    q1 = normalize(q1)
+    q2 = normalize(q2)
+    return quat_apply(q1, t2) + t1, quat_mul(q1, q2)
+
+
+def se3_transform_pc(t, q, pc):
+    if not isinstance(pc, np.ndarray):
+        pc = np.array(pc)
+    if not isinstance(t, np.ndarray):
+        t = np.array(t)
+    if not isinstance(q, np.ndarray):
+        q = np.array(q)
+    if len(t.shape) == 1:
+        t = t[np.newaxis, :]
+    if len(q.shape) == 1:
+        q = q[np.newaxis, :]
+
+    pc_shape = pc.shape
+    t = t.repeat(pc_shape[0], axis=0)
+    q = q.repeat(pc_shape[0], axis=0)
+    return quat_apply(q, pc) + t
