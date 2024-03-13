@@ -317,7 +317,7 @@ class RoboSensaiBullet:
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
         self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
         self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
-        self.args.max_num_qr_scene_points = 10 * self.args.max_num_urdf_points
+        self.args.max_num_qr_scene_points = self.args.max_num_qr_scene_points if hasattr(self.args, "max_num_qr_scene_points") else 10 * self.args.max_num_urdf_points
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
         self.args.fixed_qr_region = self.args.fixed_qr_region if hasattr(self.args, "fixed_qr_region") else False
         self.args.use_traj_encoder = self.args.use_traj_encoder if hasattr(self.args, "use_traj_encoder") else False
@@ -591,7 +591,7 @@ class RoboSensaiBullet:
             raise NotImplementedError(f"Object {self.selected_qr_scene_name} Queried region {self.selected_qr_scene_region} is not implemented!")
 
         # Update the queried scene points cloud; All observations are in the query region center frame apart from the object point cloud (feature)
-        # TODO: np version multiplyTransforms
+        # The reason I did not padding zeros here is because the multi-envs transporation will be time-consuming; We pad zeros in the training.
         QRregionCenter_2_QRsceneCenter = p.invertTransform(self.selected_qr_region[:3], self.selected_qr_region[3:7])
         QRregionCenter_2_QRscenePC = se3_transform_pc(*QRregionCenter_2_QRsceneCenter, self.selected_qr_scene_pc)
         self.info["selected_qr_scene_pc"] = QRregionCenter_2_QRscenePC

@@ -94,7 +94,7 @@ def pc_random_downsample(pc_array, num_points, autopad=False):
             pc_array = np.concatenate([pc_array, np.zeros((num_points - pc_array.shape[0], 3))], axis=0) 
         return np.random.permutation(pc_array)
     else:
-        return farthest_point_sample(pc_array, num_points)
+        return pc_array[np.random.choice(pc_array.shape[0], num_points, replace=False)]
     
 
 def farthest_point_sample(xyz, npoint):

@@ -386,7 +386,7 @@ if __name__ == "__main__":
         # Save the stable placement dataset
         if eval_args.sp_data_collection:
             sp_dataset_lst = combine_envs_float_info2list(infos, 'sp_dataset')
-            # Merge the dataset
+            # Merge the dataset (if multiple envs are used)
             sp_dataset = {}
             for sp_data in sp_dataset_lst:
                 for k, v in sp_data.items():

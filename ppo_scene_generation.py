@@ -46,7 +46,8 @@ def parse_args():
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
-    parser.add_argument('--max_num_urdf_points', type=int, default=1024)
+    parser.add_argument('--max_num_obj_points', type=int, default=1024)
+    parser.add_argument('--max_num_qr_scene_points', type=int, default=10240)
     parser.add_argument('--max_num_scene_points', type=int, default=20480)
     # RoboSensai Env parameters (training)
     parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
@@ -93,7 +94,7 @@ def parse_args():
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
-    parser.add_argument("--ent-coef", type=float, default=0.03, help="coefficient of the entropy")
+    parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
@@ -248,7 +249,7 @@ if __name__ == "__main__":
         ["Action Dim", temp_env.action_dim],
         ["Traj History Dim", temp_env.traj_hist_dim],
         ["Scene PC Dim", f"(3, {args.max_num_scene_points})"],
-        ["Obj PC Dim", f"(3, {args.max_num_urdf_points})"],
+        ["Obj PC Dim", f"(3, {args.max_num_obj_points})"],
         ["Sequence Length", f"{args.sequence_len}"]
     ]
     
