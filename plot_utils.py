@@ -372,7 +372,7 @@ if __name__ == "__main__":
     
     elif TASK_NAME == "Image2PDF":
         # Combine images to PDF
-        image_folder = "eval_res/Union/blender/Research_presentation_recording/Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10/render_results"  # Update this path
+        image_folder = f"eval_res/Union/blender/{args.evalUniName}/render_results"
         image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)  # Example for .png images
         pdf_output_path = os.path.join(image_folder, "combined.pdf")  # Update this path
 
@@ -395,9 +395,8 @@ if __name__ == "__main__":
         create_gif_from_multiple_folders(source_folders, output_filename, num_images=40, duration=1000)
 
     elif TASK_NAME == "MiscInfo":
-        evalUniName = args.evalUniName
         plot_misc_utils = Plot_Misc_Utils()
-        plot_misc_utils.read_file(evalUniName)
+        plot_misc_utils.read_file(args.evalUniName)
         plot_misc_utils.plot_obj_placement_success_rate()
         plot_misc_utils.plot_obj_coverage_rate()
         plot_misc_utils.plot_stable_steps(success_only=True)

@@ -1094,6 +1094,12 @@ class RoboSensaiBullet:
         self.info["sp_dataset"] = self.sp_dataset
 
     
+    def stable_placement_eval_step(self, action):
+        observation, reward, done, infos = self.step_sync(action)
+        infos["sp_scene_pc"], infos["sp_obj_pc"] = self.selected_qr_scene_pc, self.selected_obj_pc
+        return observation, reward, done, infos
+
+    
     ######################################
     ######### Rigid Body Transformation ############
     ######################################

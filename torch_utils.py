@@ -174,7 +174,7 @@ def get_euler_xyz(q):
 
 
 @torch.jit.script
-def quat_from_euler_xyz(roll, pitch, yaw): # Is actually zyx?
+def quat_from_euler_xyz(roll, pitch, yaw):
     cy = torch.cos(yaw * 0.5)
     sy = torch.sin(yaw * 0.5)
     cr = torch.cos(roll * 0.5)

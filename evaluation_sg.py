@@ -77,6 +77,8 @@ def get_args():
 
     # RoboSensai Bullet parameters
     # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
+    # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group2_single_bowl', help="folder path that stores all urdf files")
+    # parser.add_argument('--max_num_placing_objs', type=int, default=1)
     # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
     # parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
     # parser.add_argument('--specific_scene', type=str, default="table")
@@ -234,7 +236,6 @@ if __name__ == "__main__":
     if eval_args.eval_result and not eval_args.random_policy and not eval_args.heuristic_policy:
         agent = Agent(temp_env).to(device)
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
-        agent.pc_extractor.eval() # The PC extractor's BN layer was set to train so we keep it train first.
 
     # Evaluate checkpoint before replay
     for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
