@@ -378,7 +378,7 @@ class Agent(nn.Module):
         logprob = normal.log_prob(raw_action)
         action = self.squashed_action(raw_action)
         logprob -= torch.log(self.action_scale * (1 - action.pow(2)) + 1e-6)
-        logprob = torch.clamp(logprob, min=-10, max=10) # Clip the logprob to avoid NaN during the training)
+        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training)
         return logprob.sum(1, keepdim=True)
 
 
