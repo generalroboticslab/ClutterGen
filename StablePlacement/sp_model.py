@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import Beta, Normal
+from torch_utils import quat_from_euler_xyz
 import math
 # PointNet
 from PointNet_Model.pointnet2_cls_ssg import get_model
@@ -42,7 +44,7 @@ class MLP(nn.Module):
 
 
 class PC_Encoder(nn.Module):
-    def __init__(self, channels=3, output_dim=64):
+    def __init__(self, channels=3, output_dim=1024):
         super().__init__()
         # We only use xyz (channels=3) in this work
         # while our encoder also works for xyzrgb (channels=6) in our experiments
@@ -55,53 +57,144 @@ class PC_Encoder(nn.Module):
             nn.ReLU(),
             layer_init(nn.Linear(128, 256)), 
             nn.LayerNorm(256), 
+            nn.ReLU(),
+            layer_init(nn.Linear(256, output_dim)), 
+            nn.LayerNorm(output_dim), 
             nn.ReLU()
         )
-        self.projection = nn.Sequential(
-            layer_init(nn.Linear(256, output_dim)), 
-            nn.LayerNorm(output_dim)
-        )
+
     def forward(self, x):
         # x: B, N, 3
         x = self.mlp(x) # B, N, 256
         x = torch.max(x, 1)[0] # B, 256
-        x = self.projection(x) # B, Output_dim
         return x
 
 
+
 class StablePlacementModel(nn.Module):
-    def __init__(self, num_linear=3, mlp_input=2048, mlp_output=7, device=None) -> None:
+    def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # PointNet
-        self.scene_pc_encoder = get_model(num_class=40, normal_channel=False) # num_classes is used for loading checkpoint to make sure the model is the same
-        self.scene_pc_encoder.load_checkpoint(ckpt_path="../PointNet_Model/checkpoints/best_model.pth", evaluate=False, map_location=self.device)
-        self.qr_obj_pc_encoder = get_model(num_class=40, normal_channel=False)
-        self.qr_obj_pc_encoder.load_checkpoint(ckpt_path="../PointNet_Model/checkpoints/best_model.pth", evaluate=False, map_location=self.device)
+        assert mlp_input % 2 == 0, "mlp_input must be even"
+        self.pc_ft_dim = mlp_input // 2
+        self.scene_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
+        self.qr_obj_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
         # Linear
-        self.mlp = nn.Sequential(
-            layer_init(nn.Linear(mlp_input, 1024)),
-            nn.LayerNorm(1024), 
+        self.action_logits_num = action_dim # * 2 for alpha and beta
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(mlp_input, 256)),
+            nn.LayerNorm(256), 
             nn.ReLU(),
-            layer_init(nn.Linear(1024, 512)),
-            nn.LayerNorm(512), 
+            layer_init(nn.Linear(256, 128)),
+            nn.LayerNorm(128), 
             nn.ReLU(),
-            layer_init(nn.Linear(512, mlp_output))
+            layer_init(nn.Linear(128, 64)),
+            nn.LayerNorm(64), 
+            nn.ReLU(),
+            layer_init(nn.Linear(64, self.action_logits_num))
         )
 
+    def forward(self, scene_pc, qr_obj_pc):
+        # PC-Net Points xyz: input points position data, [B, C, N]
+        # While our pc input is [B, N, C] so we need transpose (if we use pointNet)
+        # scene_pc = scene_pc.transpose(1, 2)
+        # qr_obj_pc = qr_obj_pc.transpose(1, 2)
+        scene_pc_feature = self.scene_pc_encoder(scene_pc)
+        qr_obj_pc_feature = self.qr_obj_pc_encoder(qr_obj_pc)
+        feature = torch.cat([scene_pc_feature, qr_obj_pc_feature], dim=1)
+        action = self.actor(feature)
+        pred_pos, pred_rotz = action[:, :3], action[:, 3]
+        raw_pred_quat = quat_from_euler_xyz(torch.zeros_like(pred_rotz), torch.zeros_like(pred_rotz), pred_rotz)
+        # Create a new tensor for the normalized quaternion, avoiding in-place modification
+        pred_quat = F.normalize(raw_pred_quat, p=2, dim=1)
+        pred_pose = torch.cat([pred_pos, pred_quat], dim=1)
+        return pred_pose, None
+
+
+class StablePlacementPolicy(nn.Module):
+    def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
+        super().__init__()
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # PointNet
+        assert mlp_input % 2 == 0, "mlp_input must be even"
+        self.pc_ft_dim = mlp_input // 2
+        self.scene_pc_encoder = PC_Encoder()
+        self.qr_obj_pc_encoder = PC_Encoder()
+        # Linear
+        self.action_logits_num = action_dim * 2 # * 2 for alpha and beta
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(mlp_input, 256)),
+            nn.LayerNorm(256), 
+            nn.ReLU(),
+            layer_init(nn.Linear(256, 128)),
+            nn.LayerNorm(128), 
+            nn.ReLU(),
+            layer_init(nn.Linear(128, 64)),
+            nn.LayerNorm(64), 
+            nn.ReLU(),
+            layer_init(nn.Linear(64, self.action_logits_num))
+        )
     
     def forward(self, scene_pc, qr_obj_pc):
         # PC-Net Points xyz: input points position data, [B, C, N]
         # While our pc input is [B, N, C] so we need transpose
-        scene_pc = scene_pc.transpose(1, 2)
-        qr_obj_pc = qr_obj_pc.transpose(1, 2)
         scene_pc_feature = self.scene_pc_encoder(scene_pc)
         qr_obj_pc_feature = self.qr_obj_pc_encoder(qr_obj_pc)
         feature = torch.cat([scene_pc_feature, qr_obj_pc_feature], dim=1)
-        pred_pose = self.mlp(feature)
+        action_logalpha_logbeta = self.actor(feature)
+        action_logalpha, action_logbeta = torch.chunk(action_logalpha_logbeta, 2, dim=-1)
+        action_alpha = torch.exp(action_logalpha)
+        action_beta = torch.exp(action_logbeta)
+        probs = Beta(action_alpha, action_beta)
+        action = probs.rsample()
+        pred_pos, pred_rotz = action[:, :3], action[:, 3]
+        raw_pred_quat = quat_from_euler_xyz(torch.zeros_like(pred_rotz), torch.zeros_like(pred_rotz), pred_rotz)
         # Create a new tensor for the normalized quaternion, avoiding in-place modification
-        normalized_quaternion = F.normalize(pred_pose[:, 3:], p=2, dim=1)
-        # Concatenate the unchanged part of pred_pose with the normalized quaternion
-        pred_pose = torch.cat([pred_pose[:, :3], normalized_quaternion], dim=1)
-        return pred_pose
+        pred_quat = F.normalize(raw_pred_quat, p=2, dim=1)
+        pred_pose = torch.cat([pred_pos, pred_quat], dim=1)
+        return pred_pose, probs.entropy().sum(dim=1)
+    
 
+class StablePlacementPolicy_Normal(nn.Module):
+    def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
+        super().__init__()
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # PointNet
+        assert mlp_input % 2 == 0, "mlp_input must be even"
+        self.pc_ft_dim = mlp_input // 2
+        self.scene_pc_encoder = PC_Encoder()
+        self.qr_obj_pc_encoder = PC_Encoder()
+        # Linear
+        self.action_logits_num = action_dim # for mean
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(mlp_input, 256)),
+            nn.LayerNorm(256), 
+            nn.ReLU(),
+            layer_init(nn.Linear(256, 128)),
+            nn.LayerNorm(128), 
+            nn.ReLU(),
+            layer_init(nn.Linear(128, 64)),
+            nn.LayerNorm(64), 
+            nn.ReLU(),
+            layer_init(nn.Linear(64, self.action_logits_num))
+        )
+
+        self.logstd = nn.Parameter(torch.zeros(action_dim), requires_grad=True)
+    
+    def forward(self, scene_pc, qr_obj_pc):
+        # PC-Net Points xyz: input points position data, [B, C, N]
+        # While our pc input is [B, N, C] so we need transpose
+        scene_pc_feature = self.scene_pc_encoder(scene_pc)
+        qr_obj_pc_feature = self.qr_obj_pc_encoder(qr_obj_pc)
+        feature = torch.cat([scene_pc_feature, qr_obj_pc_feature], dim=1)
+        action_mean = self.actor(feature)
+        action_std = torch.exp(self.logstd).expand_as(action_mean)
+        probs = Normal(action_mean, action_std)
+        action = probs.rsample()
+        pred_pos, pred_rotz = action[:, :3], action[:, 3]
+        raw_pred_quat = quat_from_euler_xyz(torch.zeros_like(pred_rotz), torch.zeros_like(pred_rotz), pred_rotz)
+        # Create a new tensor for the normalized quaternion, avoiding in-place modification
+        pred_quat = F.normalize(raw_pred_quat, p=2, dim=1)
+        pred_pose = torch.cat([pred_pos, pred_quat], dim=1)
+        return pred_pose, probs.entropy().sum(dim=1)
