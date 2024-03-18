@@ -22,10 +22,47 @@ def save_json(data, json_path):
 
 def read_h5py_mem(h5py_path):
     with h5py.File(h5py_path, 'r') as f:
-        data = {}
-        for k, v in f.items():
-            data[k] = v[:]
-    return data
+        return read_dataset_recursively(f)
+
+
+def read_dataset_recursively(hdf5_group):
+    """
+    Recursively read datasets from an HDF5 group into a nested dictionary.
+
+    :param hdf5_group: HDF5 group object to read the datasets from
+    :return: Nested dictionary with the same structure as the HDF5 group/datasets
+    """
+    data_dict = {}
+    for key, item in hdf5_group.items():
+        if isinstance(item, h5py.Dataset):
+            # Read the dataset and assign to the dictionary
+            data_dict[key] = item[()]
+        elif isinstance(item, h5py.Group):
+            # Recursively read the group
+            data_dict[key] = read_dataset_recursively(item)
+    return data_dict
+
+
+def create_dataset_recursively(hdf5_group, data_dict):
+    """
+    Recursively create datasets from a nested dictionary within an HDF5 group.
+
+    :param hdf5_group: HDF5 group object to store the datasets
+    :param data_dict: Nested dictionary containing the data to store
+    """
+    for key, value in data_dict.items():
+        if isinstance(value, dict):
+            # Create a sub-group for nested dictionaries
+            sub_group = create_or_update_group(hdf5_group, key)
+            create_dataset_recursively(sub_group, value)
+        else:
+            # Create a dataset for non-dictionary items
+            hdf5_group.create_dataset(key, data=value)
+
+
+def create_or_update_group(parent, group_name):
+    """Create or get a group in the HDF5 file."""
+    return parent.require_group(group_name)
 
 
 def save_h5py(data, h5py_path):
@@ -155,6 +192,36 @@ def natural_keys(text):
     (See Toothy's implementation in the comments)
     """
     return [atoi(c) for c in re.split(r'(\d+)', text)]
+
+
+def check_file_exist(file_path):
+    if os.path.exists(file_path):
+        response = input(f"Find existing file {file_path}! Whether remove or not (y/n):")
+        if response == 'y' or response == 'Y': 
+            os.remove(file_path)
+        else: 
+            raise Exception("Give up this evaluation because of exsiting file.")
+
+
+### Multi-Envs Utils ###
+def combine_envs_float_info2list(infos, key, env_ids=None):
+    if env_ids is None: env_ids = range(len(infos))
+    return [infos[id][key] for id in env_ids]
+
+
+def combine_envs_dict_info2dict(infos, key, env_ids=None):
+    if env_ids is None: env_ids = range(len(infos))
+    merged_info = {}
+    for id in env_ids:
+        info_dict = infos[id][key]
+        for k, v in info_dict.items():
+            if k not in merged_info: 
+                merged_info[k] = v
+                continue
+            cur_val, nums = merged_info[k]
+            new_val, new_nums = v
+            merged_info[k] = [(cur_val * nums + new_val * new_nums) / (nums + new_nums), nums + new_nums]
+    return merged_info
 
 
 # Transformation

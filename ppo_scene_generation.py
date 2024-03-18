@@ -52,7 +52,7 @@ def parse_args():
     # RoboSensai Env parameters (training)
     parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
-    parser.add_argument("--max_stable_steps", type=int, default=60, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument("--max_stable_steps", type=int, default=40, help="the maximum steps for the env to be stable considering success")
     parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
     parser.add_argument('--reward_pobj', type=float, default=100., help='Position reward weight')
     parser.add_argument('--penalty', type=float, default=0., help='Action penalty weight')

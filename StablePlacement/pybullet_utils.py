@@ -1235,23 +1235,6 @@ def visualize_pc(point_cloud_np, zoom=0.8):
                                       front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
     
 
-def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
-    # Visualize the point cloud with specific color
-    if color is None: color = [None] * len(pc_lst)
-    else: assert len(color) == len(pc_lst), 'Color list must have the same length as pc list'
-    geometries = []
-    for i, pc in enumerate(pc_lst):
-        o3d_pc = o3d.geometry.PointCloud()
-        o3d_pc.points = o3d.utility.Vector3dVector(pc)
-        if color[i] is not None: 
-            o3d_pc.paint_uniform_color(color[i])
-        geometries.append(o3d_pc)
-    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    geometries.append(coord_frame)
-    o3d.visualization.draw_geometries(geometries, lookat=[0.0, 0.0, 0.0], 
-                                      front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
-
-
 def modify_specific_link_in_urdf(file_path, new_rpy=[0., 0., 0.], new_scale=1.0, firstlink=True, specify_link=None):
     new_rpy = ' '.join([str(i) for i in new_rpy])
     new_scale = ' '.join([str(i) for i in [new_scale]*3])

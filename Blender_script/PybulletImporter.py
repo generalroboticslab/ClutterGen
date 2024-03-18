@@ -23,17 +23,6 @@ import json
 import argparse
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Pybullet Importer")
-    parser.add_argument("--blender_traj_directory", type=str, default="eval_res/Union/blender", help="The directory of blender trajectory files.")
-    parser.add_argument("--actor_vis_traj_directory", type=str, default="eval_res/Union/trajectories", help="The directory of actor visualization trajectory files.")
-    parser.add_argument("--json_file_directory", type=str, default="eval_res/Union/Json", help="The path of the json file.")
-    parser.add_argument("--evalUniName", type=str, default="Union_02-19_16:03Sync_storage_furniture_6_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_10_10.json", help="The path of the json file.")
-    parser.add_argument("--render_nums", type=int, default=1, help="The number of renderings.")
-    parser.add_argument("--animation", action="store_true", help="Whether to render the animation.")
-    args = parser.parse_args()
-    return args
-
 
 def load_pkl(filepath=None):
     # Setting up some initial variables.
@@ -529,12 +518,15 @@ def natural_keys(text):
 ##############################################################################################################
 # Can not use if __name__ == "__main__" here. Blender seems does not support it.
 # Only if you create the add-on operator, you can use it.
-args = parse_args()
-animation = args.animation
-render_nums = args.render_nums
 
-set_blender_engine(render_engine='BLENDER_EEVEE') # 'BLENDER_EEVEE', 'CYCLES'
-evalUniName = args.evalUniName
+blender_traj_directory = "eval_res/Union/blender"
+actor_vis_traj_directory = "eval_res/Union/trajectories"
+json_file_directory = "eval_res/Union/Json"
+evalUniName = "Union_03-12_23:41Sync_Beta_storage_furniture_6_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10"
+render_nums = 10
+animation = False
+
+set_blender_engine(render_engine='CYCLES') # 'BLENDER_EEVEE', 'CYCLES'
 json_file_path = join("eval_res/Union/Json", evalUniName+".json")
 blender_traj_directory = join("eval_res/Union/blender", evalUniName)
 actor_vis_traj_directory = join("eval_res/Union/trajectories", evalUniName)
@@ -561,7 +553,7 @@ for i, filepath in enumerate(blender_filepaths):
 
     # Add a table; The size might be different from the original size!
     if json_data["specific_scene"] == "table":
-        add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.4, 0.5, 0.35), texture_path=None)
+        add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.2, 0.3, 0.35), texture_path=None)
 
     # Load the data from the pickle file.
     _, max_frame = load_pkl(filepath)
@@ -615,7 +607,7 @@ for i, filepath in enumerate(blender_filepaths):
         if animation else basename(filepath).replace(blender_filename_ext, '.png')
     render_animation(f'{save_folder}/{output_name}', 
                     encoder='H264', 
-                    resolution=(2560, 1440), 
+                    resolution=(960, 540), 
                     skip_frames=skip_frames, 
                     start_frame=start_frame, 
                     end_frame=max_frame, 
@@ -623,3 +615,5 @@ for i, filepath in enumerate(blender_filepaths):
                     frame_rate=frame_rate,
                     animation=animation)
     print(f"Total time: {time.time() - start_time:.2f}s")
+
+print("All Done!")
