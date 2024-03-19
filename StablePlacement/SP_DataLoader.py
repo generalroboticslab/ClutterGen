@@ -72,6 +72,7 @@ class HDF5Dataset(Dataset):
         scene_pc = torch.tensor(data_group['scene_pc'][()], dtype=torch.float32)
         qr_obj_pc = torch.tensor(data_group['qr_obj_pc'][()], dtype=torch.float32)  # Ensure it's a single array
         qr_obj_pose = torch.tensor(data_group['qr_obj_pose'][()], dtype=torch.float32)
+        # qr_scene_name = data_group['qr_scene_name'][()].decode('utf-8')
         qr_obj_name = data_group['qr_obj_name'][()].decode('utf-8')
         World2PlacedObj_poses = read_dataset_recursively(data_group['World2PlacedObj_poses'])
 

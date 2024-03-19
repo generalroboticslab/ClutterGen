@@ -107,20 +107,20 @@ class RoboSensaiBullet:
         #                                         "pc": plane_pc,
         
         # Table
-        tableHalfExtents = [0.2, 0.3, 0.35]
+        self.tableHalfExtents = [0.2, 0.3, 0.35]
         if hasattr(self.args, "change_table_size") and self.args.change_table_size:
-            tableHalfExtents = [0.2, 0.15, 0.35]
-        tableId = pu.create_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
-                                          halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
+            self.tableHalfExtents = [0.2, 0.15, 0.35]
+        tableId = pu.create_box_body(position=[0., 0., self.tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
+                                          halfExtents=self.tableHalfExtents, rgba_color=[1, 1, 1, 1], mass=0., client_id=self.client_id)
         
         # Default region using table position and table half extents
-        qr_pose, qr_ori, qr_half_extents = [0., 0., tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*tableHalfExtents[:2], 0.1]
+        qr_pose, qr_ori, qr_half_extents = [0., 0., self.tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*self.tableHalfExtents[:2], 0.1]
         table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
         table_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(table_pc)
         self.convert_BaseLinkPC_2_BboxCenterPC(table_pc, table_axes_bbox)
         self.fixed_scene_name_data["table"] = {"id": tableId,
                                                "init_z_offset": 0.0,
-                                               "init_pose": ([0., 0., tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
+                                               "init_pose": ([0., 0., self.tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
                                                "bbox": table_axes_bbox,
                                                "queried_region": "on", 
                                                "pc": table_pc,
@@ -678,13 +678,11 @@ class RoboSensaiBullet:
             final_scene_obj_pose_dict = deepcopy(self.placed_obj_poses)
             scene_pos, scene_quat = self.scene_init_stable_pose
             scene_init_z_offset = self.fixed_scene_name_data[self.selected_qr_scene_name]["init_z_offset"]
-            
             self.info['qr_scene_pose'] = [[scene_pos[0], scene_pos[1], scene_pos[2] - scene_init_z_offset], 
                                            scene_quat, 
                                            self.selected_qr_scene_bbox.tolist()]
             self.info['placed_obj_poses'] = final_scene_obj_pose_dict
-            self.info['success_placed_obj_num'] = self.success_obj_num
-                                    
+            self.info['success_placed_obj_num'] = self.success_obj_num          
             # Record the success number if objects successfully placed in one scene
             self.update_running_avg(record_dict=self.info['scene_obj_success_num'], 
                                     key_name=self.selected_qr_scene_name, 
@@ -692,7 +690,7 @@ class RoboSensaiBullet:
             
             if self.success_obj_num >= self.args.max_num_placing_objs:
                 # Post-Check about the stability of the placement
-                if self.args.eval_result and not self.post_check_stable_placement(): 
+                if self.args.eval_result and not self.post_check_scene_stable(): 
                     self.info['success'] = 0.
                 else:
                     self.info['success'] = 1.
@@ -706,11 +704,13 @@ class RoboSensaiBullet:
             if self.args.blender_record:
                 self.info['blender_recorder'] = deepcopy(self.pybullet_recorder) 
             
+            # Stable placement demo
             if self.args.eval_result and self.args.stable_placement:
                 sp_workwell = self.stable_placement_task_step()
                 if not sp_workwell: 
                     self.stable_placement_reset()
             
+            # Stable placement data collection
             if self.args.eval_result and self.args.sp_data_collection:
                 if self.info['success'] == 1.:
                     self.stable_placement_data_collection()
@@ -718,28 +718,60 @@ class RoboSensaiBullet:
         return done
     
 
-    def post_check_stable_placement(self, placed_obj_poses=None, reset_mass=False):
+    def post_check_scene_stable(self, placed_obj_poses=None, reset_mass=False):
         # We need to check the stability of the placement
         # The object should be stable for 50 steps
         placed_obj_poses = self.placed_obj_poses if placed_obj_poses is None else placed_obj_poses
         self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=reset_mass)
-        stabability_record = np.zeros((len(placed_obj_poses), self.args.min_continue_stable_steps), dtype=self.numpy_dtype)
+        continue_stable_steps = np.zeros(len(placed_obj_poses), dtype=self.numpy_dtype)
+        stabability_record = np.zeros(len(placed_obj_poses), dtype=self.numpy_dtype)
         prev_obj_vel = np.zeros((len(placed_obj_poses), 6), dtype=self.numpy_dtype)
         
-        self.simstep(1/240 * self.args.max_stable_steps)
-        for i in range(self.args.min_continue_stable_steps):
+        for i in range(self.args.max_stable_steps+self.args.min_continue_stable_steps):
             self.simstep(1/240)
             for j, obj_name in enumerate(placed_obj_poses.keys()):
                 (obj_pos, obj_quat), obj_vel = self.get_QRregionCenter2ObjCenter_pose_vel(objUniName=obj_name)
+
                 # Jump out if the object is not moving
-                if self.vel_checker(obj_vel) and self.acc_checker(prev_obj_vel[j, :], obj_vel):
-                    stabability_record[j, i] = 1
+                if self.vel_checker(obj_vel) and self.acc_checker(obj_vel, prev_obj_vel[j, :]):
+                    continue_stable_steps[j] += 1
+                    if continue_stable_steps[j] >= self.args.min_continue_stable_steps:
+                        stabability_record[j] = 1
+                else:
+                    continue_stable_steps[j] = 0
 
                 prev_obj_vel[j, :] = obj_vel
         
         # If all the objects are continuous stable for min_continue_stable_steps, we consider the placement is stable
-        if (stabability_record[:, -self.args.min_continue_stable_steps:].sum(axis=1) >= self.args.min_continue_stable_steps).all():
+        if (stabability_record==1).all():
             return True
+        return False
+    
+
+    # Only for stableplacement evaluation
+    def post_check_obj_stable(self, specific_obj_name, placed_obj_poses=None, reset_mass=False):
+        # We need to check the stability of the placement
+        # The object should be stable for 50 steps
+        placed_obj_poses = self.placed_obj_poses if placed_obj_poses is None else placed_obj_poses
+        assert specific_obj_name in placed_obj_poses.keys(), f"Specific object {specific_obj_name} is not in the placed object list!"
+        self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=reset_mass)
+        continue_stable_steps = 0
+        prev_obj_vel = np.zeros(6, dtype=self.numpy_dtype)
+        
+        for i in range(self.args.max_stable_steps+self.args.min_continue_stable_steps):
+            self.simstep(1/240)
+            (obj_pos, obj_quat), obj_vel = self.get_QRregionCenter2ObjCenter_pose_vel(objUniName=specific_obj_name)
+            # Jump out if the object is not moving
+            if self.vel_checker(obj_vel) and self.acc_checker(obj_vel, prev_obj_vel):
+                continue_stable_steps += 1
+                if continue_stable_steps >= self.args.min_continue_stable_steps: 
+                    return True
+            else:
+                continue_stable_steps = 0
+
+            prev_obj_vel = obj_vel
+        
+        # If all the objects are continuous stable for min_continue_stable_steps, we consider the placement is stable
         return False
         
 
@@ -851,10 +883,26 @@ class RoboSensaiBullet:
     ####### Stable Placement Task ########
     ######################################
     def init_camera(self):
-        cameraEyePosition = [2, 0, 2]
-        cameraTargetPosition = [0, 0, 0.35]
-        cameraUpVector = [0, 0, 1]
-        self.camera_view_matrix = p.computeViewMatrix(cameraEyePosition, cameraTargetPosition, cameraUpVector)
+        self.cameras = {}
+        self.width = 224  # Width of the depth image
+        self.height = 224  # Height of the depth image
+        fov = 60  # Field of view in degrees
+        aspect = self.width / self.height  # Aspect ratio
+        near = 0.02  # Near clipping plane
+        far = 5.0  # Far clipping plane
+
+        projection_matrix = p.computeProjectionMatrixFOV(fov=fov, aspect=aspect, nearVal=near, farVal=far)
+        tableheight = self.tableHalfExtents[2] * 2
+        camera_height = 0.3 + tableheight
+        
+        camera_view_matrix_1 = pu.compute_camera_matrix([self.tableHalfExtents[0]*2, 0., camera_height], [0, 0, tableheight])
+        camera_view_matrix_2 = pu.compute_camera_matrix([0, self.tableHalfExtents[1]*2, camera_height], [0, 0, tableheight])
+        camera_view_matrix_3 = pu.compute_camera_matrix([-self.tableHalfExtents[0]*2, 0., camera_height], [0, 0, tableheight])
+        camera_view_matrix_4 = pu.compute_camera_matrix([0, -self.tableHalfExtents[1]*2, camera_height], [0, 0, tableheight])
+        self.cameras[0] = {"viewMatrix": camera_view_matrix_1, "projectionMatrix": projection_matrix}
+        self.cameras[1] = {"viewMatrix": camera_view_matrix_2, "projectionMatrix": projection_matrix}
+        self.cameras[2] = {"viewMatrix": camera_view_matrix_3, "projectionMatrix": projection_matrix}
+        self.cameras[3] = {"viewMatrix": camera_view_matrix_4, "projectionMatrix": projection_matrix}
 
     
     def get_camera_image(self):
@@ -919,17 +967,37 @@ class RoboSensaiBullet:
         # Close the gripper
         close_gripper = self.robot.plan_gripper_joint_values(self.robot.CLOSED_POSITION)
         self.robot.attach_object(self.ingrasp_obj_id)
-        self.robot.update_collision_check()
         self.robot.execute_gripper_plan(close_gripper, realtime=self.args.realtime)
+        self.robot.update_collision_check()
     
 
-    def stable_placement_task_step(self):
-        if self.ingrasp_obj_name in self.placed_obj_poses.keys():
+    def get_scene_surface_points_cloud(self):
+        scene_pc = []
+        for cam_id, cam_info in self.cameras.items():
+            scene_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
+        
+        scene_pc = np.concatenate(scene_pc, axis=0)
+        scene_surface_pc = scene_pc[scene_pc[:, 2] >= self.tableHalfExtents[2] * 2]
+        return scene_surface_pc
+
+
+    def sp_compute_observation(self):
+        scene_surface_pc = self.get_scene_surface_points_cloud()
+        qr_obj_pc = self.obj_name_data[self.ingrasp_obj_name]["pc"]
+        return scene_surface_pc, qr_obj_pc
+    
+
+    def stable_placement_task_step(self, pred_qr_obj_pose=None, World_2_QRsceneSurface=None):
+        if pred_qr_obj_pose is not None:
+            qr_obj_bbox = self.obj_name_data[self.ingrasp_obj_name]["bbox"]
+            QRobjBboxCenter_2_QRobjBase = [-qr_obj_bbox[:3], [0., 0., 0., 1.]]
+            World2Ingrasp_obj_BasePose = self.sp_convert_pred_qr_obj_pose(pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase, World_2_QRsceneSurface)
+        elif self.ingrasp_obj_name in self.placed_obj_poses.keys():
             World2Ingrasp_obj_BasePose = self.placed_obj_poses[self.ingrasp_obj_name]
             pu.set_pose(self.obj_name_data[self.ingrasp_obj_name]["id"], (self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
         else:
             return True
-        self.get_camera_image()
+        
         WorkWell = self.stable_placement_place_open_back(World2Ingrasp_obj_BasePose)
         if not WorkWell: return WorkWell
         self.get_camera_image()
@@ -939,6 +1007,22 @@ class RoboSensaiBullet:
         WorkWell = self.stable_placement_reach_close_back(World2Ingrasp_obj_BasePose)
         if not WorkWell: return WorkWell
         return True
+
+    
+    def sp_convert_pred_qr_obj_pose(self, pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase, World_2_QRsceneSurface=None):
+        if World_2_QRsceneSurface is None: # TODO: we need a function to directly compute the World_2_QRsceneSurface based on the scene name instead of id
+            # Get the World2QRsceneSurfaceCenter pose since our pred_qr_obj_pose is in the QRsceneSurfaceCenter frame
+            World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+            QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
+            World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
+            QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
+            World_2_QRsceneSurface = pu.multiply_multi_transforms(
+                World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
+            )
+        QRsceneSurface_2_QRobjBboxCenter = pu.split_7d(pred_qr_obj_pose.detach().cpu().squeeze())
+        World_2_QRobjBboxCenter = pu.multiply_multi_transforms(World_2_QRsceneSurface, QRsceneSurface_2_QRobjBboxCenter)
+        World_2_QRobjBase = pu.multiply_multi_transforms(World_2_QRobjBboxCenter, QRobjBboxCenter_2_QRobjBase)
+        return World_2_QRobjBase
 
 
     def stable_placement_reach_close_back(self, World2Ingrasp_obj_BasePose):
@@ -1117,8 +1201,10 @@ class RoboSensaiBullet:
             sp_dataset[j] = {
                 "scene_pc": np_cur_scene_pc,
                 "qr_obj_pc": query_obj_pc,
-                "qr_obj_pose": self.to_numpy(QRsceneSurface_2_QRobjCenter[0]+QRsceneSurface_2_QRobjCenter[1]),
+                "qr_obj_pose": self.to_numpy(QRsceneSurface_2_QRobjCenter[0]+QRsceneSurface_2_QRobjCenter[1], dtype=np.float64),
                 "qr_obj_name": query_obj_name,
+                "qr_scene_name": self.selected_qr_scene_name,
+                "qr_scene_pose": self.to_numpy(World_2_QRsceneBase[0]+World_2_QRsceneBase[1], dtype=np.float64),
                 "World2PlacedObj_poses": deepcopy(World2PlacedObj_poses),
             }
             # pu.visualize_pc(query_obj_pc)
@@ -1129,25 +1215,13 @@ class RoboSensaiBullet:
 
     
     def stable_placement_eval_step(self, qr_obj_name, pred_qr_obj_pose, placed_obj_poses):
-        self.selected_obj_name = qr_obj_name
-        self.selected_obj_id = self.obj_name_data[self.selected_obj_name]["id"]
-        self.selected_obj_bbox = self.obj_name_data[self.selected_obj_name]["bbox"]
-        pu.set_mass(self.selected_obj_id, self.obj_name_data[self.selected_obj_name]["mass"], client_id=self.client_id)
+        selected_obj_name = qr_obj_name
+        selected_obj_bbox = self.obj_name_data[selected_obj_name]["bbox"]
+        QRobjBboxCenter_2_QRobjBase = [-selected_obj_bbox[:3], [0., 0., 0., 1.]]
 
-        # Get the World2QRsceneSurfaceCenter pose since our pred_qr_obj_pose is in the QRsceneSurfaceCenter frame
-        World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-        QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
-        World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
-        QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
-        World_2_QRsceneSurface = pu.multiply_multi_transforms(
-            World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
-        )
-        QRsceneSurface_2_QRobjBboxCenter = pu.split_7d(pred_qr_obj_pose.detach().cpu().squeeze())
-        World_2_QRobjBboxCenter = pu.multiply_multi_transforms(World_2_QRsceneSurface, QRsceneSurface_2_QRobjBboxCenter)
-        QRobjBboxCenter_2_QRobjBboxBase = [self.selected_obj_bbox[:3], [0., 0., 0., 1.]]
-        World_2_QRobjBboxBase = pu.multiply_multi_transforms(World_2_QRobjBboxCenter, QRobjBboxCenter_2_QRobjBboxBase)
-        placed_obj_poses[qr_obj_name] = World_2_QRobjBboxBase
-        stable_Flag = self.post_check_stable_placement(placed_obj_poses=placed_obj_poses, reset_mass=True)
+        World_2_QRobjBase = self.sp_convert_pred_qr_obj_pose(pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase)
+        placed_obj_poses[qr_obj_name] = World_2_QRobjBase
+        stable_Flag = self.post_check_obj_stable(qr_obj_name, placed_obj_poses, reset_mass=True)
         return stable_Flag
 
     
@@ -1182,7 +1256,7 @@ class RoboSensaiBullet:
             )
         
         # Convert Object World2ObjBase velocity to QRsceneCenter2ObjCenter velocity
-        World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(self.selected_obj_id, to_array=True) # no rotation between the base and the center
+        World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(obj_id, to_array=True) # no rotation between the base and the center
         QRregionCenter2ObjCenter_linvel = pu.quat_apply(QRregionCenter2ObjCenter_quat, World2ObjCenter_vel[:3])
         QRregionCenter2ObjCenter_rotvel = pu.quat_apply(QRregionCenter2ObjCenter_quat, World2ObjCenter_vel[3:])
         return (list(QRregionCenter2ObjCenter_pos), list(QRregionCenter2ObjCenter_quat)), \

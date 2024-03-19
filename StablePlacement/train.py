@@ -2,6 +2,7 @@ import os
 import datetime
 import time
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from SP_DataLoader import HDF5Dataset, custom_collate
@@ -25,17 +26,19 @@ def parse_args():
     # Training parameters
     parser.add_argument('--use_deterministic', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--use_normal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--weighted_loss', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--weighted_loss', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--epochs', type=int, default=500, help='')
     parser.add_argument('--val_epochs', type=int, default=5, help='')
     parser.add_argument('--batch_size', type=int, default=40, help='')
-    parser.add_argument('--ent_coef', type=float, default=0.001, help='')
+    parser.add_argument('--ent_coef', type=float, default=0., help='')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
 
     # Evaluation parameters
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/45], nargs='+')
+    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
     parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
@@ -102,6 +105,8 @@ if args.use_simulator:
     env_args.__dict__.update(read_json(args.env_json_path))
     env_args.rendering = args.rendering
     env_args.realtime = args.realtime
+    env_args.vel_threshold = args.vel_threshold
+    env_args.acc_threshold = args.acc_threshold
     envs = RoboSensaiBullet(env_args)
     # t_agent = Agent(envs).to(device)
     # t_agent.load_checkpoint(env_args.checkpoint_path, evaluate=True, map_location="cuda:0")
@@ -201,6 +206,7 @@ for epoch in range(1, args.epochs+1):
                     pred_qr_obj_pose, _ = model(scene_pc, qr_obj_pc)
 
                     qr_obj_name = sim_batch['qr_obj_name'][0]
+                    # Use qr_obj_pose to test the success rate is correct or not
                     success = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
                     success_sum += success
                         

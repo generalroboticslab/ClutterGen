@@ -20,21 +20,24 @@ import numpy as np
 from utils import se3_transform_pc, read_json
 
 from tqdm import tqdm
+import time
 import argparse
 from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--env_name', type=str, default='StablePlacement_EVAL')
-    parser.add_argument('--main_dataset_path', type=str, default='SP_Dataset/table_10_group0_dinning_table.h5')
-    parser.add_argument('--model_save_folder', type=str, default='SP_Result')
+    parser.add_argument('--main_dataset_path', type=str, default='StablePlacement/SP_Dataset/table_10_group0_dinning_table.h5')
+    parser.add_argument('--model_save_folder', type=str, default='StablePlacement/SP_Result')
     parser.add_argument('--visualize_pc', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--checkpoint', type=str, default='StablePlacement_03-13_03:27_Normal_EntCoef0.001')
+    parser.add_argument('--checkpoint', type=str, default='StablePlacement_03-18_16:30_Deterministic_WeightedLoss_EntCoef0.001')
     parser.add_argument('--index_episode', type=str, default="best")
     
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
+    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
     parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
 
 
@@ -69,6 +72,8 @@ if __name__ == "__main__":
         env_args.__dict__.update(read_json(args.env_json_path))
         env_args.rendering = args.rendering
         env_args.realtime = args.realtime
+        env_args.vel_threshold = args.vel_threshold
+        env_args.acc_threshold = args.acc_threshold
         envs = RoboSensaiBullet(env_args)
         # t_agent = Agent(envs).to(device)
         # t_agent.load_checkpoint(env_args.checkpoint_path, evaluate=True, map_location="cuda:0")
@@ -90,7 +95,7 @@ if __name__ == "__main__":
 
     test_loss = 0.; success_sum = 0.
     with torch.no_grad():
-        for batch in tqdm(sp_test_dataloader):
+        for idx, batch in enumerate(tqdm(sp_test_dataloader)):
             scene_pc = batch['scene_pc'].to(device)
             qr_obj_pc = batch['qr_obj_pc'].to(device)
             qr_obj_pose = batch['qr_obj_pose'].to(device)
@@ -99,35 +104,34 @@ if __name__ == "__main__":
             for obj_name, obj_pose in sp_placed_obj_poses.items():
                 sp_placed_obj_poses[obj_name] = pu.split_7d(obj_pose)
             # Forward pass
-            pred_pose, entropy = model(scene_pc, qr_obj_pc)
+            pred_qr_obj_pose, entropy = model(scene_pc, qr_obj_pc)
             # Compute loss
-            loss = mse_loss(pred_pose, qr_obj_pose)
+            loss = mse_loss(pred_qr_obj_pose, qr_obj_pose)
             test_loss += loss.item()
-
-            if args.visualize_pc:
-                scene_pc = scene_pc.cpu().numpy()
-                qr_obj_pc = qr_obj_pc.cpu().numpy()
-                pred_pose = pred_pose.cpu().numpy()
-                qr_obj_pose = qr_obj_pose.cpu().numpy()
-                # Visualize the point cloud
-                for i in range(len(scene_pc)):
-                    transformed_pred_qr_obj_pc = se3_transform_pc(pred_pose[i][:3], pred_pose[i][3:], qr_obj_pc[i])
-                    transformed_ground_truth_qr_obj_pc = se3_transform_pc(qr_obj_pose[i][:3], qr_obj_pose[i][3:], qr_obj_pc[i])
-                    pu.visualize_pc_lst(
-                        [scene_pc[i], transformed_pred_qr_obj_pc, transformed_ground_truth_qr_obj_pc], 
-                         color=[[0, 0, 1], [1, 0, 0], [0, 1, 0]])
                 
             if args.use_simulator:
                 # Evaluate the model
                 # Scene and obj feature tensor are keeping updated inplace]
                     ################ agent evaluation ################
                 envs.reset()
-                pred_qr_obj_pose, _ = model(scene_pc, qr_obj_pc)
-                success = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
+                success = envs.stable_placement_eval_step(qr_obj_name, qr_obj_pose, sp_placed_obj_poses)
                 success_sum += success
+
+            if args.visualize_pc:
+                scene_pc_np = scene_pc.cpu().numpy()
+                qr_obj_pc_np = qr_obj_pc.cpu().numpy()
+                pred_qr_obj_pose_np = pred_qr_obj_pose.cpu().numpy()
+                qr_obj_pose_np = qr_obj_pose.cpu().numpy()
+                # Visualize the point cloud
+                for i in range(len(scene_pc_np)):
+                    transformed_pred_qr_obj_pc = se3_transform_pc(pred_qr_obj_pose_np[i][:3], pred_qr_obj_pose_np[i][3:], qr_obj_pc_np[i])
+                    transformed_ground_truth_qr_obj_pc = se3_transform_pc(qr_obj_pose_np[i][:3], qr_obj_pose_np[i][3:], qr_obj_pc_np[i])
+                    pu.visualize_pc_lst(
+                        [scene_pc_np[i], transformed_pred_qr_obj_pc, transformed_ground_truth_qr_obj_pc], 
+                         color=[[0, 0, 1], [1, 0, 0], [0, 1, 0]])
                         
         sim_success_rate = success_sum / len(sp_test_dataloader)
         test_loss /= len(sp_test_dataloader)
 
     print(f"Test Loss: {test_loss:.4f}"
-          "Simulator Success Rate: {sim_success_rate:.4f}")
+          f"Simulator Success Rate: {sim_success_rate:.4f}")
