@@ -366,8 +366,8 @@ if __name__ == "__main__":
                 
                 episode_rewards[terminal_index] = 0.
                 
-        episode_reward = torch.mean(episode_rewards_box[-eval_args.num_trials:]).item()
-        success_rate = torch.mean(episode_success_box[-eval_args.num_trials:]).item()
+        episode_reward = torch.mean(episode_rewards_box[-num_episodes:]).item()
+        success_rate = torch.mean(episode_success_box[-num_episodes:]).item()
         machine_time = time.time() - start_time
         
         print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')

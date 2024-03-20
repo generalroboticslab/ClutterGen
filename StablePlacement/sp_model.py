@@ -88,7 +88,9 @@ class Base_Actor(nn.Module):
             nn.Dropout(dropout),
             layer_init(nn.Linear(64, num_action_logits))
         )
-
+    
+    def forward(self, x):
+        return self.actor(x)
 
 
 class StablePlacementPolicy_Determ(nn.Module):

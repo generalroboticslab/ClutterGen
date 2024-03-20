@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=40, help='')
     parser.add_argument('--ent_coef', type=float, default=0., help='')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--weight_decay', type=float, default=1e-2, help='Weight decay')
 
     # Evaluation parameters
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
@@ -49,7 +50,7 @@ def parse_args():
 
     # Specify the manual setting
     if args.use_simulator:
-        args.val_sim_epochs = args.val_epochs * 5
+        args.val_sim_epochs = args.val_epochs * 10
     
     # Specify the final name of the model
     timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
@@ -63,6 +64,7 @@ def parse_args():
     if args.weighted_loss:
         args.final_name += '_WeightedLoss'
     args.final_name += f"_EntCoef{args.ent_coef}"
+    args.final_name += f"_weiDecay{args.weight_decay}"
 
     args.model_save_path = os.path.join(args.save_folder, args.final_name, "Checkpoint")
     args.json_save_path = os.path.join(args.save_folder, args.final_name, "Json")
@@ -91,7 +93,7 @@ elif args.use_normal:
     model = StablePlacementPolicy_Beta_Normal(device=device).to(device)
 else:
     model = StablePlacementPolicy_Beta(device=device).to(device)
-optimizer = Adam(model.parameters(), lr=args.lr)
+optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
 if args.use_simulator:
     from RoboSensai_bullet import RoboSensaiBullet
