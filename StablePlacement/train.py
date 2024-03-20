@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=40, help='')
     parser.add_argument('--ent_coef', type=float, default=0., help='')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-2, help='Weight decay')
+    parser.add_argument('--weight_decay', type=float, default=1e-4, help='Weight decay')
 
     # Evaluation parameters
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
@@ -89,11 +89,11 @@ train_dataset_path = main_dataset_path.replace('.h5', '_train.h5')
 val_dataset_path = main_dataset_path.replace('.h5', '_val.h5')
 if args.subset_ratio is not None:
     assert 0. < args.subset_ratio < 1., f"Subset ratio {args.subset_ratio} must be larger than 0 and less than 1"
-    sp_train_dataloader = DataLoader(create_subset_dataset(HDF5Dataset(train_dataset_path), args.subset_ratio), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+    sp_train_dataloader = DataLoader(create_subset_dataset(HDF5Dataset(train_dataset_path), args.subset_ratio), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate, num_workers=4)
 else:
-    sp_train_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+    sp_train_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate, num_workers=4)
 
-sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate)
+sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate, num_workers=4)
 if args.use_simulator:
     sp_sim_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
@@ -146,7 +146,7 @@ for epoch in range(1, args.epochs+1):
     optimizer.param_groups[0]['lr'] = args.lr * (1 - epoch / args.epochs)
 
     pose_loss_record = 0; pos_loss_record = 0; quat_loss_record = 0; entropy_record = 0
-    for batch in tqdm(sp_train_dataloader):
+    for batch in tqdm(sp_train_dataloader, desc=f'Epoch {epoch}/{args.epochs} Training'):
         scene_pc = batch['scene_pc'].to(device)
         qr_obj_pc = batch['qr_obj_pc'].to(device)
         qr_obj_pose = batch['qr_obj_pose'].to(device)
@@ -184,9 +184,9 @@ for epoch in range(1, args.epochs+1):
     entropy_record /= len(sp_train_dataloader)
     
     if epoch % args.val_epochs == 0:
-        val_loss = 0; val_pos_loss = 0; val_quat_loss = 0
+        val_loss = 0; val_pos_loss = 0; val_quat_loss = 0; sim_success_rate = 0
         with torch.no_grad():
-            for batch in sp_val_dataloader:
+            for batch in tqdm(sp_val_dataloader, desc=f'Epoch {epoch} Validation'):
                 scene_pc = batch['scene_pc'].to(device)
                 qr_obj_pc = batch['qr_obj_pc'].to(device)
                 qr_obj_pose = batch['qr_obj_pose'].to(device)
@@ -200,11 +200,11 @@ for epoch in range(1, args.epochs+1):
             val_pos_loss /= len(sp_val_dataloader)
             val_quat_loss /= len(sp_val_dataloader)
 
-            if args.use_simulator:
+            if args.use_simulator and epoch % args.val_sim_epochs == 0:
                 # Evaluate the model
                 # Scene and obj feature tensor are keeping updated inplace]
-                success_sum = 0; eval_trials = 100
-                for eval_index, sim_batch in enumerate(sp_sim_dataloader):
+                success_sum = 0; eval_trials = 1000
+                for eval_index, sim_batch in enumerate(tqdm(sp_sim_dataloader, desc=f'Epoch {epoch} Simulator Evaluation')):
                     if eval_index >= eval_trials:
                         break
                     ################ agent evaluation ################

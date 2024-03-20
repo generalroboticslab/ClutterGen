@@ -71,7 +71,7 @@ class PC_Encoder(nn.Module):
 
 
 class Base_Actor(nn.Module):
-    def __init__(self, mlp_input, num_action_logits, dropout=0.4) -> None:
+    def __init__(self, mlp_input, num_action_logits, dropout=0.1) -> None:
         super().__init__()
         self.actor = nn.Sequential(
             layer_init(nn.Linear(mlp_input, 256)),
