@@ -690,7 +690,7 @@ class RoboSensaiBullet:
             
             if self.success_obj_num >= self.args.max_num_placing_objs:
                 # Post-Check about the stability of the placement
-                if self.args.eval_result and not self.post_check_scene_stable(): 
+                if self.args.eval_result and self.args.sp_data_collection and not self.post_check_scene_stable(): 
                     self.info['success'] = 0.
                 else:
                     self.info['success'] = 1.
