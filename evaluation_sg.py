@@ -32,7 +32,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -77,9 +77,8 @@ def get_args():
 
     # RoboSensai Bullet parameters
     # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group2_single_bowl', help="folder path that stores all urdf files")
     # parser.add_argument('--max_num_placing_objs', type=int, default=1)
-    # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
+    # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group2_single_bowl', help="folder path that stores all urdf files")
     # parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
     # parser.add_argument('--specific_scene', type=str, default="table")
     parser.add_argument('--num_pool_objs', type=int, default=10)
@@ -90,6 +89,8 @@ def get_args():
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--seq_select_placing', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     # parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument("--max_stable_steps", type=int, default=40, help="the maximum steps for the env to be stable considering success")
+    parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--actor_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
@@ -99,6 +100,7 @@ def get_args():
     # Downstream task1 stable placement parameters
     parser.add_argument('--stable_placement', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--sp_data_collection', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='collect stable placement data')
+    parser.add_argument('--sp_num_data', type=int, default=10000, help='collect stable placement data for certain episodes')
 
 
     eval_args = parser.parse_args()
@@ -161,21 +163,15 @@ def get_args():
         os.makedirs(eval_args.csv_dir)
     eval_args.result_file_path = os.path.join(eval_args.csv_dir, eval_args.final_name + '.csv')
 
-    if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.result_file_path):
-        response = input(f"Find existing result file {eval_args.result_file_path}! Whether remove or not (y/n):")
-        if response == 'y' or response == 'Y': 
-            os.remove(eval_args.result_file_path)
-        else: 
-            raise Exception("Give up this evaluation because of exsiting evluation result.")
+    if eval_args.collect_data and eval_args.eval_result:
+        check_file_exist(eval_args.result_file_path)
+
     if eval_args.save_to_assets:  # directly save new assets file to a_new_assets
         if eval_args.use_benchmark: raise Exception("Can not set save_to_assets and use_benchmark to be both true at the same time!") # can not
         if eval_args.collect_data or eval_args.generate_benchmark:
             assets_dir = os.path.split(eval_args.save_to_assets_path)[0]
             if not os.path.exists(assets_dir): os.mkdir(assets_dir)
-            if os.path.exists(eval_args.save_to_assets_path):
-                response = input(f"Find existing baseline experiment file {eval_args.save_to_assets_path}! Whether remove or not (y/n):")
-                if response == 'y' or response == 'Y': os.remove(eval_args.save_to_assets_path)
-                else: raise Exception("Give up this evaluation because of exsiting baseline experiment file but give up overwritting.")
+            check_file_exist(eval_args.save_to_assets_path)
 
     # create trajectory folder
     eval_args.trajectory_dir = os.path.join(eval_args.save_dir, 'trajectories', eval_args.final_name)
@@ -197,11 +193,11 @@ def get_args():
 
     # create SP dataset folder
     eval_args.sp_dataset_dir = os.path.join("StablePlacement", 'SP_Dataset')
-    if eval_args.collect_data and eval_args.sp_data_collection:
-        os.makedirs(eval_args.sp_dataset_dir, exist_ok=True)
-    os.makedirs(eval_args.sp_dataset_dir, exist_ok=True)
     sp_dataset_name = f"{eval_args.specific_scene}_{max(eval_args.max_num_placing_objs_lst)}_{os.path.basename(eval_args.object_pool_folder)}"
     eval_args.sp_dataset_path = os.path.join(eval_args.sp_dataset_dir, sp_dataset_name + '.h5')
+    if eval_args.collect_data and eval_args.sp_data_collection:
+        os.makedirs(eval_args.sp_dataset_dir, exist_ok=True)
+        check_file_exist(eval_args.sp_dataset_path)
 
     return eval_args
 
@@ -237,6 +233,9 @@ if __name__ == "__main__":
         agent = Agent(temp_env).to(device)
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
+    sp_data_index = 0
+    if eval_args.sp_data_collection and eval_args.sp_num_data is not None:
+        eval_args.num_trials = int(1e5) # Set a large number to collect data
     # Evaluate checkpoint before replay
     for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
         if eval_args.num_envs > 1:
@@ -268,6 +267,11 @@ if __name__ == "__main__":
 
         start_time = time.time()
         while num_episodes < eval_args.num_trials:
+            if eval_args.sp_data_collection and \
+               eval_args.sp_num_data is not None and \
+               sp_data_index >= eval_args.sp_num_data:
+                break
+
             ################ agent evaluation ################
             if eval_args.random_policy:
                 action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 4 # [-5, 5] before sigmoid
@@ -310,9 +314,7 @@ if __name__ == "__main__":
             terminal_nums = terminal_index.sum().item()
             # Compute the average episode rewards.
             if terminal_nums > 0:
-                
                 terminal_ids = terminal_index.nonzero().flatten()
-
                 update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
                 success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
                 update_tensor_buffer(episode_success_box, success_buf)
@@ -335,7 +337,18 @@ if __name__ == "__main__":
                                 "prob_pos_heatmap": [],
                                 "probs_mean_std": [],
                             }
-                
+                        
+                    if eval_args.sp_data_collection and len(success_ids) > 0:
+                        sp_dataset_lst = combine_envs_float_info2list(infos, 'sp_dataset', success_ids)
+                        with h5py.File(eval_args.sp_dataset_path, 'a') as f:
+                            for sp_data in sp_dataset_lst:
+                                if not sp_data:
+                                    continue
+                                for index, single_sp_data_point in sp_data.items():
+                                    group = create_or_update_group(f, f"{sp_data_index}")
+                                    create_dataset_recursively(group, single_sp_data_point)
+                                    sp_data_index += 1
+
                 if eval_args.blender_record:
                     blender_recorders_lst = combine_envs_float_info2list(infos, 'blender_recorder', terminal_ids)
                     for i, blender_recorder in enumerate(blender_recorders_lst):
@@ -353,8 +366,8 @@ if __name__ == "__main__":
                 
                 episode_rewards[terminal_index] = 0.
                 
-        episode_reward = torch.mean(episode_rewards_box).item()
-        success_rate = torch.mean(episode_success_box).item()
+        episode_reward = torch.mean(episode_rewards_box[-num_episodes:]).item()
+        success_rate = torch.mean(episode_success_box[-num_episodes:]).item()
         machine_time = time.time() - start_time
         
         print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
@@ -384,22 +397,8 @@ if __name__ == "__main__":
             }
             save_json(meta_data, os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_meta_data.json"))
 
-        # Save the stable placement dataset
-        if eval_args.sp_data_collection:
-            sp_dataset_lst = combine_envs_float_info2list(infos, 'sp_dataset')
-            # Merge the dataset (if multiple envs are used)
-            sp_dataset = {}
-            for sp_data in sp_dataset_lst:
-                for k, v in sp_data.items():
-                    if k not in sp_dataset: 
-                        sp_dataset[k] = v
-                        continue
-                    else:
-                        sp_dataset[k].extend(v)
-            
-            data_len = [len(v) for k, v in sp_dataset.items()]
-            save_h5py(sp_dataset, eval_args.sp_dataset_path)
-            print(f"Saved stable placement dataset to {eval_args.sp_dataset_path}; Num Data Points: {data_len}")
-    
+    if eval_args.sp_data_collection:
+        print(f"Saved stable placement dataset to {eval_args.sp_dataset_path}; Num Data Points: {sp_data_index}")
+                
     print('Process Over')
     envs.close()

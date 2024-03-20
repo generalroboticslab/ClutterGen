@@ -83,26 +83,6 @@ def create_multi_envs(args, start_method='forkserver'):
     return envs
 
 
-def combine_envs_float_info2list(infos, key, env_ids=None):
-    if env_ids is None: env_ids = range(len(infos))
-    return [infos[id][key] for id in env_ids]
-
-
-def combine_envs_dict_info2dict(infos, key, env_ids=None):
-    if env_ids is None: env_ids = range(len(infos))
-    merged_info = {}
-    for id in env_ids:
-        info_dict = infos[id][key]
-        for k, v in info_dict.items():
-            if k not in merged_info: 
-                merged_info[k] = v
-                continue
-            cur_val, nums = merged_info[k]
-            new_val, new_nums = v
-            merged_info[k] = [(cur_val * nums + new_val * new_nums) / (nums + new_nums), nums + new_nums]
-    return merged_info
-
-
 
 if __name__ == "__main__":
     import torch

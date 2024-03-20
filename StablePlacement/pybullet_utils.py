@@ -1250,6 +1250,45 @@ def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
     geometries.append(coord_frame)
     o3d.visualization.draw_geometries(geometries, lookat=[0.0, 0.0, 0.0], 
                                       front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
+    
+
+def get_pc_from_camera(width, height, view_matrix, proj_matrix):
+    # based on https://stackoverflow.com/questions/59128880/getting-world-coordinates-from-opengl-depth-buffer
+
+    # get a depth image
+    # "infinite" depths will have a value close to 1
+    image_arr = p.getCameraImage(width=width, 
+                                 height=height, 
+                                 viewMatrix=view_matrix, 
+                                 projectionMatrix=proj_matrix)
+    depth = image_arr[3]
+
+    # create a 4x4 transform matrix that goes from pixel coordinates (and depth values) to world coordinates
+    proj_matrix = np.asarray(proj_matrix).reshape([4, 4], order="F")
+    view_matrix = np.asarray(view_matrix).reshape([4, 4], order="F")
+    world2pixels = np.linalg.inv(np.matmul(proj_matrix, view_matrix))
+
+    # create a grid with pixel coordinates and depth values
+    y, x = np.mgrid[-1:1:2 / height, -1:1:2 / width]
+    y *= -1.
+    x, y, z = x.reshape(-1), y.reshape(-1), np.array(depth).reshape(-1)
+    h = np.ones_like(z)
+
+    pixels = np.stack([x, y, z, h], axis=1)
+    # filter out "infinite" depths
+    pixels = pixels[z < 0.99]
+    pixels[:, 2] = 2 * pixels[:, 2] - 1
+
+    # turn pixels to world coordinates
+    points = np.matmul(world2pixels, pixels.T).T
+    points /= points[:, 3: 4]
+    points = points[:, :3]
+
+    return points
+
+
+def compute_camera_matrix(cameraEyePosition, cameraTargetPosition, cameraUpVector=[0, 0, 1]):
+    return p.computeViewMatrix(cameraEyePosition, cameraTargetPosition, cameraUpVector)
 
 
 def modify_specific_link_in_urdf(file_path, new_rpy=[0., 0., 0.], new_scale=1.0, firstlink=True, specify_link=None):
