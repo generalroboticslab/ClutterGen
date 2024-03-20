@@ -33,13 +33,13 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=40, help='')
     parser.add_argument('--ent_coef', type=float, default=0., help='')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-2, help='Weight decay')
+    parser.add_argument('--weight_decay', type=float, default=1e-4, help='Weight decay')
 
     # Evaluation parameters
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/45], nargs='+')
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
@@ -89,11 +89,11 @@ train_dataset_path = main_dataset_path.replace('.h5', '_train.h5')
 val_dataset_path = main_dataset_path.replace('.h5', '_val.h5')
 if args.subset_ratio is not None:
     assert 0. < args.subset_ratio < 1., f"Subset ratio {args.subset_ratio} must be larger than 0 and less than 1"
-    sp_train_dataloader = DataLoader(create_subset_dataset(HDF5Dataset(train_dataset_path), args.subset_ratio), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+    sp_train_dataloader = DataLoader(create_subset_dataset(HDF5Dataset(train_dataset_path), args.subset_ratio), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate, num_workers=4)
 else:
-    sp_train_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+    sp_train_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate, num_workers=4)
 
-sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate)
+sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate, num_workers=4)
 if args.use_simulator:
     sp_sim_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
