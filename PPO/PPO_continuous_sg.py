@@ -338,7 +338,7 @@ class Agent(nn.Module):
             action = probs.mean if self.deterministic else probs.sample()
 
         logprob = probs.log_prob(action).sum(1) # log_prb means prob density not mass! So it could be larger than 1
-        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training
+        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training; Is this useful?
 
         self.prob_entropy = probs.entropy() # Record the current probs for logging
         entropy = self.prob_entropy.sum(1)
