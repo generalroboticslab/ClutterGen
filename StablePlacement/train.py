@@ -95,7 +95,7 @@ else:
 
 sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate)
 if args.use_simulator:
-    sp_sim_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
+    sp_sim_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
 # Create the model
 if args.use_beta:
