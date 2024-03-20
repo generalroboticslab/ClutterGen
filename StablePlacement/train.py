@@ -184,6 +184,7 @@ for epoch in range(1, args.epochs+1):
     entropy_record /= len(sp_train_dataloader)
     
     if epoch % args.val_epochs == 0:
+        print(f"Start Validation at Epoch {epoch}")
         val_loss = 0; val_pos_loss = 0; val_quat_loss = 0
         with torch.no_grad():
             for batch in sp_val_dataloader:
@@ -200,10 +201,10 @@ for epoch in range(1, args.epochs+1):
             val_pos_loss /= len(sp_val_dataloader)
             val_quat_loss /= len(sp_val_dataloader)
 
-            if args.use_simulator:
+            if args.use_simulator and epoch % args.val_sim_epochs == 0:
                 # Evaluate the model
                 # Scene and obj feature tensor are keeping updated inplace]
-                success_sum = 0; eval_trials = 100
+                success_sum = 0; eval_trials = 1000
                 for eval_index, sim_batch in enumerate(sp_sim_dataloader):
                     if eval_index >= eval_trials:
                         break
