@@ -156,7 +156,7 @@ class StablePlacementPolicy_Beta(nn.Module):
         return pred_pose, probs.entropy().sum(dim=1)
     
 
-class StablePlacementPolicy_Beta_Normal(nn.Module):
+class StablePlacementPolicy_Normal(nn.Module):
     def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")

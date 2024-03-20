@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from utils import read_dataset_recursively, se3_transform_pc
 import pybullet_utils as pu
@@ -54,6 +54,17 @@ def split_dataset(hdf5_filename, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1,
               f"train: {train_filename}\n"
               f"val: {val_filename}\n"
               f"test: {test_filename}")
+        
+
+def create_subset_dataset(dataset, subset_ratio: float):
+    # Assuming `dataset` is your full dataset
+    full_dataset_size = len(dataset)
+    indices = list(range(full_dataset_size))
+
+    # Create subsets and data loaders for each percentage
+    subset_size = int(full_dataset_size * subset_ratio)
+    subset_indices = indices[:subset_size]
+    return Subset(dataset, subset_indices)
 
 
 class HDF5Dataset(Dataset):

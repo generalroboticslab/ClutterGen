@@ -11,7 +11,7 @@ import datetime
 import torch
 from torch.utils.data import DataLoader
 from SP_DataLoader import HDF5Dataset, custom_collate
-from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Beta_Normal
+from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Normal
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 
@@ -39,6 +39,8 @@ def parse_args():
     parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
     parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
+
+    parser.add_argument('--test_dataset', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
 
 
     args = parser.parse_args()
@@ -79,12 +81,12 @@ if __name__ == "__main__":
         # t_agent.load_checkpoint(env_args.checkpoint_path, evaluate=True, map_location="cuda:0")
         # t_agent.pc_extractor.eval() # The PC extractor's BN layer was set to train so we keep it train first.
 
-    if args.use_deterministic:
-        model = StablePlacementPolicy_Determ(device=device).to(device)
-    elif args.use_normal:
-        model = StablePlacementPolicy_Beta_Normal(device=device).to(device)
-    else:
+    if args.use_beta:
         model = StablePlacementPolicy_Beta(device=device).to(device)
+    elif args.use_normal:
+        model = StablePlacementPolicy_Normal(device=device).to(device)
+    else:
+        model = StablePlacementPolicy_Determ(device=device).to(device)
     model.load_state_dict(torch.load(args.checkpoint_path))
     model.eval()
     print("Model loaded from", args.checkpoint_path)
@@ -114,7 +116,9 @@ if __name__ == "__main__":
                 # Scene and obj feature tensor are keeping updated inplace]
                     ################ agent evaluation ################
                 envs.reset()
-                success = envs.stable_placement_eval_step(qr_obj_name, qr_obj_pose, sp_placed_obj_poses)
+                if args.test_dataset:
+                    pred_qr_obj_pose = qr_obj_pose
+                success = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
                 success_sum += success
 
             if args.visualize_pc:

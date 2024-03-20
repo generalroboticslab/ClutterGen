@@ -5,8 +5,8 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from SP_DataLoader import HDF5Dataset, custom_collate
-from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Beta_Normal
+from SP_DataLoader import HDF5Dataset, custom_collate, create_subset_dataset
+from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Normal
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 
@@ -24,10 +24,11 @@ def parse_args():
     parser.add_argument('--save_folder', type=str, default='StablePlacement/SP_Result')
     
     # Training parameters
-    parser.add_argument('--use_deterministic', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--use_normal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--use_beta', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--subset_ratio', type=float, default=None, help='The ratio of the subset of the dataset')
     parser.add_argument('--weighted_loss', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--epochs', type=int, default=500, help='')
+    parser.add_argument('--epochs', type=int, default=1000, help='')
     parser.add_argument('--val_epochs', type=int, default=5, help='')
     parser.add_argument('--batch_size', type=int, default=40, help='')
     parser.add_argument('--ent_coef', type=float, default=0., help='')
@@ -55,14 +56,17 @@ def parse_args():
     # Specify the final name of the model
     timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
     args.final_name = args.env_name + timer
-    if args.use_deterministic:
-        args.final_name += '_Deterministic'
+    if args.use_beta:
+        args.final_name += '_Beta'
     elif args.use_normal:
         args.final_name += '_Normal'
     else:
-        args.final_name += '_Beta'
+        args.final_name += '_Deterministic'
+
     if args.weighted_loss:
         args.final_name += '_WeightedLoss'
+    if args.subset_ratio:
+        args.final_name += f"_Subset{args.subset_ratio}"
     args.final_name += f"_EntCoef{args.ent_coef}"
     args.final_name += f"_weiDecay{args.weight_decay}"
 
@@ -79,22 +83,30 @@ def parse_args():
 args = parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Load the dataset / Create the dataloader
 main_dataset_path = args.main_dataset_path
 train_dataset_path = main_dataset_path.replace('.h5', '_train.h5')
 val_dataset_path = main_dataset_path.replace('.h5', '_val.h5')
-sp_train_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+if args.subset_ratio is not None:
+    assert 0. < args.subset_ratio < 1., f"Subset ratio {args.subset_ratio} must be larger than 0 and less than 1"
+    sp_train_dataloader = DataLoader(create_subset_dataset(HDF5Dataset(train_dataset_path), args.subset_ratio), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+else:
+    sp_train_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate)
+
 sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate)
 if args.use_simulator:
     sp_sim_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
-if args.use_deterministic:
-    model = StablePlacementPolicy_Determ(device=device).to(device)
-elif args.use_normal:
-    model = StablePlacementPolicy_Beta_Normal(device=device).to(device)
-else:
+# Create the model
+if args.use_beta:
     model = StablePlacementPolicy_Beta(device=device).to(device)
+elif args.use_normal:
+    model = StablePlacementPolicy_Normal(device=device).to(device)
+else:
+    model = StablePlacementPolicy_Determ(device=device).to(device)
 optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
+# Create the simulator
 if args.use_simulator:
     from RoboSensai_bullet import RoboSensaiBullet
     from PPO.PPO_continuous_sg import Agent, update_tensor_buffer
@@ -115,7 +127,6 @@ if args.use_simulator:
     # t_agent.pc_extractor.eval() # The PC extractor's BN layer was set to train so we keep it train first.
 
 # Configure Wandb 
-
 wb_config = dict(
     Name=args.env_name,
     Model='PointNet_MLP',
