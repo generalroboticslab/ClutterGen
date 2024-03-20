@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/45], nargs='+')
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
