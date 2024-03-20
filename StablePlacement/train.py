@@ -146,7 +146,7 @@ for epoch in range(1, args.epochs+1):
     optimizer.param_groups[0]['lr'] = args.lr * (1 - epoch / args.epochs)
 
     pose_loss_record = 0; pos_loss_record = 0; quat_loss_record = 0; entropy_record = 0
-    for batch in tqdm(sp_train_dataloader):
+    for batch in tqdm(sp_train_dataloader, desc=f'Epoch {epoch}/{args.epochs} Training'):
         scene_pc = batch['scene_pc'].to(device)
         qr_obj_pc = batch['qr_obj_pc'].to(device)
         qr_obj_pose = batch['qr_obj_pose'].to(device)
@@ -184,10 +184,9 @@ for epoch in range(1, args.epochs+1):
     entropy_record /= len(sp_train_dataloader)
     
     if epoch % args.val_epochs == 0:
-        print(f"Start Validation at Epoch {epoch}")
-        val_loss = 0; val_pos_loss = 0; val_quat_loss = 0
+        val_loss = 0; val_pos_loss = 0; val_quat_loss = 0; sim_success_rate = 0
         with torch.no_grad():
-            for batch in sp_val_dataloader:
+            for batch in tqdm(sp_val_dataloader, desc=f'Epoch {epoch} Validation'):
                 scene_pc = batch['scene_pc'].to(device)
                 qr_obj_pc = batch['qr_obj_pc'].to(device)
                 qr_obj_pose = batch['qr_obj_pose'].to(device)
@@ -205,7 +204,7 @@ for epoch in range(1, args.epochs+1):
                 # Evaluate the model
                 # Scene and obj feature tensor are keeping updated inplace]
                 success_sum = 0; eval_trials = 1000
-                for eval_index, sim_batch in enumerate(sp_sim_dataloader):
+                for eval_index, sim_batch in enumerate(tqdm(sp_sim_dataloader, desc=f'Epoch {epoch} Simulator Evaluation')):
                     if eval_index >= eval_trials:
                         break
                     ################ agent evaluation ################
