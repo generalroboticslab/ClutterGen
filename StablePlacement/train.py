@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from SP_DataLoader import HDF5Dataset, custom_collate
-from sp_model import StablePlacementModel, StablePlacementPolicy, StablePlacementPolicy_Normal
+from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Beta_Normal
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 
@@ -86,11 +86,11 @@ if args.use_simulator:
     sp_sim_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
 if args.use_deterministic:
-    model = StablePlacementModel(device=device).to(device)
+    model = StablePlacementPolicy_Determ(device=device).to(device)
 elif args.use_normal:
-    model = StablePlacementPolicy_Normal(device=device).to(device)
+    model = StablePlacementPolicy_Beta_Normal(device=device).to(device)
 else:
-    model = StablePlacementPolicy(device=device).to(device)
+    model = StablePlacementPolicy_Beta(device=device).to(device)
 optimizer = Adam(model.parameters(), lr=args.lr)
 
 if args.use_simulator:

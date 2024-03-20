@@ -11,7 +11,7 @@ import datetime
 import torch
 from torch.utils.data import DataLoader
 from SP_DataLoader import HDF5Dataset, custom_collate
-from sp_model import StablePlacementModel, StablePlacementPolicy, StablePlacementPolicy_Normal
+from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Beta_Normal
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 
@@ -80,11 +80,11 @@ if __name__ == "__main__":
         # t_agent.pc_extractor.eval() # The PC extractor's BN layer was set to train so we keep it train first.
 
     if args.use_deterministic:
-        model = StablePlacementModel(device=device).to(device)
+        model = StablePlacementPolicy_Determ(device=device).to(device)
     elif args.use_normal:
-        model = StablePlacementPolicy_Normal(device=device).to(device)
+        model = StablePlacementPolicy_Beta_Normal(device=device).to(device)
     else:
-        model = StablePlacementPolicy(device=device).to(device)
+        model = StablePlacementPolicy_Beta(device=device).to(device)
     model.load_state_dict(torch.load(args.checkpoint_path))
     model.eval()
     print("Model loaded from", args.checkpoint_path)

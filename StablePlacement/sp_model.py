@@ -70,8 +70,28 @@ class PC_Encoder(nn.Module):
         return x
 
 
+class Base_Actor(nn.Module):
+    def __init__(self, mlp_input, num_action_logits, dropout=0.4) -> None:
+        super().__init__()
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(mlp_input, 256)),
+            nn.LayerNorm(256), 
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            layer_init(nn.Linear(256, 128)),
+            nn.LayerNorm(128), 
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            layer_init(nn.Linear(128, 64)),
+            nn.LayerNorm(64), 
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            layer_init(nn.Linear(64, num_action_logits))
+        )
 
-class StablePlacementModel(nn.Module):
+
+
+class StablePlacementPolicy_Determ(nn.Module):
     def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -81,19 +101,8 @@ class StablePlacementModel(nn.Module):
         self.scene_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
         self.qr_obj_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
         # Linear
-        self.action_logits_num = action_dim # * 2 for alpha and beta
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(mlp_input, 256)),
-            nn.LayerNorm(256), 
-            nn.ReLU(),
-            layer_init(nn.Linear(256, 128)),
-            nn.LayerNorm(128), 
-            nn.ReLU(),
-            layer_init(nn.Linear(128, 64)),
-            nn.LayerNorm(64), 
-            nn.ReLU(),
-            layer_init(nn.Linear(64, self.action_logits_num))
-        )
+        self.num_action_logits = action_dim
+        self.actor = Base_Actor(mlp_input, self.num_action_logits)
 
     def forward(self, scene_pc, qr_obj_pc):
         # PC-Net Points xyz: input points position data, [B, C, N]
@@ -112,7 +121,7 @@ class StablePlacementModel(nn.Module):
         return pred_pose, None
 
 
-class StablePlacementPolicy(nn.Module):
+class StablePlacementPolicy_Beta(nn.Module):
     def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -122,19 +131,8 @@ class StablePlacementPolicy(nn.Module):
         self.scene_pc_encoder = PC_Encoder()
         self.qr_obj_pc_encoder = PC_Encoder()
         # Linear
-        self.action_logits_num = action_dim * 2 # * 2 for alpha and beta
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(mlp_input, 256)),
-            nn.LayerNorm(256), 
-            nn.ReLU(),
-            layer_init(nn.Linear(256, 128)),
-            nn.LayerNorm(128), 
-            nn.ReLU(),
-            layer_init(nn.Linear(128, 64)),
-            nn.LayerNorm(64), 
-            nn.ReLU(),
-            layer_init(nn.Linear(64, self.action_logits_num))
-        )
+        self.num_action_logits = action_dim * 2 # * 2 for alpha and beta
+        self.actor = Base_Actor(mlp_input, self.num_action_logits)
     
     def forward(self, scene_pc, qr_obj_pc):
         # PC-Net Points xyz: input points position data, [B, C, N]
@@ -156,7 +154,7 @@ class StablePlacementPolicy(nn.Module):
         return pred_pose, probs.entropy().sum(dim=1)
     
 
-class StablePlacementPolicy_Normal(nn.Module):
+class StablePlacementPolicy_Beta_Normal(nn.Module):
     def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -166,19 +164,8 @@ class StablePlacementPolicy_Normal(nn.Module):
         self.scene_pc_encoder = PC_Encoder()
         self.qr_obj_pc_encoder = PC_Encoder()
         # Linear
-        self.action_logits_num = action_dim # for mean
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(mlp_input, 256)),
-            nn.LayerNorm(256), 
-            nn.ReLU(),
-            layer_init(nn.Linear(256, 128)),
-            nn.LayerNorm(128), 
-            nn.ReLU(),
-            layer_init(nn.Linear(128, 64)),
-            nn.LayerNorm(64), 
-            nn.ReLU(),
-            layer_init(nn.Linear(64, self.action_logits_num))
-        )
+        self.num_action_logits = action_dim # for mean
+        self.actor = Base_Actor(mlp_input, self.num_action_logits)
 
         self.logstd = nn.Parameter(torch.zeros(action_dim), requires_grad=True)
     
