@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
-    parser.add_argument('--max_num_urdf_points', type=int, default=2048)
+    parser.add_argument('--max_num_obj_points', type=int, default=2048)
     parser.add_argument('--max_num_scene_points', type=int, default=10240)
     # RoboSensai Env parameters (training)
     parser.add_argument('--max_trials', type=int, default=10)  # maximum steps trial for one object per episode
@@ -270,7 +270,7 @@ if __name__ == "__main__":
         ["Action Dim", temp_env.action_dim],
         ["Traj History Dim", temp_env.traj_hist_dim],
         ["Scene PC Dim", f"(3, {args.max_num_scene_points})"],
-        ["Obj PC Dim", f"(3, {args.max_num_urdf_points})"],
+        ["Obj PC Dim", f"(3, {args.max_num_obj_points})"],
         ["Sequence Length", f"{args.sequence_len}"]
     ]
     

@@ -13,7 +13,6 @@ from torch.distributions import Normal, Categorical, MultivariateNormal, Beta
 
 # PointNet
 from PointNet_Model.pointnet2_cls_ssg import get_model
-import pybullet_utils as pu
 
 import copy
 import math

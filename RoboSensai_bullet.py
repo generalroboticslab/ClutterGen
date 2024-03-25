@@ -11,7 +11,7 @@ from copy import deepcopy
 import pybullet as p
 import time
 import pybullet_data
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 try:
     from pynput import keyboard
 except ImportError: 
@@ -240,7 +240,7 @@ class RoboSensaiBullet:
             self.pybullet_recorder = PyBulletRecorder(client_id=self.client_id)
         
         # Only for evaluation
-        if self.args.eval_result and self.args.stable_placement:
+        if self.args.eval_result and hasattr(self.args, "use_robot_sp") and self.args.use_robot_sp:
             self.stable_placement_task_init()
 
 
@@ -416,7 +416,7 @@ class RoboSensaiBullet:
                 self.rng.shuffle(self.unplaced_objs_name)
             
             # Only for evaluation
-            if self.args.eval_result and self.args.stable_placement:
+            if self.args.eval_result and hasattr(self.args, "use_robot_sp") and self.args.use_robot_sp:
                 # Move the stable queried object to the end of the list
                 assert self.ingrasp_obj_name in self.unplaced_objs_name, f"Stable queried object {self.ingrasp_obj_name} is not in the unplaced list!"
                 self.unplaced_objs_name.remove(self.ingrasp_obj_name)
@@ -705,7 +705,7 @@ class RoboSensaiBullet:
                 self.info['blender_recorder'] = deepcopy(self.pybullet_recorder) 
             
             # Stable placement demo
-            if self.args.eval_result and self.args.stable_placement:
+            if self.args.eval_result and self.args.use_robot_sp:
                 sp_workwell = self.stable_placement_task_step()
                 if not sp_workwell: 
                     self.stable_placement_reset()
@@ -914,46 +914,72 @@ class RoboSensaiBullet:
             physicsClientId=self.client_id)
         return rgbImg, depthImg, segImg
     
+
+    def get_scene_surface_points_cloud(self):
+        scene_pc = []
+        for cam_id, cam_info in self.cameras.items():
+            scene_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
+        
+        scene_pc = np.concatenate(scene_pc, axis=0)
+        scene_surface_pc = scene_pc[scene_pc[:, 2] >= self.tableHalfExtents[2] * 2]
+        return scene_surface_pc
+    
+
+    def get_qr_obj_points_cloud(self, qr_obj_name, camera_scan=False):
+        if camera_scan:
+            qr_obj_pc = []
+            for cam_id, cam_info in self.cameras.items():
+                qr_obj_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
+            qr_obj_pc = np.concatenate(qr_obj_pc, axis=0)
+        else:
+            qr_obj_pc = self.obj_name_data[qr_obj_name]["pc"]
+        return qr_obj_pc
+
+
+    def sp_compute_observation(self, qr_obj_name, camera_scan=False):
+        qr_obj_pc = self.get_qr_obj_points_cloud(qr_obj_name=qr_obj_name, camera_scan=camera_scan)
+        scene_surface_pc = self.get_scene_surface_points_cloud()
+        return scene_surface_pc, qr_obj_pc
+    
+
+    def sp_convert_pred_qr_obj_pose(self, qr_obj_name, pred_qr_obj_pose, World_2_QRsceneSurface=None):
+        if World_2_QRsceneSurface is None: # TODO: we need a function to directly compute the World_2_QRsceneSurface based on the scene name instead of id
+            # Get the World2QRsceneSurfaceCenter pose since our pred_qr_obj_pose is in the QRsceneSurfaceCenter frame
+            World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+            QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
+            World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
+            QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
+            World_2_QRsceneSurface = pu.multiply_multi_transforms(
+                World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
+            )
+        selected_obj_bbox = self.obj_name_data[qr_obj_name]["bbox"]
+        QRobjBboxCenter_2_QRobjBase = [-selected_obj_bbox[:3], [0., 0., 0., 1.]]
+        QRsceneSurface_2_QRobjBboxCenter = pu.split_7d(pred_qr_obj_pose.detach().cpu().squeeze())
+        World_2_QRobjBase = pu.multiply_multi_transforms(World_2_QRsceneSurface, QRsceneSurface_2_QRobjBboxCenter, QRobjBboxCenter_2_QRobjBase)
+        return World_2_QRobjBase
+    
     
     def stable_placement_task_init(self):
         from ur5_robotiq_controller import UR5RobotiqPybulletController, load_ur_robotiq_robot
+        from robotiq_grasp_planner import RobotiqGraspPlanner
+        # TODO: Reload all the objects again
 
-        self.ingrasp_obj_name = "005_tomato_soup_can_0"
-        ingrasp_obj_file_info = self.obj_uni_names_dataset[self.ingrasp_obj_name]
-        ingrasp_obj_urdf_path, ingrasp_obj_label = ingrasp_obj_file_info["urdf"], ingrasp_obj_file_info["label"]
-        rand_basePosition, rand_baseOrientation = self.rng.uniform([-5, -5, 0.], [5, 5, 10]), p.getQuaternionFromEuler([self.rng.uniform(0., np.pi)]*3)
-        self.ingrasp_obj_id = self.loadURDF(
-            ingrasp_obj_urdf_path, 
-            basePosition=rand_basePosition, 
-            baseOrientation=rand_baseOrientation, 
-            globalScaling=ingrasp_obj_label["globalScaling"]
-        )  # Load an object at position [0, 0, 1]
-        self.ingrasp_obj_data = self.obj_name_data[self.ingrasp_obj_name]
-        pu.set_pose(body=self.ingrasp_obj_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
-        pu.set_mass(self.ingrasp_obj_id, 1., client_id=self.client_id)
-        pu.change_obj_color(self.obj_name_data[self.ingrasp_obj_name]["id"], rgba_color=[0, 0, 0., 0.3], client_id=self.client_id)
+        # pu.set_pose(body=self.ingrasp_obj_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        # pu.set_mass(self.ingrasp_obj_id, 1., client_id=self.client_id)
+        # pu.change_obj_color(self.obj_name_data[self.ingrasp_obj_name]["id"], rgba_color=[0, 0, 0., 0.3], client_id=self.client_id)
 
+        # Object prepared pose
+        self.sp_obj_prepared_center_pose = [[-0.5, 0., 0.5], [0., 0., 0., 1.]]
+        
         # Load the robot; We need to use relative pose for the robot later
         robot_id, urdf_path = load_ur_robotiq_robot(robot_initial_pose=[[-0.7, 0., 0.79], [0., 0., 0., 1.]], client_id=self.client_id)
         self.robot = UR5RobotiqPybulletController(robot_id, rng=None, client_id=self.client_id)
         self.robot.update_collision_check()
         self.robot.reset()
 
-        # Generate a top-down grasp pose for the object
-        self.ingrasp_obj_bbox = self.ingrasp_obj_data["bbox"]
-        grasp_insert = 0.02
-        z_half_extent = self.ingrasp_obj_bbox[9]
-        x_half_extent = self.ingrasp_obj_bbox[7]
+        # Grasp Planner
+        self.grasp_planner = RobotiqGraspPlanner()
 
-        gripper_face_direction = [0., 0., 1.]
-        self.objBase_2_objBbox = [self.ingrasp_obj_bbox[0:3], self.ingrasp_obj_bbox[3:7]]
-        self.objBbox_2_objBase = p.invertTransform(*self.objBase_2_objBbox)
-        grasp_pos_for_ingrasp_obj = [-(x_half_extent-grasp_insert), 0., 0.]
-        grasp_pos_for_ingrasp_obj = [0., 0., z_half_extent-grasp_insert]
-        grasp_direction_for_ingrasp_obj = [-v for v in grasp_pos_for_ingrasp_obj] # point to the object center
-        self.objBbox_2_grasppose = [grasp_pos_for_ingrasp_obj, pu.getQuaternionFromTwoVectors(gripper_face_direction, grasp_direction_for_ingrasp_obj)]
-        self.grasppose_2_objBbox = p.invertTransform(*self.objBbox_2_grasppose)
-        
         # Set the camera for data collection
         self.init_camera()
         self.stable_placement_reset()
@@ -971,32 +997,24 @@ class RoboSensaiBullet:
         self.robot.update_collision_check()
     
 
-    def get_scene_surface_points_cloud(self):
-        scene_pc = []
-        for cam_id, cam_info in self.cameras.items():
-            scene_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
-        
-        scene_pc = np.concatenate(scene_pc, axis=0)
-        scene_surface_pc = scene_pc[scene_pc[:, 2] >= self.tableHalfExtents[2] * 2]
-        return scene_surface_pc
-
-
-    def sp_compute_observation(self):
-        scene_surface_pc = self.get_scene_surface_points_cloud()
-        qr_obj_pc = self.obj_name_data[self.ingrasp_obj_name]["pc"]
-        return scene_surface_pc, qr_obj_pc
-    
-
-    def stable_placement_task_step(self, pred_qr_obj_pose=None, World_2_QRsceneSurface=None):
+    def stable_placement_task_step(self, qr_obj_name, placed_obj_poses, pred_qr_obj_pose=None, World_2_QRsceneSurface=None):
         if pred_qr_obj_pose is not None:
-            qr_obj_bbox = self.obj_name_data[self.ingrasp_obj_name]["bbox"]
+            qr_obj_bbox = self.obj_name_data[qr_obj_name]["bbox"]
             QRobjBboxCenter_2_QRobjBase = [-qr_obj_bbox[:3], [0., 0., 0., 1.]]
             World2Ingrasp_obj_BasePose = self.sp_convert_pred_qr_obj_pose(pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase, World_2_QRsceneSurface)
-        elif self.ingrasp_obj_name in self.placed_obj_poses.keys():
-            World2Ingrasp_obj_BasePose = self.placed_obj_poses[self.ingrasp_obj_name]
-            pu.set_pose(self.obj_name_data[self.ingrasp_obj_name]["id"], (self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
+        elif qr_obj_name in self.placed_obj_poses.keys():
+            World2Ingrasp_obj_BasePose = self.placed_obj_poses[qr_obj_name]
+            pu.set_pose(self.obj_name_data[qr_obj_name]["id"], (self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
         else:
             return True
+        
+        # Place the quried object to the prepared area
+        qr_obj_id = self.obj_name_data[qr_obj_name]["id"]
+        pu.set_pose(qr_obj_id, self.sp_obj_prepared_center_pose, client_id=self.client_id)
+        pu.fix_base(qr_obj_id, client_id=self.client_id)
+
+        # Place the other objects to the scene
+        self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=True)
         
         WorkWell = self.stable_placement_place_open_back(World2Ingrasp_obj_BasePose)
         if not WorkWell: return WorkWell
@@ -1007,22 +1025,6 @@ class RoboSensaiBullet:
         WorkWell = self.stable_placement_reach_close_back(World2Ingrasp_obj_BasePose)
         if not WorkWell: return WorkWell
         return True
-
-    
-    def sp_convert_pred_qr_obj_pose(self, pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase, World_2_QRsceneSurface=None):
-        if World_2_QRsceneSurface is None: # TODO: we need a function to directly compute the World_2_QRsceneSurface based on the scene name instead of id
-            # Get the World2QRsceneSurfaceCenter pose since our pred_qr_obj_pose is in the QRsceneSurfaceCenter frame
-            World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-            QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
-            World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
-            QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
-            World_2_QRsceneSurface = pu.multiply_multi_transforms(
-                World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
-            )
-        QRsceneSurface_2_QRobjBboxCenter = pu.split_7d(pred_qr_obj_pose.detach().cpu().squeeze())
-        World_2_QRobjBboxCenter = pu.multiply_multi_transforms(World_2_QRsceneSurface, QRsceneSurface_2_QRobjBboxCenter)
-        World_2_QRobjBase = pu.multiply_multi_transforms(World_2_QRobjBboxCenter, QRobjBboxCenter_2_QRobjBase)
-        return World_2_QRobjBase
 
 
     def stable_placement_reach_close_back(self, World2Ingrasp_obj_BasePose):
@@ -1215,14 +1217,13 @@ class RoboSensaiBullet:
 
     
     def stable_placement_eval_step(self, qr_obj_name, pred_qr_obj_pose, placed_obj_poses):
-        selected_obj_name = qr_obj_name
-        selected_obj_bbox = self.obj_name_data[selected_obj_name]["bbox"]
-        QRobjBboxCenter_2_QRobjBase = [-selected_obj_bbox[:3], [0., 0., 0., 1.]]
-
-        World_2_QRobjBase = self.sp_convert_pred_qr_obj_pose(pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase)
-        placed_obj_poses[qr_obj_name] = World_2_QRobjBase
-        stable_Flag = self.post_check_obj_stable(qr_obj_name, placed_obj_poses, reset_mass=True)
-        return stable_Flag
+        self.reset()
+        World_2_QRobjBase = self.sp_convert_pred_qr_obj_pose(qr_obj_name, pred_qr_obj_pose)
+        placed_obj_poses_copy = placed_obj_poses.copy()
+        placed_obj_poses_copy[qr_obj_name] = World_2_QRobjBase
+        stable_Flag = self.post_check_scene_stable(placed_obj_poses_copy, reset_mass=True)
+        # stable_Flag = self.post_check_obj_stable(qr_obj_name, placed_obj_poses_copy, reset_mass=True)
+        return stable_Flag, World_2_QRobjBase
 
     
     ######################################

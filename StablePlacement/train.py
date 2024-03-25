@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
     parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
+    parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
     parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
@@ -51,12 +52,14 @@ def parse_args():
 
     # Specify the manual setting
     if args.use_simulator:
-        args.val_sim_epochs = args.val_epochs * 10
+        args.val_sim_epochs = args.val_epochs
     
     # Specify the final name of the model
     timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
     args.final_name = args.env_name + timer
-    if args.use_beta:
+    if args.random_policy:
+        args.final_name += '_RandomPolicy'
+    elif args.use_beta:
         args.final_name += '_Beta'
     elif args.use_normal:
         args.final_name += '_Normal'
@@ -95,7 +98,7 @@ else:
 
 sp_val_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate, num_workers=4)
 if args.use_simulator:
-    sp_sim_dataloader = DataLoader(HDF5Dataset(train_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
+    sp_sim_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
 # Create the model
 if args.use_beta:
@@ -111,7 +114,7 @@ if args.use_simulator:
     from RoboSensai_bullet import RoboSensaiBullet
     from PPO.PPO_continuous_sg import Agent, update_tensor_buffer
     from utils import combine_envs_float_info2list
-    import pybullet_utils as pu
+    import pybullet_utils_cust as pu
     # If use the simulator, we need to specify the .json name
     args.env_json_path = os.path.join("eval_res", args.object_pool_name, "Json", args.env_json_name+'.json')
     assert os.path.exists(args.env_json_path), f"Json file for create envs\n {args.env_json_path}\n does not exist"
@@ -142,42 +145,44 @@ if args.collect_data and args.wandb:
 best_val_loss = float('inf')
 best_sim_success_rate = 0
 for epoch in range(1, args.epochs+1):
+    model.train()
     # Learning rate decay; Linear Schedular
     optimizer.param_groups[0]['lr'] = args.lr * (1 - epoch / args.epochs)
 
     pose_loss_record = 0; pos_loss_record = 0; quat_loss_record = 0; entropy_record = 0
-    for batch in tqdm(sp_train_dataloader, desc=f'Epoch {epoch}/{args.epochs} Training'):
-        scene_pc = batch['scene_pc'].to(device)
-        qr_obj_pc = batch['qr_obj_pc'].to(device)
-        qr_obj_pose = batch['qr_obj_pose'].to(device)
-        # Forward pass
-        pred_pose, entropy = model(scene_pc, qr_obj_pc)
-        # Compute loss
-        pos_loss = mse_loss(pred_pose[:, :3], qr_obj_pose[:, :3])
-        quat_loss = mse_loss(pred_pose[:, 3:], qr_obj_pose[:, 3:])
-        if entropy is None:
-            entropy = torch.zeros_like(pos_loss, requires_grad=False)
-        entropy_loss = -entropy.mean()
-        
-        if args.weighted_loss:
-            # Weighted loss to balance the position and quaternion loss
-            loss_sum = pos_loss.item() + quat_loss.item()
-            weight_pos_loss = quat_loss.item() / (loss_sum + 1e-8)
-            weight_quat_loss = pos_loss.item() / (loss_sum + 1e-8)
-        else:
-            weight_pos_loss = 1
-            weight_quat_loss = 1
+    if not args.random_policy:
+        for batch in tqdm(sp_train_dataloader, desc=f'Epoch {epoch}/{args.epochs} Training'):
+            scene_pc = batch['scene_pc'].to(device)
+            qr_obj_pc = batch['qr_obj_pc'].to(device)
+            qr_obj_pose = batch['qr_obj_pose'].to(device)
+            # Forward pass
+            pred_pose, entropy = model(scene_pc, qr_obj_pc)
+            # Compute loss
+            pos_loss = mse_loss(pred_pose[:, :3], qr_obj_pose[:, :3])
+            quat_loss = mse_loss(pred_pose[:, 3:], qr_obj_pose[:, 3:])
+            if entropy is None:
+                entropy = torch.zeros_like(pos_loss, requires_grad=False)
+            entropy_loss = -entropy.mean()
+            
+            if args.weighted_loss:
+                # Weighted loss to balance the position and quaternion loss
+                loss_sum = pos_loss.item() + quat_loss.item()
+                weight_pos_loss = quat_loss.item() / (loss_sum + 1e-8)
+                weight_quat_loss = pos_loss.item() / (loss_sum + 1e-8)
+            else:
+                weight_pos_loss = 1
+                weight_quat_loss = 1
 
-        loss = weight_pos_loss * pos_loss + weight_quat_loss * quat_loss + args.ent_coef * entropy_loss
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        # Record loss
-        pose_loss_record += pos_loss.item() + quat_loss.item()
-        pos_loss_record += pos_loss.item()
-        quat_loss_record += quat_loss.item()
-        entropy_record += -entropy_loss.item()
+            loss = weight_pos_loss * pos_loss + weight_quat_loss * quat_loss + args.ent_coef * entropy_loss
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            # Record loss
+            pose_loss_record += pos_loss.item() + quat_loss.item()
+            pos_loss_record += pos_loss.item()
+            quat_loss_record += quat_loss.item()
+            entropy_record += -entropy_loss.item()
     pose_loss_record /= len(sp_train_dataloader)
     pos_loss_record /= len(sp_train_dataloader)
     quat_loss_record /= len(sp_train_dataloader)
@@ -185,6 +190,7 @@ for epoch in range(1, args.epochs+1):
     
     if epoch % args.val_epochs == 0:
         val_loss = 0; val_pos_loss = 0; val_quat_loss = 0; sim_success_rate = 0
+        model.eval()
         with torch.no_grad():
             for batch in tqdm(sp_val_dataloader, desc=f'Epoch {epoch} Validation'):
                 scene_pc = batch['scene_pc'].to(device)
@@ -208,7 +214,6 @@ for epoch in range(1, args.epochs+1):
                     if eval_index >= eval_trials:
                         break
                     ################ agent evaluation ################
-                    envs.reset()
                     sp_placed_obj_poses = sim_batch['World2PlacedObj_poses'][0]
                     for obj_name, obj_pose in sp_placed_obj_poses.items():
                         sp_placed_obj_poses[obj_name] = pu.split_7d(obj_pose)
@@ -220,7 +225,7 @@ for epoch in range(1, args.epochs+1):
 
                     qr_obj_name = sim_batch['qr_obj_name'][0]
                     # Use qr_obj_pose to test the success rate is correct or not
-                    success = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
+                    success, _ = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
                     success_sum += success
                         
                 sim_success_rate = success_sum / eval_index

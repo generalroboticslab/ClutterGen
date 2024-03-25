@@ -1,6 +1,6 @@
 import numpy as np
 from math import ceil
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 from UR5_related.RRT.rrt import rrt
 from UR5_related.RRT.rrt_star import rrt_star, rrt_star_connect
 from UR5_related.RRT.rrt_connect import birrt, NODE_T

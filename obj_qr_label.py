@@ -3,7 +3,7 @@ import pybullet_data
 import json
 import os
 import shutil
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 from numpy import pi
 import numpy as np
 from utils import get_on_bbox, get_in_bbox

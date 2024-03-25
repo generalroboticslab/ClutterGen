@@ -14,8 +14,8 @@ import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, Subset
 
-from utils import read_dataset_recursively, se3_transform_pc
-import pybullet_utils as pu
+from utils import read_dataset_recursively, se3_transform_pc, save_json
+import pybullet_utils_cust as pu
 
 
 def split_dataset(hdf5_filename, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, random_select=True):
@@ -65,6 +65,63 @@ def create_subset_dataset(dataset, subset_ratio: float):
     subset_size = int(full_dataset_size * subset_ratio)
     subset_indices = indices[:subset_size]
     return Subset(dataset, subset_indices)
+
+
+def compute_dataset_distribution(dataloader):
+    # Assuming dataloader is a DataLoader object
+    # Two important metrics: 
+    dataset_distribution = {
+        "num_objs_on_qr_scene": {},
+        "num_times_obj_get_qr": {},
+    }
+
+    for batch in dataloader:
+        World2PlacedObj_poses = batch['World2PlacedObj_poses']
+        qr_obj_names = batch['qr_obj_name']
+        for i in range(len(World2PlacedObj_poses)):
+            num_objs_on_qr_scene = len(World2PlacedObj_poses[i])
+            if num_objs_on_qr_scene not in dataset_distribution["num_objs_on_qr_scene"]:
+                dataset_distribution["num_objs_on_qr_scene"][num_objs_on_qr_scene] = 0
+            dataset_distribution["num_objs_on_qr_scene"][num_objs_on_qr_scene] += 1
+
+            qr_obj_name = qr_obj_names[i]
+            if qr_obj_name not in dataset_distribution["num_times_obj_get_qr"]:
+                dataset_distribution["num_times_obj_get_qr"][qr_obj_name] = 0
+            dataset_distribution["num_times_obj_get_qr"][qr_obj_name] += 1
+
+    return dataset_distribution
+
+
+def analyze_dataset_miscs(train_dataset_path, val_dataset_path=None, test_dataset_path=None, save_misc=True):
+    dataset_dsitributions = {}
+    dataset_folder = os.path.dirname(train_dataset_path)
+    
+    if train_dataset_path:
+        train_dataset = HDF5Dataset(train_dataset_path)
+        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False, collate_fn=custom_collate)
+        train_dataset_distribution = compute_dataset_distribution(train_dataloader)
+        train_dataset.close()
+        dataset_dsitributions["train"] = train_dataset_distribution
+
+    if val_dataset_path:
+        val_dataset = HDF5Dataset(val_dataset_path)
+        val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=custom_collate)
+        val_dataset_distribution = compute_dataset_distribution(val_dataloader)
+        val_dataset.close()
+        dataset_dsitributions["val"] = val_dataset_distribution
+
+    if test_dataset_path:
+        test_dataset = HDF5Dataset(test_dataset_path)
+        test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, collate_fn=custom_collate)
+        test_dataset_distribution = compute_dataset_distribution(test_dataloader)
+        test_dataset.close()
+        dataset_dsitributions["test"] = test_dataset_distribution
+
+    if save_misc:
+        # Save the dataset distributions
+        save_json(dataset_dsitributions, os.path.join(dataset_folder, "dataset_distributions.json"))
+
+    return dataset_dsitributions
 
 
 class HDF5Dataset(Dataset):
@@ -117,10 +174,16 @@ def custom_collate(batch):
 
 if __name__=="__main__":
     dataset_path = "StablePlacement/SP_Dataset/table_10_group0_dinning_table.h5"
-    split_dataset(dataset_path, random_select=True)
+    # split_dataset(dataset_path, random_select=True)
     
     from utils import read_h5py_mem
     train_dataset_path = dataset_path.replace('.h5', '_train.h5')
+    val_dataset_path = dataset_path.replace('.h5', '_val.h5')
+    test_dataset_path = dataset_path.replace('.h5', '_test.h5')
+    assert os.path.exists(train_dataset_path), f"File not found: {train_dataset_path}"
+    assert os.path.exists(val_dataset_path), f"File not found: {val_dataset_path}"
+    assert os.path.exists(test_dataset_path), f"File not found: {test_dataset_path}"
+
     train_dataset = read_h5py_mem(train_dataset_path)
 
     Dataset = HDF5Dataset(train_dataset_path)
@@ -128,3 +191,4 @@ if __name__=="__main__":
     sp_train_dataloader = iter(sp_train_dataloader)
     batch = next(sp_train_dataloader)
 
+    dataset_dsitributions = analyze_dataset_miscs(train_dataset_path, val_dataset_path, test_dataset_path, save_misc=True)

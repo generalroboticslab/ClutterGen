@@ -690,6 +690,10 @@ def set_mass(body, mass, link=BASE_LINK, client_id=0):
     p.changeDynamics(body, link, mass=mass, physicsClientId=client_id)
 
 
+def fix_base(body, client_id=0):
+    set_mass(body, STATIC_MASS, BASE_LINK, client_id=client_id)
+
+
 def get_joint_inertial_pose(body, joint):
     dynamics_info = get_dynamics_info(body, joint)
     return dynamics_info.local_inertial_pos, dynamics_info.local_inertial_orn

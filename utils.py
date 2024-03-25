@@ -97,6 +97,13 @@ def dict2list(diction):
     return key_list, value_list
 
 
+def sorted_dict(dictionary):
+    for k, v in dictionary.items():
+        if isinstance(v, dict):
+            dictionary[k] = dict(sorted(v.items()))
+    return dictionary
+
+
 def get_on_bbox(bbox, z_half_extend:float):
     # scene_center_pos is the relative translation from the scene object's baselink to the center of the scene object's bounding box
     # All bbox given should be in the center frame (baselink is at the origin when import the urdf)
@@ -331,3 +338,17 @@ def se3_transform_pc(t, q, pc):
     t = t.repeat(pc_shape[0], axis=0)
     q = q.repeat(pc_shape[0], axis=0)
     return quat_apply(q, pc) + t
+
+
+# Stable Placement
+def generate_table(records, success_rate_name, success_rate_counts_name, table_name=None):
+    success_misc = [
+        [table_name]+[""]*(len(records[success_rate_name])),
+        ["Num Objs in QR Scene"]+list(records[success_rate_name].keys()),
+        ["Success Rate"]+list(
+            map(lambda x: f"{x:.4f}" if isinstance(x, float) else x, 
+                records[success_rate_name].values())
+        ),
+        ["Num Data Point"]+list(records[success_rate_counts_name].values()),
+    ]
+    return success_misc

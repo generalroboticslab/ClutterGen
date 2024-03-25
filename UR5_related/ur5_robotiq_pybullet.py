@@ -8,7 +8,7 @@ import math
 import os
 import time
 
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 
 
 from ikfastpy import ikfastpy

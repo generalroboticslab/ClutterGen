@@ -4,7 +4,7 @@ from collections import namedtuple
 import pybullet as p
 import numpy as np
 from copy import deepcopy
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 import pybullet_data
 from UR5_related.RRT.RRTPlan import RRTPlanner
 from ikfastpy import ikfastpy
