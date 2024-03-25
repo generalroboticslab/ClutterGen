@@ -70,11 +70,6 @@ def get_args():
     parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
     parser.add_argument('--seed', type=int, default=123456, help='Contact force noise range')
 
-    # Granular Media
-    parser.add_argument('--add_gms', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add Granular Media')
-    parser.add_argument('--add_sides_shelf', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add bucket for Granular Media')
-    parser.add_argument('--num_gms', type=int, default=1000)
-
     # RoboSensai Bullet parameters
     # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
     # parser.add_argument('--max_num_placing_objs', type=int, default=1)
@@ -98,7 +93,6 @@ def get_args():
     parser.add_argument('--change_table_size', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
     # Downstream task1 stable placement parameters
-    parser.add_argument('--stable_placement', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--sp_data_collection', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='collect stable placement data')
     parser.add_argument('--sp_num_data', type=int, default=10000, help='collect stable placement data for certain episodes')
 
