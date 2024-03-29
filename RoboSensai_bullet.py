@@ -240,8 +240,10 @@ class RoboSensaiBullet:
             self.pybullet_recorder = PyBulletRecorder(client_id=self.client_id)
         
         # Only for evaluation
-        if self.args.eval_result and hasattr(self.args, "use_robot_sp") and self.args.use_robot_sp:
+        if self.args.eval_result:
             self.stable_placement_task_init()
+            if  hasattr(self.args, "use_robot_sp") and self.args.use_robot_sp:
+                self.stable_placement_task_robot_init()
 
 
     def post_checker(self, verbose=False):
@@ -414,13 +416,6 @@ class RoboSensaiBullet:
             # TODO: Check whether this kind of curriculu will overfitting training or not.
             if self.args.random_select_placing:
                 self.rng.shuffle(self.unplaced_objs_name)
-            
-            # Only for evaluation
-            if self.args.eval_result and hasattr(self.args, "use_robot_sp") and self.args.use_robot_sp:
-                # Move the stable queried object to the end of the list
-                assert self.ingrasp_obj_name in self.unplaced_objs_name, f"Stable queried object {self.ingrasp_obj_name} is not in the unplaced list!"
-                self.unplaced_objs_name.remove(self.ingrasp_obj_name)
-                self.unplaced_objs_name.append(self.ingrasp_obj_name)
 
 
     def update_unquery_scenes(self):
@@ -718,11 +713,12 @@ class RoboSensaiBullet:
         return done
     
 
-    def post_check_scene_stable(self, placed_obj_poses=None, reset_mass=False):
+    def post_check_scene_stable(self, placed_obj_poses=None, re_place_obj=True, reset_mass=False):
         # We need to check the stability of the placement
         # The object should be stable for 50 steps
         placed_obj_poses = self.placed_obj_poses if placed_obj_poses is None else placed_obj_poses
-        self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=reset_mass)
+        if re_place_obj:
+            self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=reset_mass)
         continue_stable_steps = np.zeros(len(placed_obj_poses), dtype=self.numpy_dtype)
         stabability_record = np.zeros(len(placed_obj_poses), dtype=self.numpy_dtype)
         prev_obj_vel = np.zeros((len(placed_obj_poses), 6), dtype=self.numpy_dtype)
@@ -748,13 +744,14 @@ class RoboSensaiBullet:
         return False
     
 
-    # Only for stableplacement evaluation
-    def post_check_obj_stable(self, specific_obj_name, placed_obj_poses=None, reset_mass=False):
+    # Only for stable placement evaluation
+    def post_check_obj_stable(self, specific_obj_name, placed_obj_poses=None, re_place_obj=True, reset_mass=False):
         # We need to check the stability of the placement
         # The object should be stable for 50 steps
         placed_obj_poses = self.placed_obj_poses if placed_obj_poses is None else placed_obj_poses
         assert specific_obj_name in placed_obj_poses.keys(), f"Specific object {specific_obj_name} is not in the placed object list!"
-        self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=reset_mass)
+        if re_place_obj:
+            self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=reset_mass)
         continue_stable_steps = 0
         prev_obj_vel = np.zeros(6, dtype=self.numpy_dtype)
         
@@ -883,179 +880,225 @@ class RoboSensaiBullet:
     ####### Stable Placement Task ########
     ######################################
     def init_camera(self):
-        self.cameras = {}
+        self.scene_cameras = {}
+        self.obj_cameras = {}
         self.width = 224  # Width of the depth image
         self.height = 224  # Height of the depth image
         fov = 60  # Field of view in degrees
         aspect = self.width / self.height  # Aspect ratio
         near = 0.02  # Near clipping plane
         far = 5.0  # Far clipping plane
-
         projection_matrix = p.computeProjectionMatrixFOV(fov=fov, aspect=aspect, nearVal=near, farVal=far)
+
         tableheight = self.tableHalfExtents[2] * 2
-        camera_height = 0.3 + tableheight
+        scene_camera_height = 0.3 + tableheight
+        obj_camera_height = 0.2 + self.sp_obj_prepared_World2Center_pose[0][2]
         
-        camera_view_matrix_1 = pu.compute_camera_matrix([self.tableHalfExtents[0]*2, 0., camera_height], [0, 0, tableheight])
-        camera_view_matrix_2 = pu.compute_camera_matrix([0, self.tableHalfExtents[1]*2, camera_height], [0, 0, tableheight])
-        camera_view_matrix_3 = pu.compute_camera_matrix([-self.tableHalfExtents[0]*2, 0., camera_height], [0, 0, tableheight])
-        camera_view_matrix_4 = pu.compute_camera_matrix([0, -self.tableHalfExtents[1]*2, camera_height], [0, 0, tableheight])
-        self.cameras[0] = {"viewMatrix": camera_view_matrix_1, "projectionMatrix": projection_matrix}
-        self.cameras[1] = {"viewMatrix": camera_view_matrix_2, "projectionMatrix": projection_matrix}
-        self.cameras[2] = {"viewMatrix": camera_view_matrix_3, "projectionMatrix": projection_matrix}
-        self.cameras[3] = {"viewMatrix": camera_view_matrix_4, "projectionMatrix": projection_matrix}
+        camera_view_matrix_1 = pu.compute_camera_matrix([self.tableHalfExtents[0]*2, 0., scene_camera_height], [0, 0, tableheight])
+        camera_view_matrix_2 = pu.compute_camera_matrix([0, self.tableHalfExtents[1]*2, scene_camera_height], [0, 0, tableheight])
+        camera_view_matrix_3 = pu.compute_camera_matrix([-self.tableHalfExtents[0]*2, 0., scene_camera_height], [0, 0, tableheight])
+        camera_view_matrix_4 = pu.compute_camera_matrix([0, -self.tableHalfExtents[1]*2, scene_camera_height], [0, 0, tableheight])
+        self.scene_cameras[0] = {"viewMatrix": camera_view_matrix_1, "projectionMatrix": projection_matrix}
+        self.scene_cameras[1] = {"viewMatrix": camera_view_matrix_2, "projectionMatrix": projection_matrix}
+        self.scene_cameras[2] = {"viewMatrix": camera_view_matrix_3, "projectionMatrix": projection_matrix}
+        self.scene_cameras[3] = {"viewMatrix": camera_view_matrix_4, "projectionMatrix": projection_matrix}
 
-    
-    def get_camera_image(self):
-        width, height, rgbImg, depthImg, segImg = p.getCameraImage(
-            width=224, height=224, 
-            viewMatrix=self.camera_view_matrix, 
-            renderer=p.ER_BULLET_HARDWARE_OPENGL, 
-            flags=p.ER_NO_SEGMENTATION_MASK,
-            physicsClientId=self.client_id)
-        return rgbImg, depthImg, segImg
+        obj_cam_offset = 0.3
+        obj_camera_view_matrix_1 = pu.compute_camera_matrix([self.sp_obj_prepared_World2Center_pose[0][0]-obj_cam_offset, 
+                                                             self.sp_obj_prepared_World2Center_pose[0][1], 
+                                                             obj_camera_height], self.sp_obj_prepared_World2Center_pose[0])
+        obj_camera_view_matrix_2 = pu.compute_camera_matrix([self.sp_obj_prepared_World2Center_pose[0][0]+obj_cam_offset, 
+                                                             self.sp_obj_prepared_World2Center_pose[0][1], 
+                                                             obj_camera_height], self.sp_obj_prepared_World2Center_pose[0])
+        self.obj_cameras[0] = {"viewMatrix": obj_camera_view_matrix_1, "projectionMatrix": projection_matrix}
+        self.obj_cameras[1] = {"viewMatrix": obj_camera_view_matrix_2, "projectionMatrix": projection_matrix}
     
 
-    def get_scene_surface_points_cloud(self):
+    def get_scene_points_cloud(self, camera_scan=True):
         scene_pc = []
-        for cam_id, cam_info in self.cameras.items():
+        for cam_id, cam_info in self.scene_cameras.items():
             scene_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
-        
         scene_pc = np.concatenate(scene_pc, axis=0)
-        scene_surface_pc = scene_pc[scene_pc[:, 2] >= self.tableHalfExtents[2] * 2]
-        return scene_surface_pc
+        return scene_pc
     
 
-    def get_qr_obj_points_cloud(self, qr_obj_name, camera_scan=False):
-        if camera_scan:
-            qr_obj_pc = []
-            for cam_id, cam_info in self.cameras.items():
-                qr_obj_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
-            qr_obj_pc = np.concatenate(qr_obj_pc, axis=0)
-        else:
-            qr_obj_pc = self.obj_name_data[qr_obj_name]["pc"]
+    def get_qr_obj_points_cloud(self, camera_scan=True):
+        qr_obj_pc = []
+        for cam_id, cam_info in self.obj_cameras.items():
+            qr_obj_pc.append(pu.get_pc_from_camera(self.width, self.height, cam_info["viewMatrix"], cam_info["projectionMatrix"], client_id=self.client_id))
+        qr_obj_pc = np.concatenate(qr_obj_pc, axis=0)
         return qr_obj_pc
+    
+
+    def crop_pc(self, pc, low_up_bbox):
+        # Crop the points cloud based on the bbox
+        # Both are in the world frame
+        low_bound, up_bound = low_up_bbox
+        mask = np.all((pc >= low_bound) & (pc <= up_bound), axis=1)
+        pc = pc[mask]
+        return pc
 
 
     def sp_compute_observation(self, qr_obj_name, camera_scan=False):
-        qr_obj_pc = self.get_qr_obj_points_cloud(qr_obj_name=qr_obj_name, camera_scan=camera_scan)
-        scene_surface_pc = self.get_scene_surface_points_cloud()
+        qr_obj_pc = self.get_qr_obj_points_cloud()
+        scene_surface_pc = self.get_scene_points_cloud()
         return scene_surface_pc, qr_obj_pc
     
 
-    def sp_convert_pred_qr_obj_pose(self, qr_obj_name, pred_qr_obj_pose, World_2_QRsceneSurface=None):
-        if World_2_QRsceneSurface is None: # TODO: we need a function to directly compute the World_2_QRsceneSurface based on the scene name instead of id
-            # Get the World2QRsceneSurfaceCenter pose since our pred_qr_obj_pose is in the QRsceneSurfaceCenter frame
-            World_2_QRsceneBase = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-            QRsceneBase_2_QRsceneCenter = self.selected_qr_scene_bbox
-            World_2_QRsceneCenter = p.multiplyTransforms(World_2_QRsceneBase[0], World_2_QRsceneBase[1], QRsceneBase_2_QRsceneCenter[:3], QRsceneBase_2_QRsceneCenter[3:7])
-            QRsceneCenter_2_QRsceneSurfaceCenter = [[0., 0., self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
-            World_2_QRsceneSurface = pu.multiply_multi_transforms(
-                World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
-            )
-        selected_obj_bbox = self.obj_name_data[qr_obj_name]["bbox"]
-        QRobjBboxCenter_2_QRobjBase = [-selected_obj_bbox[:3], [0., 0., 0., 1.]]
-        QRsceneSurface_2_QRobjBboxCenter = pu.split_7d(pred_qr_obj_pose.detach().cpu().squeeze())
-        World_2_QRobjBase = pu.multiply_multi_transforms(World_2_QRsceneSurface, QRsceneSurface_2_QRobjBboxCenter, QRobjBboxCenter_2_QRobjBase)
-        return World_2_QRobjBase
+    def sp_convert_pred_qr_obj_pose(self, qr_obj_name, pred_qr_obj_pose):
+        QRsceneSurface_2_QRobjBboxCenter = pu.split_7d(pred_qr_obj_pose.squeeze().detach().cpu().numpy())
+        World_2_QRobjBboxCenter = pu.multiply_multi_transforms(self.World2tableSurfaceCenter, QRsceneSurface_2_QRobjBboxCenter)
+        return World_2_QRobjBboxCenter
     
     
     def stable_placement_task_init(self):
-        from ur5_robotiq_controller import UR5RobotiqPybulletController, load_ur_robotiq_robot
-        from robotiq_grasp_planner import RobotiqGraspPlanner
-        # TODO: Reload all the objects again
+        # Table Pose
+        self.table_base_pose = pu.get_body_pose(self.fixed_scene_name_data["table"]["id"], client_id=self.client_id)
+        TableBase2TableCenter = pu.split_7d(self.fixed_scene_name_data["table"]["bbox"][:7])
+        self.sp_tableHalfExtents = self.fixed_scene_name_data["table"]["bbox"][7:]
+        TableCenter2TableSurfaceCenter = [[0., 0., self.sp_tableHalfExtents[2]], [0., 0., 0., 1.]]
+        self.World2tableSurfaceCenter = pu.multiply_multi_transforms(self.table_base_pose, TableBase2TableCenter, TableCenter2TableSurfaceCenter)
 
-        # pu.set_pose(body=self.ingrasp_obj_id, pose=(self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
-        # pu.set_mass(self.ingrasp_obj_id, 1., client_id=self.client_id)
-        # pu.change_obj_color(self.obj_name_data[self.ingrasp_obj_name]["id"], rgba_color=[0, 0, 0., 0.3], client_id=self.client_id)
+    
+    def stable_placement_task_robot_init(self):
+        from UR5_related.ur5_robotiq_pybullet import UR5RobotiqPybulletController, load_ur_robotiq_robot
+        from UR5_related.robotiq_grasp_planner import RobotiqGraspPlanner
 
-        # Object prepared pose
-        self.sp_obj_prepared_center_pose = [[-0.5, 0., 0.5], [0., 0., 0., 1.]]
-        
         # Load the robot; We need to use relative pose for the robot later
-        robot_id, urdf_path = load_ur_robotiq_robot(robot_initial_pose=[[-0.7, 0., 0.79], [0., 0., 0., 1.]], client_id=self.client_id)
+        self.robot_initial_pose = [[-0.7, 0., 0.79], [0., 0., 0., 1.]]
+        robot_id, urdf_path = load_ur_robotiq_robot(robot_initial_pose=self.robot_initial_pose, client_id=self.client_id)
         self.robot = UR5RobotiqPybulletController(robot_id, rng=None, client_id=self.client_id)
         self.robot.update_collision_check()
         self.robot.reset()
+
+        # Object prepared pose
+        self.sp_obj_prepared_World2Center_pose = [[self.robot_initial_pose[0][0]+0.1, 0.6, 0.9], [0., 0., 0., 1.]]
 
         # Grasp Planner
         self.grasp_planner = RobotiqGraspPlanner()
 
         # Set the camera for data collection
         self.init_camera()
+        self.compute_crop_region()
         self.stable_placement_reset()
+
+        # Grasp Pose Initial
+        self.grasp_pose_id = None
+
+    
+    def compute_crop_region(self):
+        # Compute the crop region based on the table pose
+        TableBase2LowerBound = [-self.sp_tableHalfExtents[0], -self.sp_tableHalfExtents[1], self.sp_tableHalfExtents[2]]
+        TableBase2UpperBound = [self.sp_tableHalfExtents[0], self.sp_tableHalfExtents[1], 3.]
+        World2TableCropLowerBound = pu.multiply_multi_transforms(self.table_base_pose, [TableBase2LowerBound, [0., 0., 0., 1.]])[0]
+        World2TableCropUpperBound = pu.multiply_multi_transforms(self.table_base_pose, [TableBase2UpperBound, [0., 0., 0., 1.]])[0]
+        self.World2SceneCropRegion = [self.to_numpy(World2TableCropLowerBound), self.to_numpy(World2TableCropUpperBound)]
+        # Compute the crop region based on the object prepared pose
+        PreparedObjBase2LowerrBound = [-0.15, -0.15, 0.]
+        PreparedObjBase2UpperBound = [0.15, 0.15, 0.5]
+        World2PreparedObjCropLowerBound = pu.multiply_multi_transforms(self.sp_obj_prepared_World2Center_pose, [PreparedObjBase2LowerrBound, [0., 0., 0., 1.]])[0]
+        World2PreparedObjCropUpperBound = pu.multiply_multi_transforms(self.sp_obj_prepared_World2Center_pose, [PreparedObjBase2UpperBound, [0., 0., 0., 1.]])[0]
+        self.World2ObjCropRegion = [self.to_numpy(World2PreparedObjCropLowerBound), self.to_numpy(World2PreparedObjCropUpperBound)]
 
 
     def stable_placement_reset(self):
         self.robot.reset()
-        World2grasppose = self.robot.get_eef_grasp_pose()
-        World2graspObjBase = pu.multiply_multi_transforms(World2grasppose, self.grasppose_2_objBbox, self.objBbox_2_objBase)
-        pu.set_pose(self.ingrasp_obj_id, World2graspObjBase, client_id=self.client_id)
-        # Close the gripper
-        close_gripper = self.robot.plan_gripper_joint_values(self.robot.CLOSED_POSITION)
-        self.robot.attach_object(self.ingrasp_obj_id)
-        self.robot.execute_gripper_plan(close_gripper, realtime=self.args.realtime)
+        # Open the gripper
+        self.robot.open_gripper()
         self.robot.update_collision_check()
     
 
-    def stable_placement_task_step(self, qr_obj_name, placed_obj_poses, pred_qr_obj_pose=None, World_2_QRsceneSurface=None):
-        if pred_qr_obj_pose is not None:
-            qr_obj_bbox = self.obj_name_data[qr_obj_name]["bbox"]
-            QRobjBboxCenter_2_QRobjBase = [-qr_obj_bbox[:3], [0., 0., 0., 1.]]
-            World2Ingrasp_obj_BasePose = self.sp_convert_pred_qr_obj_pose(pred_qr_obj_pose, QRobjBboxCenter_2_QRobjBase, World_2_QRsceneSurface)
-        elif qr_obj_name in self.placed_obj_poses.keys():
-            World2Ingrasp_obj_BasePose = self.placed_obj_poses[qr_obj_name]
-            pu.set_pose(self.obj_name_data[qr_obj_name]["id"], (self.rng.uniform(*self.prepare_area), [0., 0., 0., 1.]), client_id=self.client_id)
-        else:
-            return True
-        
+    def stable_placement_compute_observation(self, qr_obj_name, placed_obj_poses, camera_scan=False):
         # Place the quried object to the prepared area
         qr_obj_id = self.obj_name_data[qr_obj_name]["id"]
-        pu.set_pose(qr_obj_id, self.sp_obj_prepared_center_pose, client_id=self.client_id)
+        Obj_Center2Base_pose = self.get_obj_center2base_pose(qr_obj_name)
+        Obj_half_extents = self.get_obj_half_extents(qr_obj_name)
+        InitWorld2ObjCenter_pose = deepcopy(self.sp_obj_prepared_World2Center_pose)
+        InitWorld2ObjCenter_pose[0][2] += Obj_half_extents[2]
+        pu.set_center_pose(qr_obj_id, InitWorld2ObjCenter_pose, Obj_Center2Base_pose, client_id=self.client_id)
         pu.fix_base(qr_obj_id, client_id=self.client_id)
-
         # Place the other objects to the scene
         self.re_place_placed_obj_poses(placed_obj_poses=placed_obj_poses, reset_mass=True)
+        World2Scene_pc, World2Qr_obj_pc = self.sp_compute_observation(qr_obj_name=qr_obj_name, camera_scan=camera_scan)
+        scene_surface_pc = self.crop_pc(World2Scene_pc, self.World2SceneCropRegion)
+        qr_obj_pc = self.crop_pc(World2Qr_obj_pc, self.World2ObjCropRegion)
+        # Transform the scene points cloud to the table surface center frame
+        TableSurfaceCenter2World = p.invertTransform(*self.World2tableSurfaceCenter)
+        TableSurfaceCenter2ScenePC = se3_transform_pc(*TableSurfaceCenter2World, scene_surface_pc)
+        self.scene_surface_pc = scene_surface_pc
         
-        WorkWell = self.stable_placement_place_open_back(World2Ingrasp_obj_BasePose)
-        if not WorkWell: return WorkWell
-        self.get_camera_image()
-        if self.args.rendering:
-            time.sleep(2.)
-        World2Ingrasp_obj_BasePose = pu.get_body_pose(self.ingrasp_obj_id, client_id=self.client_id)
-        WorkWell = self.stable_placement_reach_close_back(World2Ingrasp_obj_BasePose)
-        if not WorkWell: return WorkWell
+        qr_obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(qr_obj_pc)
+        self.World2QrobjCenter_pose = pu.split_7d(qr_obj_bbox[:7])
+        QrobjCenter2World_pose = p.invertTransform(*self.World2QrobjCenter_pose)
+        ObjCenter2ObjPC = se3_transform_pc(*QrobjCenter2World_pose, qr_obj_pc)
+        ObjCenter2ObjPC = self.obj_name_data[qr_obj_name]["pc"]
+        # # Compute the object grasp pose
+        # pu.visualize_pc(ObjCenter2ObjPC)
+        self.ObjCenter2PreGripperBase_pose, self.ObjCenter2GripperBase_pose = self.grasp_planner.plan_grasps(ObjCenter2ObjPC, qr_obj_bbox[7:])
+        return TableSurfaceCenter2ScenePC, ObjCenter2ObjPC
+    
+    
+    def stable_placement_task_step(self, qr_obj_name, pred_qr_obj_pose, placed_obj_poses):
+        placed_obj_poses[qr_obj_name] = None # Add the qr_obj_name to the placed_obj_poses but we do not need its pose
+        World2QRobjGripperBase_pose = pu.multiply_multi_transforms(self.World2QrobjCenter_pose, self.ObjCenter2GripperBase_pose)
+        World2QRobjPreGripperBase_pose = pu.multiply_multi_transforms(self.World2QrobjCenter_pose, self.ObjCenter2PreGripperBase_pose)
+        World2QRobjGoalCenter_pose = self.sp_convert_pred_qr_obj_pose(qr_obj_name, pred_qr_obj_pose)
+        World2QRobjGoalGripperBase_pose = pu.multiply_multi_transforms(World2QRobjGoalCenter_pose, self.ObjCenter2GripperBase_pose)
+
+        WorkWell = self.stable_placement_reach_close_back(qr_obj_name, World2QRobjPreGripperBase_pose, World2QRobjGripperBase_pose)
+        if not WorkWell: return False
+
+        WorkWell = self.stable_placement_place_open_back(qr_obj_name, World2QRobjGoalGripperBase_pose, placed_obj_poses=placed_obj_poses)
+        if not WorkWell: return False
+
         return True
 
 
-    def stable_placement_reach_close_back(self, World2Ingrasp_obj_BasePose):
-        world_2_grasp = pu.multiply_multi_transforms(World2Ingrasp_obj_BasePose, self.objBase_2_objBbox, self.objBbox_2_grasppose)
-        world_2_gripperbase = pu.multiply_multi_transforms(world_2_grasp, self.robot.Grasp_2_GRIPPERBase)
-        
-        maximum_motion_trials = 3
-        rtol = 0.2
-        for i in range(maximum_motion_trials):
-            joint_values = self.robot.get_arm_ik(world_2_grasp)
-            _, trajectory = self.robot.plan_arm_motion(joint_values)
-            if trajectory is None: return
+    def stable_placement_reach_close_back(self, qr_obj_name, World2PreGripperBase_pose, World2QRobjGripperBase_pose):
+        qr_obj_id = self.obj_name_data[qr_obj_name]["id"]
+        qr_obj_mass = self.obj_name_data[qr_obj_name]["mass"]
+        if self.args.rendering:
+            self.grasp_pose_id = pu.create_arrow_marker(World2QRobjGripperBase_pose, replace_frame_id=self.grasp_pose_id, client_id=self.client_id)
 
+        maximum_motion_trials = 3
+        rtol = 0.2; norm_tol = 0.01
+        for i in range(maximum_motion_trials):
+            joint_values = self.robot.get_arm_ik(World2PreGripperBase_pose, avoid_collisions=True, mix_solve=True)
+            trajectory = self.robot.plan_arm_motion(joint_values)
+            if trajectory is None: 
+                return
             self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
-            cur_grasp_pose = self.robot.get_eef_grasp_pose()
-            if np.isclose(cur_grasp_pose[0], world_2_grasp[0], rtol=rtol).all():
+            cur_grasp_pose = self.robot.get_gripper_base_pose()
+            if np.isclose(cur_grasp_pose[0], World2PreGripperBase_pose[0], rtol=rtol).all():
                 break
             elif i==maximum_motion_trials-1:
-                print(f"Reach Stage: Failed to reach the grasp pose {i} times!")
+                if np.linalg.norm(self.to_numpy(cur_grasp_pose[0]) - self.to_numpy(World2PreGripperBase_pose[0])) < norm_tol:
+                    break # Extra check for the final pose
+                print(f"Reach Stage: Failed to reach the grasp pose {i+1} times!")
                 return False
 
+        # Reach the grasp pose
+        print("Reach the grasp pose...")
+        gsp_jv_goal = self.robot.get_arm_ik(World2QRobjGripperBase_pose, avoid_collisions=False, mix_solve=True)
+        if gsp_jv_goal is None:
+            print("Reach Stage: Failed to reach the grasp pose!")
+            return False
+        discretized_plan = self.robot.plan_arm_joint_values_simple(gsp_jv_goal)
+        self.robot.execute_arm_plan(discretized_plan, realtime=self.args.rendering)
+
         # Close the gripper
+        print("Close the gripper...")
         close_gripper = self.robot.plan_gripper_joint_values(self.robot.CLOSED_POSITION)
-        self.robot.attach_object(self.ingrasp_obj_id)
-        self.robot.update_collision_check()
+        self.robot.attach_object(qr_obj_id)
         self.robot.execute_gripper_plan(close_gripper, realtime=self.args.realtime)
+        self.robot.update_collision_check()
+        pu.set_mass(qr_obj_id, qr_obj_mass, client_id=self.client_id)
 
         # lift the object
-        lift_pose = deepcopy(self.robot.get_eef_grasp_pose())
+        print("Lift the object...")
+        lift_pose = deepcopy(self.robot.get_gripper_base_pose())
         lift_pose[0][2] += 0.1
-        jv_goal = self.robot.get_arm_ik(lift_pose, avoid_collisions=False)
+        jv_goal = self.robot.get_arm_ik(lift_pose, avoid_collisions=False, mix_solve=True)
         if jv_goal is not None:
             jv_start = self.robot.get_arm_joint_values()
             trajectory = np.linspace(jv_start, jv_goal, 240)
@@ -1063,52 +1106,70 @@ class RoboSensaiBullet:
 
         # Go to the waiting pose
         for i in range(maximum_motion_trials):
-            _, trajectory = self.robot.plan_arm_motion(self.robot.HOME)
+            trajectory = self.robot.plan_arm_motion(self.robot.HOME)
             self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
             if i==maximum_motion_trials-1 and trajectory is None:
-                print(f"Place Stage: Failed to reach the waiting pose {i} times!")
+                print(f"Reach Stage: Failed to reach the waiting pose {i} times!")
                 return False
         return True
 
 
-    def stable_placement_place_open_back(self, World2Ingrasp_obj_BasePose):
-        pre_place_World2Ingrasp_obj_BasePose = deepcopy(World2Ingrasp_obj_BasePose)
-        pre_place_World2Ingrasp_obj_BasePose[0][2] += 0.1
-        world_2_preplace = pu.multiply_multi_transforms(pre_place_World2Ingrasp_obj_BasePose, self.objBase_2_objBbox, self.objBbox_2_grasppose)
-        world_2_place = pu.multiply_multi_transforms(World2Ingrasp_obj_BasePose, self.objBase_2_objBbox, self.objBbox_2_grasppose)
-        world_2_gripperbase = pu.multiply_multi_transforms(world_2_preplace, self.robot.Grasp_2_GRIPPERBase)
-        
+    def stable_placement_place_open_back(self, qr_obj_name, World2QRobjGoalGripperBase_pose, placed_obj_poses=None):
+        World2PreplaceGripperbase_pose = [list(World2QRobjGoalGripperBase_pose[0]), list(World2QRobjGoalGripperBase_pose[1])]
+        World2PreplaceGripperbase_pose[0][2] += 0.1
+
         maximum_motion_trials = 3
-        rtol = 0.2
+        rtol = 0.2; norm_tol = 0.01
         for i in range(maximum_motion_trials):
-            joint_values = self.robot.get_arm_ik(world_2_preplace)
-            _, trajectory = self.robot.plan_arm_motion(joint_values)
-            if trajectory is None: return
+            joint_values = self.robot.get_arm_ik(World2PreplaceGripperbase_pose, mix_solve=True)
+            trajectory = self.robot.plan_arm_motion(joint_values)
+            if trajectory is None: 
+                return False
 
             self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
-            cur_grasp_pose = self.robot.get_eef_grasp_pose()
-            if np.isclose(cur_grasp_pose[0], world_2_preplace[0], rtol=rtol).all():
+            cur_grasp_pose = self.robot.get_gripper_base_pose()
+            if np.isclose(cur_grasp_pose[0], World2PreplaceGripperbase_pose[0], rtol=rtol, atol=0.01).all():
                 break
             elif i==maximum_motion_trials-1:
-                print(f"Place Stage: Failed to reach the placement pose {i} times!")
+                if np.linalg.norm(self.to_numpy(cur_grasp_pose[0]) - self.to_numpy(World2PreplaceGripperbase_pose[0])) < norm_tol:
+                    break # Extra check for the final pose
+                print(f"Place Stage: Failed to reach the placement pose {i+1} times!")
                 return False
 
         # Go down to the place pose
-        jv_goal = self.robot.get_arm_ik(world_2_place, avoid_collisions=False)
-        if jv_goal is not None:
-            jv_start = self.robot.get_arm_joint_values()
-            trajectory = np.linspace(jv_start, jv_goal, 240)
-            self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
+        jv_goal = self.robot.get_arm_ik(World2QRobjGoalGripperBase_pose, avoid_collisions=False, mix_solve=True)
+        self.robot.set_arm_joint_values(jv_goal)
+        
+        if jv_goal is None:
+            print("Place Stage: Failed to reach the place pose!")
+            return False
+        trajectory = self.robot.plan_arm_joint_values_simple(jv_goal)
+        self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
 
         # open the gripper
         trajectory = self.robot.plan_gripper_joint_values(self.robot.OPEN_POSITION)
+        self.robot.execute_gripper_plan(trajectory, realtime=self.args.rendering)
         self.robot.detach()
         self.robot.update_collision_check()
-        self.robot.execute_gripper_plan(trajectory, realtime=self.args.rendering)
+
+        # Check the stability of the placement
+        if placed_obj_poses is not None:
+            if not self.post_check_scene_stable(placed_obj_poses, re_place_obj=False):
+                print("Place Stage: The placement is not stable!")
+                return False
+
+        # Go up the the pre-place pose
+        jv_preplace_goal = self.robot.get_arm_ik(World2PreplaceGripperbase_pose, avoid_collisions=False, mix_solve=True)
+        if jv_preplace_goal is None:
+            print("Place Stage: Failed to reach the pre-place pose!")
+            return False
+        trajectory = self.robot.plan_arm_joint_values_simple(jv_preplace_goal)
+        self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
 
         # Go to the waiting pose
+        print("Go to the waiting pose...")
         for i in range(maximum_motion_trials):
-            _, trajectory = self.robot.plan_arm_motion(self.robot.HOME)
+            trajectory = self.robot.plan_arm_motion(self.robot.HOME)
             self.robot.execute_arm_plan(trajectory, realtime=self.args.rendering)
             if i==maximum_motion_trials-1 and trajectory is None:
                 print(f"Place Stage: Failed to reach the waiting pose {i} times!")
@@ -1218,7 +1279,9 @@ class RoboSensaiBullet:
     
     def stable_placement_eval_step(self, qr_obj_name, pred_qr_obj_pose, placed_obj_poses):
         self.reset()
-        World_2_QRobjBase = self.sp_convert_pred_qr_obj_pose(qr_obj_name, pred_qr_obj_pose)
+        World_2_QRobjBboxCenter = self.sp_convert_pred_qr_obj_pose(qr_obj_name, pred_qr_obj_pose)
+        QRobjBboxCenter_2_objBase = self.get_obj_center2base_pose(qr_obj_name) # We assume we know the object points cloud, ground truth
+        World_2_QRobjBase = pu.multiply_multi_transforms(World_2_QRobjBboxCenter, QRobjBboxCenter_2_objBase)
         placed_obj_poses_copy = placed_obj_poses.copy()
         placed_obj_poses_copy[qr_obj_name] = World_2_QRobjBase
         stable_Flag = self.post_check_scene_stable(placed_obj_poses_copy, reset_mass=True)
@@ -1344,6 +1407,16 @@ class RoboSensaiBullet:
         return pu.get_obj_pc_from_id(obj_id, num_points=num_points, use_worldpos=use_worldpos,
                                       rng=self.rng, client_id=self.client_id).astype(self.numpy_dtype)
     
+
+    def get_obj_center2base_pose(self, obj_name):
+        Base2Center_pose = pu.split_7d(self.obj_name_data[obj_name]["bbox"][:7])
+        Center2Base_pose = p.invertTransform(*Base2Center_pose)
+        return Center2Base_pose
+    
+
+    def get_obj_half_extents(self, obj_name):
+        return self.obj_name_data[obj_name]["bbox"][7:]
+
 
     def get_obj_stage(self, obj_name):
         for stage, obj_names in self.obj_categories.items():

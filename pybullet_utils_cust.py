@@ -399,6 +399,12 @@ def set_pose(body, pose, client_id=0):
     p.resetBasePositionAndOrientation(body, point, quat, physicsClientId=client_id)
 
 
+def set_center_pose(body, center_pose, Center2Base_pose, client_id=0):
+    Base_pose = multiply_multi_transforms(center_pose, Center2Base_pose)
+    (point, quat) = Base_pose
+    p.resetBasePositionAndOrientation(body, point, quat, physicsClientId=client_id)
+
+
 def is_rigid_body(body, client_id=0):
     for joint in get_joints(body, client_id=client_id):
         if is_movable(body, joint, client_id=client_id):
@@ -483,7 +489,7 @@ def control_joint(body, joint, value, client_id=0):
 
 
 def control_joints(body, joints, positions, control_type='hard', client_id=0):
-    forces = [get_max_force(body, joint) for joint in joints] if control_type == 'limited' else [100000] * len(joints)
+    forces = [get_max_force(body, joint) // 15 for joint in joints] if control_type == 'limited' else [100000] * len(joints)
     return p.setJointMotorControlArray(bodyUniqueId=body, 
                                        jointIndices=joints, 
                                        controlMode=p.POSITION_CONTROL,
@@ -772,9 +778,9 @@ def create_arrow_marker(pose=((0, 0, 0), (0, 0, 0, 1)),
 
     if replace_frame_id is not None:
         z_id = p.addUserDebugLine(po, pz, color, line_width, life_time,
-                                  replaceItemUniqueId=replace_frame_id[2], physicsClientId=client_id)
+                                  replaceItemUniqueId=replace_frame_id[0], physicsClientId=client_id)
         z_extend_id1 = p.addUserDebugLine(pz, pz_extend1, color, line_width, life_time,
-                                          replaceItemUniqueId=replace_frame_id[2], physicsClientId=client_id)
+                                          replaceItemUniqueId=replace_frame_id[1], physicsClientId=client_id)
         z_extend_id2 = p.addUserDebugLine(pz, pz_extend2, color, line_width, life_time,
                                           replaceItemUniqueId=replace_frame_id[2], physicsClientId=client_id)
     else:
@@ -1256,7 +1262,7 @@ def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
                                       front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
     
 
-def get_pc_from_camera(width, height, view_matrix, proj_matrix):
+def get_pc_from_camera(width, height, view_matrix, proj_matrix, client_id=0):
     # based on https://stackoverflow.com/questions/59128880/getting-world-coordinates-from-opengl-depth-buffer
 
     # get a depth image
@@ -1264,7 +1270,8 @@ def get_pc_from_camera(width, height, view_matrix, proj_matrix):
     image_arr = p.getCameraImage(width=width, 
                                  height=height, 
                                  viewMatrix=view_matrix, 
-                                 projectionMatrix=proj_matrix)
+                                 projectionMatrix=proj_matrix,
+                                 physicsClientId=client_id)
     depth = image_arr[3]
 
     # create a 4x4 transform matrix that goes from pixel coordinates (and depth values) to world coordinates

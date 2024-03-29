@@ -2,7 +2,7 @@ import time
 from random import random
 
 from UR5_related.RRT.rrt_utils import irange, argmin
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 
 
 class TreeNode(object):

@@ -74,7 +74,6 @@ class RRTPlanner: # could multi
         if len(disabled_targets) > 0: 
             [obstacles.remove(disabled_t) for disabled_t in disabled_targets if disabled_t in obstacles] # multi target needs to use loop
         
-        print(f'obstacles: {obstacles}; All ids {pu.get_bodies(client_id=self.client_id)}')
         check_body_pairs = list(product(moving_bodies, obstacles)) # + list(combinations(moving_bodies, 2))
         def collision_fn(q): # set may consume time? reset ought to make outside
             col_FLAG = False
@@ -86,13 +85,13 @@ class RRTPlanner: # could multi
 
             for link1, link2 in check_link_pairs:
                 if pu.pairwise_link_collision(self.ur5_controller.id, link1, self.ur5_controller.id, link2, client_id=self.client_id):
-                    print(f'Self Collision!! {link1}/{link2}')
+                    print(f'Self Collision!! Link: {link1} & Link: {link2}')
                     col_FLAG = True; break
 
             if not col_FLAG:
                 for pair in check_body_pairs:
                     if pu.pairwise_collision(*pair, client_id=self.client_id):
-                        print(f'collision with obstacles: {pair[0]} and {pair[1]}')
+                        print(f"collision happens between {pair[0]}: {pu.get_body_name(pair[0])} and {pair[1]}: {pu.get_body_name(pair[1])}")
                         col_FLAG = True; break
 
             self.set_joint_positions(cur_joints) # reset joints! maybe not need during planning, 

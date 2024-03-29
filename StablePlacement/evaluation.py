@@ -12,12 +12,13 @@ from copy import deepcopy
 
 import torch
 from torch.utils.data import DataLoader
-from SP_DataLoader import HDF5Dataset, custom_collate
+from SP_DataLoader import HDF5Dataset, custom_collate, create_subset_dataset
 from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Normal
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 
-import sp_utils as pu
+import pybullet_utils_cust as pu
+from sp_utils import update_success_records, compute_success_records_summary
 import numpy as np
 from utils import se3_transform_pc, read_json, sorted_dict, generate_table
 
@@ -108,6 +109,7 @@ if __name__ == "__main__":
         "num_times_obj_get_qr_counts": {},
     }
     gt_success_records = deepcopy(pred_success_records)
+    rp_success_records = deepcopy(pred_success_records)
     with torch.no_grad():
         for idx, batch in enumerate(tqdm(sp_test_dataloader)):
             scene_pc = batch['scene_pc'].to(device)
@@ -130,30 +132,26 @@ if __name__ == "__main__":
                 # Test the ground truth is correct (the datapoint is valid)
                 pred_success, _ = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
                 gt_success, _ = envs.stable_placement_eval_step(qr_obj_name, qr_obj_pose, sp_placed_obj_poses) # Copy to avoid in-place modification in the stable_placement_eval_step
-                
-                gt_success_records["num_objs_on_qr_scene_counts"][len(sp_placed_obj_poses)] = gt_success_records["num_objs_on_qr_scene_counts"].get(len(sp_placed_obj_poses), 0) + 1
-                gt_success_records["num_times_obj_get_qr_counts"][qr_obj_name] = gt_success_records["num_times_obj_get_qr_counts"].get(qr_obj_name, 0) + 1
-                gt_success_records["num_objs_on_qr_scene_success"][len(sp_placed_obj_poses)] = gt_success_records["num_objs_on_qr_scene_success"].get(len(sp_placed_obj_poses), 0) + gt_success
-                gt_success_records["num_times_obj_get_qr_success"][qr_obj_name] = gt_success_records["num_times_obj_get_qr_success"].get(qr_obj_name, 0) + gt_success
+                update_success_records(gt_success_records, qr_obj_name, sp_placed_obj_poses, gt_success)
                 
                 if not gt_success and not pred_success:
                     continue # Skip the prediction if the ground truth is not successful
 
                 # Test the prediction
-                pred_success_records["num_objs_on_qr_scene_counts"][len(sp_placed_obj_poses)] = pred_success_records["num_objs_on_qr_scene_counts"].get(len(sp_placed_obj_poses), 0) + 1
-                pred_success_records["num_times_obj_get_qr_counts"][qr_obj_name] = pred_success_records["num_times_obj_get_qr_counts"].get(qr_obj_name, 0) + 1
-                pred_success_records["num_objs_on_qr_scene_success"][len(sp_placed_obj_poses)] = pred_success_records["num_objs_on_qr_scene_success"].get(len(sp_placed_obj_poses), 0) + pred_success
-                pred_success_records["num_times_obj_get_qr_success"][qr_obj_name] = pred_success_records["num_times_obj_get_qr_success"].get(qr_obj_name, 0) + pred_success
+                update_success_records(pred_success_records, qr_obj_name, sp_placed_obj_poses, pred_success)
 
-            if args.use_robot_sp:
-                # Evaluate the model
-                # Scene and obj feature tensor are keeping updated inplace]
-                ################ agent evaluation ################
-                envs.reset()
-                if args.test_dataset:
-                    pred_qr_obj_pose = qr_obj_pose
-                success, _ = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
-                success_sum += success
+                if args.use_robot_sp:
+                    # Evaluate the model
+                    # Scene and obj feature tensor are keeping updated inplace]
+                    ################ agent evaluation ################
+                    # if qr_obj_name not in ['005_tomato_soup_can_0', '006_mustard_bottle_0', '007_tuna_fish_can_0', '009_gelatin_box_0', '010_potted_meat_can_0', '019_pitcher_base_0', '024_bowl_0', '025_mug_0', '029_plate_0', '030_fork_0']
+                    envs.stable_placement_reset()
+                    scene_pc, qr_obj_pc = envs.stable_placement_compute_observation(qr_obj_name, sp_placed_obj_poses)
+                    scene_pc, qr_obj_pc = torch.from_numpy(scene_pc).to(device).unsqueeze(0).float(), torch.from_numpy(qr_obj_pc).to(device).unsqueeze(0).float()
+                    pred_qr_obj_pose, _ = model(scene_pc, qr_obj_pc)
+                    rp_success = envs.stable_placement_task_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
+                    envs.stable_placement_reset()
+                    update_success_records(rp_success_records, qr_obj_name, sp_placed_obj_poses, rp_success)
 
             if args.visualize_pc:
                 scene_pc_np = scene_pc.cpu().numpy()
@@ -171,14 +169,9 @@ if __name__ == "__main__":
         test_loss /= len(sp_test_dataloader)
         
         if args.use_simulator:
-            gt_success_records["num_objs_on_qr_scene_success_rate"] = {k: v/gt_success_records["num_objs_on_qr_scene_counts"][k] for k, v in gt_success_records["num_objs_on_qr_scene_success"].items()}
-            gt_success_records["num_times_obj_get_qr_success_rate"] = {k: v/gt_success_records["num_times_obj_get_qr_counts"][k] for k, v in gt_success_records["num_times_obj_get_qr_success"].items()}
-            gt_success_records["Avg_success_rate"] = sum(gt_success_records["num_objs_on_qr_scene_success"].values())/(sum(gt_success_records["num_objs_on_qr_scene_counts"].values())+1e-8)
-            gt_success_records["recorded_num_data_points"] = sum(gt_success_records["num_objs_on_qr_scene_counts"].values())
-            pred_success_records["num_objs_on_qr_scene_success_rate"] = {k: v/pred_success_records["num_objs_on_qr_scene_counts"][k] for k, v in pred_success_records["num_objs_on_qr_scene_success"].items()}
-            pred_success_records["num_times_obj_get_qr_success_rate"] = {k: v/pred_success_records["num_times_obj_get_qr_counts"][k] for k, v in pred_success_records["num_times_obj_get_qr_success"].items()}
-            pred_success_records["Avg_success_rate"] = sum(pred_success_records["num_objs_on_qr_scene_success"].values())/(sum(pred_success_records["num_objs_on_qr_scene_counts"].values())+1e-8)
-            pred_success_records["recorded_num_data_points"] = sum(pred_success_records["num_objs_on_qr_scene_counts"].values())
+            compute_success_records_summary(gt_success_records)
+            compute_success_records_summary(pred_success_records)
+            compute_success_records_summary(rp_success_records)
         
 
     print(f"Test Loss: {test_loss:.4f}")
@@ -186,14 +179,21 @@ if __name__ == "__main__":
         # Assuming you have these variables from your environment
         gt_success_records = sorted_dict(gt_success_records)
         pred_success_records = sorted_dict(pred_success_records)
+        rp_success_records = sorted_dict(rp_success_records)
+
         gt_qr_scene_success_misc = generate_table(gt_success_records, "num_objs_on_qr_scene_success_rate", "num_objs_on_qr_scene_counts", "Ground Truth QR Scene Success")
         gt_qr_obj_success_misc = generate_table(gt_success_records, "num_times_obj_get_qr_success_rate", "num_times_obj_get_qr_counts", "Ground Truth QR Objects Success")
         pred_qr_scene_success_misc = generate_table(pred_success_records, "num_objs_on_qr_scene_success_rate", "num_objs_on_qr_scene_counts", "Predicted QR Scene Success")
         pred_qr_obj_success_misc = generate_table(pred_success_records, "num_times_obj_get_qr_success_rate", "num_times_obj_get_qr_counts", "Predicted QR Objects Success")
+        rp_qr_scene_success_misc = generate_table(rp_success_records, "num_objs_on_qr_scene_success_rate", "num_objs_on_qr_scene_counts", "Robot Sensai QR Scene Success")
+        rp_qr_obj_success_misc = generate_table(rp_success_records, "num_times_obj_get_qr_success_rate", "num_times_obj_get_qr_counts", "Robot Sensai QR Objects Success")
 
         print(f"Ground Truth Avg Success Rate: {gt_success_records['Avg_success_rate']} / Data Points: {gt_success_records['recorded_num_data_points']}")
         print(tabulate(gt_qr_scene_success_misc, headers="firstrow", tablefmt="grid"))
         print(tabulate(gt_qr_obj_success_misc, headers="firstrow", tablefmt="grid"))
-        print(f"Prediction Avg Success Rate On Test Dataset: {pred_success_records['Avg_success_rate']} / Data Points: {pred_success_records['recorded_num_data_points']}")
+        print(f"Prediction Avg Success Rate On Test Dataset (after filtering): {pred_success_records['Avg_success_rate']} / Data Points: {pred_success_records['recorded_num_data_points']}")
         print(tabulate(pred_qr_scene_success_misc, headers="firstrow", tablefmt="grid"))
         print(tabulate(pred_qr_obj_success_misc, headers="firstrow", tablefmt="grid"))
+        print(f"Robot Place Prediction Success Rate On Test Dataset (after filtering): {rp_success_records['Avg_success_rate']} / Data Points: {rp_success_records['recorded_num_data_points']}")
+        print(tabulate(rp_qr_scene_success_misc, headers="firstrow", tablefmt="grid"))
+        print(tabulate(rp_qr_obj_success_misc, headers="firstrow", tablefmt="grid"))
