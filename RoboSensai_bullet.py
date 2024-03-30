@@ -126,7 +126,7 @@ class RoboSensaiBullet:
                                                "pc": table_pc,
                                                "pc_feature": self.pc_extractor(self.to_torch(table_pc, dtype=torch.float32).unsqueeze(0).transpose(1, 2)).squeeze(0).detach().to(self.tensor_dtype)
                                               }
-        # All other fixed scenes, using for loop to load later; All scene bbox are in the baselink frame not world frame! Baselink are at the origin of world frame!
+        # All other fixed scenes, using for loop to load later; All scene bbox are in the geometry center frame not world frame! Baselink are at the origin of world frame!
         if self.args.specific_scene is not None:
             if self.args.specific_scene == "table":
                 selected_scene_pool = [] # Only load table
