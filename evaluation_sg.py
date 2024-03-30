@@ -90,7 +90,7 @@ def get_args():
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--actor_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--blender_record', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
-    parser.add_argument('--change_table_size', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
+    parser.add_argument('--new_tablehalfExtents', default=None, help='A list of max num of placing objs')
 
     # Downstream task1 stable placement parameters
     parser.add_argument('--sp_data_collection', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='collect stable placement data')
@@ -131,7 +131,7 @@ def get_args():
     elif eval_args.heuristic_policy: eval_args.final_name = f'EVAL_HeurPolicy'
     else: ckeckpoint_index = '_EVAL_' + eval_args.index_episode 
     
-    if eval_args.change_table_size: ckeckpoint_index += '_ChangeTableSize'
+    if eval_args.new_tablehalfExtents: ckeckpoint_index += "_TableHalfExtents" + "_".join(map(str, eval_args.new_tablehalfExtents))
     obj_range = f'_objRange_{min(eval_args.max_num_placing_objs_lst)}_{max(eval_args.max_num_placing_objs_lst)}'
     temp_filename = eval_args.final_name + ckeckpoint_index + obj_range
     
