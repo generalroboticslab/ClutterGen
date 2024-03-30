@@ -3,7 +3,7 @@ import numpy as np
 from UR5_related.RRT.smoothing import smooth_path
 from UR5_related.RRT.rrt import TreeNode, configs
 from UR5_related.RRT.rrt_utils import irange, argmin
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 
 NODE_T = 0.001 # one node extends time
 def rrt_connect(q1,

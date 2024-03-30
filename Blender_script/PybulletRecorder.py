@@ -5,7 +5,7 @@ import pickle
 from os import getcwd
 from os.path import abspath, dirname, basename, splitext, join
 import numpy as np
-from pybullet_utils import get_body_pose, get_link_pose, get_link_collision_shape
+from pybullet_utils_cust import get_body_pose, get_link_pose, get_link_collision_shape
 
 
 class PyBulletRecorder:

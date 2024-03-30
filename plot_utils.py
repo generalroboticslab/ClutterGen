@@ -89,7 +89,7 @@ class Plot_Utils:
         self.data_full = {}
 
 
-class Plot_Misc_Utils:
+class Plot_Eval_Misc_Utils:
     def __init__(self, root_folder="eval_res/Union"):
         self.data_full = {}
         self.root_folder = root_folder
@@ -284,6 +284,50 @@ class Plot_Misc_Utils:
         plt.show()
 
         return avg_trial_stable_steps
+    
+
+class Plot_Dataset_Utils:
+    def __init__(self, dataset_folder="StablePlacement"):
+        self.data_full = {}
+        self.dataset_folder = dataset_folder
+
+
+    def read_file(self, dataset_distribution_name="dataset_distributions"):
+        self.dataset_distribution_path = f"{self.dataset_folder}/SP_Dataset/{dataset_distribution_name}.json"
+        assert os.path.exists(self.dataset_distribution_path), "File not found: {}".format(self.dataset_distribution_path)
+
+        self.dataset_distribution_dict = read_json(self.dataset_distribution_path)
+
+
+    def plot_ds_distribution(self):
+        num_datasets = len(self.dataset_distribution_dict)
+        fig_num_objs_on_qr_scene, axes_num_objs_on_qr_scene = plt.subplots(num_datasets, 1, figsize=(10, 5*num_datasets))
+        fig_num_times_obj_get_qr, axes_num_times_obj_get_qr = plt.subplots(num_datasets, 1, figsize=(15, 5*num_datasets))
+        for i, key in enumerate(self.dataset_distribution_dict.keys()):
+            dataset_distribution_dict = self.dataset_distribution_dict[key]
+            num_objs_on_qr_scene = dataset_distribution_dict["num_objs_on_qr_scene"]
+            num_times_obj_get_qr = dataset_distribution_dict["num_times_obj_get_qr"]
+            num_objs_on_qr_scene = dict(sorted(num_objs_on_qr_scene.items()))
+            num_times_obj_get_qr = dict(sorted(num_times_obj_get_qr.items()))
+            axes_num_objs_on_qr_scene[i].bar(num_objs_on_qr_scene.keys(), num_objs_on_qr_scene.values())
+            axes_num_objs_on_qr_scene[i].set_title(f"Number of Objects are in the QR Scene ({key} Dataset | Total: {sum(num_objs_on_qr_scene.values())})")
+            axes_num_objs_on_qr_scene[i].set_xlabel("Number of Objects")
+            axes_num_objs_on_qr_scene[i].set_ylabel("Number of Datapoints")
+            axes_num_objs_on_qr_scene[i].set_xticks(list(num_objs_on_qr_scene.keys()))
+
+            axes_num_times_obj_get_qr[i].bar(num_times_obj_get_qr.keys(), num_times_obj_get_qr.values())
+            axes_num_times_obj_get_qr[i].set_title(f"Number of Times Object Get Quried to be Placed ({key} Dataset | Total: {sum(num_times_obj_get_qr.values())})")
+            axes_num_times_obj_get_qr[i].set_xlabel("Object Name")
+            axes_num_times_obj_get_qr[i].set_ylabel("Number of Datapoints")
+            axes_num_times_obj_get_qr[i].set_xticklabels(list(num_times_obj_get_qr.keys()), rotation=45, ha="center")
+        
+        # Make the space between subplots larger
+        fig_num_objs_on_qr_scene.tight_layout()
+        fig_num_times_obj_get_qr.tight_layout()
+        fig_num_objs_on_qr_scene.savefig(os.path.join(os.path.dirname(self.dataset_distribution_path), "ds_num_objs_on_qr_scene.png"))
+        fig_num_times_obj_get_qr.savefig(os.path.join(os.path.dirname(self.dataset_distribution_path), "ds_num_times_obj_get_qr.png"))
+        plt.show()
+
 
 
 def images_to_pdf(image_paths, pdf_path, images_per_row=3, dpi=300, title_ratio=1, fig_ratio=1.2):
@@ -395,8 +439,13 @@ if __name__ == "__main__":
         create_gif_from_multiple_folders(source_folders, output_filename, num_images=40, duration=1000)
 
     elif TASK_NAME == "MiscInfo":
-        plot_misc_utils = Plot_Misc_Utils()
-        plot_misc_utils.read_file(args.evalUniName)
-        plot_misc_utils.plot_obj_placement_success_rate()
-        plot_misc_utils.plot_obj_coverage_rate()
-        plot_misc_utils.plot_stable_steps(success_only=True)
+        Plot_Eval_Misc_Utils = Plot_Eval_Misc_Utils()
+        Plot_Eval_Misc_Utils.read_file(args.evalUniName)
+        Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
+        Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
+        Plot_Eval_Misc_Utils.plot_stable_steps(success_only=True)
+
+    elif TASK_NAME == "DatasetDistribution":
+        plot_dataset_utils = Plot_Dataset_Utils()
+        plot_dataset_utils.read_file()
+        plot_dataset_utils.plot_ds_distribution()

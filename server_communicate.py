@@ -25,6 +25,7 @@ def upload_file(local_path, server_path, server_address, username, password):
             # Create an SCP client
             with SCPClient(transport) as scp:
                 # Upload the file to the remote folder
+                print(f"Uploading:\n{local_path}\nto\n{server_path}. (This may take a while...)")
                 scp.put(local_path, recursive=True, remote_path=server_path)
     
     print(f"Uploaded:\n{local_path}\nto\n{server_path}.")

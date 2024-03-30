@@ -1,6 +1,6 @@
 from random import random
 from time import time
-import pybullet_utils as pu
+import pybullet_utils_cust as pu
 import time
 from UR5_related.RRT.rrt_utils import INF, argmin
 import numpy as np
