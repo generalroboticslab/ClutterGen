@@ -583,7 +583,7 @@ class RoboSensaiBullet:
             max_z_half_extent = self.tallest_placed_half_z_extend + self.selected_obj_bbox[9] # If on, bbox is half extent + tallest placed obj half extent (equivalent to the current scene bbox).
             selected_qr_scene_bbox = self.selected_qr_scene_bbox.copy()
             if self.args.fixed_qr_region: max_z_half_extent = self.default_qr_region_z
-            if self.args.tableQueryRegion is not None: # If the table query region is set, we use it to define the query region of the table on x, y
+            if self.selected_qr_scene_name == "table" and self.args.tableQueryRegion is not None: # If the table query region is set, we use it to define the query region of the table on x, y
                 selected_qr_scene_bbox[7:9] = self.args.tableQueryRegion[:2] 
             self.selected_qr_region = get_on_bbox(selected_qr_scene_bbox, z_half_extend=max_z_half_extent)
         elif self.selected_qr_scene_region == "in":
