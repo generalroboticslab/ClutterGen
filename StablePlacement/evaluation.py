@@ -39,8 +39,8 @@ def parse_args():
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
-    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/90], nargs='+')
+    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
     parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
     parser.add_argument('--use_robot_sp', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
