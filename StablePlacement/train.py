@@ -9,12 +9,13 @@ from SP_DataLoader import HDF5Dataset, custom_collate, create_subset_dataset
 from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Normal
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
+torch.autograd.set_detect_anomaly(True)
 
 from tqdm import tqdm
 import wandb
 import argparse
 from distutils.util import strtobool
-from utils import save_json, read_json
+from utils import save_json, read_json, se3_transform_pc
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -26,7 +27,7 @@ def parse_args():
     # Training parameters
     parser.add_argument('--use_normal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--use_beta', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--subset_ratio', type=float, default=None, help='The ratio of the subset of the dataset')
+    parser.add_argument('--subset_ratio', type=float, default=0.2, help='The ratio of the subset of the dataset')
     parser.add_argument('--weighted_loss', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--epochs', type=int, default=1000, help='')
     parser.add_argument('--val_epochs', type=int, default=5, help='')
@@ -37,10 +38,12 @@ def parse_args():
 
     # Evaluation parameters
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--auto_regression', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--num_ar_trials', type=int, default=100, help='')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/36], nargs='+')
-    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi*2], nargs='+') 
+    parser.add_argument('--vel_threshold', type=float, default=[0.005, np.pi/90], nargs='+')
+    parser.add_argument('--acc_threshold', type=float, default=[1., np.pi], nargs='+') 
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
@@ -72,6 +75,9 @@ def parse_args():
         args.final_name += f"_Subset{args.subset_ratio}"
     args.final_name += f"_EntCoef{args.ent_coef}"
     args.final_name += f"_weiDecay{args.weight_decay}"
+
+    if args.auto_regression:
+        args.final_name += '_AutoReg' + f"{args.num_ar_trials}"
 
     args.model_save_path = os.path.join(args.save_folder, args.final_name, "Checkpoint")
     args.json_save_path = os.path.join(args.save_folder, args.final_name, "Json")
@@ -144,6 +150,8 @@ if args.collect_data and args.wandb:
 
 best_val_loss = float('inf')
 best_sim_success_rate = 0
+best_ar_success_rate = 0
+
 for epoch in range(1, args.epochs+1):
     model.train()
     # Learning rate decay; Linear Schedular
@@ -170,8 +178,8 @@ for epoch in range(1, args.epochs+1):
                 weight_pos_loss = quat_loss.item() / (loss_sum + 1e-8)
                 weight_quat_loss = pos_loss.item() / (loss_sum + 1e-8)
             else:
-                weight_pos_loss = 1
-                weight_quat_loss = 1
+                weight_pos_loss = 1.
+                weight_quat_loss = 1.
 
             loss = weight_pos_loss * pos_loss + weight_quat_loss * quat_loss + args.ent_coef * entropy_loss
             # Backward pass
@@ -189,7 +197,7 @@ for epoch in range(1, args.epochs+1):
     entropy_record /= len(sp_train_dataloader)
     
     if epoch % args.val_epochs == 0:
-        val_loss = 0; val_pos_loss = 0; val_quat_loss = 0; sim_success_rate = 0
+        val_loss = 0; val_pos_loss = 0; val_quat_loss = 0; sim_success_rate = 0; ar_success_rate = 0; ar_avg_placed_objs = 0
         model.eval()
         with torch.no_grad():
             for batch in tqdm(sp_val_dataloader, desc=f'Epoch {epoch} Validation'):
@@ -209,10 +217,8 @@ for epoch in range(1, args.epochs+1):
             if args.use_simulator and epoch % args.val_sim_epochs == 0:
                 # Evaluate the model
                 # Scene and obj feature tensor are keeping updated inplace]
-                success_sum = 0; eval_trials = 1000
+                success_sum = 0; valid_sum = 0
                 for eval_index, sim_batch in enumerate(tqdm(sp_sim_dataloader, desc=f'Epoch {epoch} Simulator Evaluation')):
-                    if eval_index >= eval_trials:
-                        break
                     ################ agent evaluation ################
                     sp_placed_obj_poses = sim_batch['World2PlacedObj_poses'][0]
                     for obj_name, obj_pose in sp_placed_obj_poses.items():
@@ -221,20 +227,66 @@ for epoch in range(1, args.epochs+1):
                     scene_pc = sim_batch['scene_pc'].to(device)
                     qr_obj_pc = sim_batch['qr_obj_pc'].to(device)
                     qr_obj_pose = sim_batch['qr_obj_pose'].to(device)
+                    qr_obj_name = sim_batch['qr_obj_name'][0]
                     pred_qr_obj_pose, _ = model(scene_pc, qr_obj_pc)
 
-                    qr_obj_name = sim_batch['qr_obj_name'][0]
                     # Use qr_obj_pose to test the success rate is correct or not
+                    gt_success, _ = envs.stable_placement_eval_step(qr_obj_name, qr_obj_pose, sp_placed_obj_poses)
                     success, _ = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
-                    success_sum += success
-                        
-                sim_success_rate = success_sum / eval_index
-                print(f"Epoch {epoch}: Real Simulator Success Rate={sim_success_rate}")
+                    if gt_success or success:
+                        valid_sum += 1
+                    else:
+                        continue
+                    success_sum += success                        
+                sim_success_rate = success_sum / (valid_sum + 1e-8)
+
                 if args.collect_data and args.wandb:
                     wandb.log({
                         'epoch': epoch,
                         'eval/sim_success_rate': sim_success_rate,
                     }, commit=False)
+
+                if args.auto_regression:
+                    object_halfExtents = np.array(envs.tableHalfExtents)
+                    plane_scene_pc = np.random.uniform(-object_halfExtents, object_halfExtents, size=(envs.args.max_num_qr_scene_points, 3))
+                    plane_scene_pc[:, 2] = 0
+                    obj_names = list(envs.obj_name_data.keys())
+                    ar_success_sum = 0
+                    for idx in tqdm(range(args.num_ar_trials), desc=f'Epoch {epoch} Auto-Regression Evaluation'):
+                        scene_pc = torch.tensor(plane_scene_pc).float().to(device).unsqueeze(0)
+                        sp_placed_obj_poses = {}
+                        for qr_obj_name in np.random.permutation(obj_names):
+                            qr_obj_pc = envs.obj_name_data[qr_obj_name]['pc']
+                            qr_obj_pc = torch.tensor(qr_obj_pc).float().to(device).unsqueeze(0)
+                            pred_qr_obj_pose, _ = model(scene_pc, qr_obj_pc)
+                            
+                            # Evaluate the model
+                            # Scene and obj feature tensor are keeping updated inplace]
+                                ################ agent evaluation ################
+                            success, World_2_QRobjBase = envs.stable_placement_eval_step(qr_obj_name, pred_qr_obj_pose, sp_placed_obj_poses)
+                            if not success:
+                                break
+                            sp_placed_obj_poses[qr_obj_name] = World_2_QRobjBase
+                            scene_pc_np = scene_pc.squeeze().cpu().numpy()
+                            qr_obj_pc_np = qr_obj_pc.squeeze().cpu().numpy()
+                            pred_qr_obj_pose_np = pred_qr_obj_pose.squeeze().cpu().numpy()
+                            transformed_pred_qr_obj_pc = se3_transform_pc(pred_qr_obj_pose_np[:3], pred_qr_obj_pose_np[3:], qr_obj_pc_np)
+                            scene_pc = torch.cat([scene_pc, torch.tensor(transformed_pred_qr_obj_pc).unsqueeze(0).to(device)], dim=1)
+
+                            # # Visualize the point cloud
+                            # pu.visualize_pc_lst([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
+
+                        ar_success_sum += success
+                        ar_avg_placed_objs += len(sp_placed_obj_poses)
+                    ar_success_rate = ar_success_sum / args.num_ar_trials
+                    ar_avg_placed_objs /= args.num_ar_trials
+
+                    if args.collect_data and args.wandb:
+                        wandb.log({
+                            'epoch': epoch,
+                            'eval/ar_success_rate': ar_success_rate,
+                            'eval/ar_avg_placed_objs': ar_avg_placed_objs,
+                        }, commit=False)
         
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -245,6 +297,11 @@ for epoch in range(1, args.epochs+1):
             best_sim_success_rate = sim_success_rate
             if args.collect_data:
                 torch.save(model.state_dict(), os.path.join(args.model_save_path, 'epoch_simbest.pth'))
+        
+        if ar_success_rate > best_ar_success_rate:
+            best_ar_success_rate = ar_success_rate
+            if args.collect_data:
+                torch.save(model.state_dict(), os.path.join(args.model_save_path, 'epoch_arbest.pth'))
         
         if epoch % args.save_epoch == 0 and args.collect_data:
             torch.save(model.state_dict(), os.path.join(args.model_save_path, f'epoch_{epoch}.pth'))

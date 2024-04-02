@@ -95,7 +95,7 @@ class RoboSensaiBullet:
                                 basePosition=[0, 0, 0.], 
                                 baseOrientation=p.getQuaternionFromEuler([0, 0, 0]), 
                                 useFixedBase=True)
-        pu.change_obj_color(planeId, rgba_color=[1., 1., 1., 0.2])
+        pu.change_obj_color(planeId, rgba_color=[1., 1., 1., 0.2], client_id=self.client_id)
         qr_pose, qr_ori, qr_half_extents = [0., 0., 0.], p.getQuaternionFromEuler([0., 0., 0.]), [1., 1., 1.]
         plane_pc_sample_region = self.to_numpy(planeHalfExtents)
         plane_pc = self.rng.uniform(-plane_pc_sample_region, plane_pc_sample_region, size=(self.args.max_num_qr_scene_points, 3))
@@ -1274,10 +1274,10 @@ class RoboSensaiBullet:
             sp_dataset[j] = {
                 "scene_pc": np_cur_scene_pc,
                 "qr_obj_pc": query_obj_pc,
-                "qr_obj_pose": self.to_numpy(QRsceneSurface_2_QRobjCenter[0]+QRsceneSurface_2_QRobjCenter[1], dtype=np.float64),
+                "qr_obj_pose": self.to_numpy(QRsceneSurface_2_QRobjCenter[0]+QRsceneSurface_2_QRobjCenter[1]),
                 "qr_obj_name": query_obj_name,
                 "qr_scene_name": self.selected_qr_scene_name,
-                "qr_scene_pose": self.to_numpy(World_2_QRsceneBase[0]+World_2_QRsceneBase[1], dtype=np.float64),
+                "qr_scene_pose": self.to_numpy(World_2_QRsceneBase[0]+World_2_QRsceneBase[1]),
                 "World2PlacedObj_poses": deepcopy(World2PlacedObj_poses),
             }
             # pu.visualize_pc(query_obj_pc)
@@ -1295,7 +1295,6 @@ class RoboSensaiBullet:
         placed_obj_poses_copy = placed_obj_poses.copy()
         placed_obj_poses_copy[qr_obj_name] = World_2_QRobjBase
         stable_Flag = self.post_check_scene_stable(placed_obj_poses_copy, reset_mass=True)
-        # stable_Flag = self.post_check_obj_stable(qr_obj_name, placed_obj_poses_copy, reset_mass=True)
         return stable_Flag, World_2_QRobjBase
 
     
@@ -1330,7 +1329,7 @@ class RoboSensaiBullet:
             )
         
         # Convert Object World2ObjBase velocity to QRsceneCenter2ObjCenter velocity
-        World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(obj_id, to_array=True) # no rotation between the base and the center
+        World2ObjCenter_vel = World2ObjBase_vel = pu.getObjVelocity(obj_id, to_array=True, client_id=self.client_id) # no rotation between the base and the center
         QRregionCenter2ObjCenter_linvel = pu.quat_apply(QRregionCenter2ObjCenter_quat, World2ObjCenter_vel[:3])
         QRregionCenter2ObjCenter_rotvel = pu.quat_apply(QRregionCenter2ObjCenter_quat, World2ObjCenter_vel[3:])
         return (list(QRregionCenter2ObjCenter_pos), list(QRregionCenter2ObjCenter_quat)), \
