@@ -39,5 +39,11 @@ paramiko
 scp
 str2bool
 ipdb
-PySimpleGUI
 h5py
+
+# For real robot tasks
+notebook
+ipykernel
+segment_anything
+# install groundDino: https://github.com/IDEA-Research/Grounded-Segment-Anything/blob/main/grounded_sam.ipynb
+pyrealsense2
