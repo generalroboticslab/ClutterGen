@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument('--max_num_obj_points', type=int, default=1024)
     parser.add_argument('--max_num_qr_scene_points', type=int, default=10240)
     parser.add_argument('--max_num_scene_points', type=int, default=20480)
-    parser.add_argument('--tablehalfExtents', type=json.loads, default=[0.3, 0.4, 0.35], help='A list of max num of placing objs')
+    parser.add_argument('--tablehalfExtents', type=json.loads, default=[0.2, 0.3, 0.35], help='A list of max num of placing objs')
     parser.add_argument('--tableQueryRegion', type=json.loads, default=[0.2, 0.3, 0.35], help='A list of max num of placing objs')
     
     # RoboSensai Env parameters (training)
