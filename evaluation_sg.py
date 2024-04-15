@@ -91,6 +91,7 @@ def get_args():
     parser.add_argument('--actor_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--blender_record', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--new_tablehalfExtents', default=None, help='A list of max num of placing objs')
+    parser.add_argument('--strict_checking', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Apply a strict stable checker')
 
     # Downstream task1 stable placement parameters
     parser.add_argument('--sp_data_collection', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='collect stable placement data')

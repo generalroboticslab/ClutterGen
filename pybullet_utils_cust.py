@@ -489,7 +489,7 @@ def control_joint(body, joint, value, client_id=0):
 
 
 def control_joints(body, joints, positions, control_type='hard', client_id=0):
-    forces = [get_max_force(body, joint) // 15 for joint in joints] if control_type == 'limited' else [100000] * len(joints)
+    forces = [get_max_force(body, joint) // 20 for joint in joints] if control_type == 'limited' else [100000] * len(joints)
     return p.setJointMotorControlArray(bodyUniqueId=body, 
                                        jointIndices=joints, 
                                        controlMode=p.POSITION_CONTROL,
@@ -955,6 +955,32 @@ def draw_conveyor_path(discretized_trajectory, num_plot_points=None,
             draw_sphere_body(pos1, radius=0.008, rgba_color=list(piece_len_color)+[0.8], client_id=client_id)  # to record images
 
 
+def get_pose_from_view_matrix(view_matrix):
+    view_matrix = np.array(view_matrix).reshape(4, 4).T
+    # Invert the view matrix to get the world transformation matrix
+    world_matrix = np.linalg.inv(view_matrix)
+    # Extract the camera position (last column of the world matrix)
+    position = world_matrix[:3, 3]
+    # Extract the rotation matrix (top-left 3x3 of the world matrix)
+    rotation_matrix = world_matrix[:3, :3]
+    return position, rotation_matrix
+
+
+def draw_camera_axis(camera_position, camera_orientation, axis_length=0.1, client_id=0):
+    # Compute the end points of the axes
+    # We manually change the sign of the Z-axis to align with PyBullet's camera orientation, which is not real orientation
+    origin = camera_position
+    x_axis = origin + camera_orientation @ np.array([axis_length, 0, 0])
+    y_axis = origin + camera_orientation @ np.array([0, axis_length, 0])
+    z_axis = origin + camera_orientation @ np.array([0, 0, -axis_length])
+
+    # Draw the axes using PyBullet's debug lines
+    xline_id = p.addUserDebugLine(origin, x_axis, [1, 0, 0], lineWidth=2, physicsClientId=client_id)  # Red for the X-axis
+    yline_id = p.addUserDebugLine(origin, y_axis, [0, 1, 0], lineWidth=2, physicsClientId=client_id)  # Green for the Y-axis
+    zline_id = p.addUserDebugLine(origin, z_axis, [0, 0, 1], lineWidth=2, physicsClientId=client_id)  # Blue for the Z-axis
+    return xline_id, yline_id, zline_id
+
+
 def remove_path(marker_ids, client_id=0):
     for id in marker_ids:
         p.removeBody(id, physicsClientId=client_id)
@@ -1152,6 +1178,36 @@ def getQuaternionFromTwoVectors(v0, v1):
         q = q / np.linalg.norm(q)  # Normalize quaternion
     
     return q
+
+
+def getQuaternionFromMatrix(rot_matrix):
+    # Compute the trace of the matrix
+    trace = np.trace
+    if trace > 0:
+        S = np.sqrt(trace + 1.0) * 2
+        w = 0.25 * S
+        x = (rot_matrix[2, 1] - rot_matrix[1, 2]) / S
+        y = (rot_matrix[0, 2] - rot_matrix[2, 0]) / S
+        z = (rot_matrix[1, 0] - rot_matrix[0, 1]) / S
+    elif rot_matrix[0, 0] > rot_matrix[1, 1] and rot_matrix[0, 0] > rot_matrix[2, 2]:
+        S = np.sqrt(1.0 + rot_matrix[0, 0] - rot_matrix[1, 1] - rot_matrix[2, 2]) * 2
+        w = (rot_matrix[2, 1] - rot_matrix[1, 2]) / S
+        x = 0.25 * S
+        y = (rot_matrix[0, 1] + rot_matrix[1, 0]) / S
+        z = (rot_matrix[0, 2] + rot_matrix[2, 0]) / S
+    elif rot_matrix[1, 1] > rot_matrix[2, 2]:
+        S = np.sqrt(1.0 + rot_matrix[1, 1] - rot_matrix[0, 0] - rot_matrix[2, 2]) * 2
+        w = (rot_matrix[0, 2] - rot_matrix[2, 0]) / S
+        x = (rot_matrix[0, 1] + rot_matrix[1, 0]) / S
+        y = 0.25 * S
+        z = (rot_matrix[1, 2] + rot_matrix[2, 1]) / S
+    else:
+        S = np.sqrt(1.0 + rot_matrix[2, 2] - rot_matrix[0, 0] - rot_matrix[1, 1]) * 2
+        w = (rot_matrix[1, 0] - rot_matrix[0, 1]) / S
+        x = (rot_matrix[0, 2] + rot_matrix[2, 0]) / S
+        y = (rot_matrix[1, 2] + rot_matrix[2, 1]) / S
+        z = 0.25 * S
+    return [x, y, z, w]
 
 ######### RoboSensai Specified #########
 def sample_pc_from_mesh(mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, visualize=False):

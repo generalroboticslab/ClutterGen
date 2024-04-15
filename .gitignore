@@ -144,3 +144,4 @@ Pointnet_Pointnet2_pytorch/
 StablePlacement/SP_Dataset
 StablePlacement/SP_Model
 StablePlacement/SP_Result
+gd_sam_cache/

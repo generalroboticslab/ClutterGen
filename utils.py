@@ -7,6 +7,8 @@ import numpy as np
 import torch
 import re
 import h5py
+import trimesh
+import cv2
 
 
 def read_json(json_path):
@@ -329,6 +331,7 @@ def se3_transform_pc(t, q, pc):
         t = np.array(t)
     if not isinstance(q, np.ndarray):
         q = np.array(q)
+    # unsqueeze for broadcasting operation
     if len(t.shape) == 1:
         t = t[np.newaxis, :]
     if len(q.shape) == 1:
@@ -352,3 +355,50 @@ def generate_table(records, success_rate_name, success_rate_counts_name, table_n
         ["Num Data Point"]+list(records[success_rate_counts_name].values()),
     ]
     return success_misc
+
+
+# Video Recording
+def read_video_frames(video_path):
+    """
+    Reads a video file and yields each frame.
+
+    :param video_path: Path to the video file
+    :return: Yields each frame of the video
+    """
+    # Open the video file
+    cap = cv2.VideoCapture(video_path)
+
+    # Check if the video was opened successfully
+    if not cap.isOpened():
+        print(f"Error opening video file {video_path}")
+        return
+
+    # Read and yield each frame of the video
+    while True:
+        ret, frame = cap.read()
+
+        # If the frame was not retrieved successfully, end of video is reached
+        if not ret:
+            break
+
+        yield frame
+
+    # When everything done, release the video capture object
+    cap.release()
+
+
+# Mesh Utils
+def create_and_save_cuboid_mesh(file_path, extents=[0.04, 0.04, 0.04]):
+    """
+    Generate a cube mesh with the given edge length and save it to the specified file path.
+
+    :param edge_length: Length of the cube's edge
+    :param file_path: Path where the mesh file will be saved
+    """
+    # Create a cube mesh
+    cube = trimesh.creation.box(extents=extents)
+
+    # Save the mesh to the specified file path
+    cube.export(file_path)
+
+    print(f"Cube mesh saved to {file_path}")

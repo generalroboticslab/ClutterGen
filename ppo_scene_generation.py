@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument('--max_num_obj_points', type=int, default=1024)
     parser.add_argument('--max_num_qr_scene_points', type=int, default=10240)
     parser.add_argument('--max_num_scene_points', type=int, default=20480)
-    parser.add_argument('--tablehalfExtents', type=json.loads, default=[0.3, 0.4, 0.35], help='A list of max num of placing objs')
+    parser.add_argument('--tablehalfExtents', type=json.loads, default=[0.2, 0.3, 0.35], help='A list of max num of placing objs')
     parser.add_argument('--tableQueryRegion', type=json.loads, default=[0.2, 0.3, 0.35], help='A list of max num of placing objs')
     
     # RoboSensai Env parameters (training)
@@ -86,7 +86,7 @@ def parse_args():
     parser.add_argument("--use_pc_extractor", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--total_timesteps", type=int, default=int(1e9), help="total timesteps of the experiments")
     parser.add_argument("--num_envs", type=int, default=10, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=80, help="the number of steps to run in each environment per policy rollout per object")
+    parser.add_argument("--num-steps", type=int, default=50, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--pc_batchsize", type=int, default=20, help="the number of steps to run in each environment per policy rollout per object")
     parser.add_argument("--use_relu", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Use Relu or tanh.")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")

@@ -1,11 +1,5 @@
 import os
 import sys
-# Get the directory of the current script
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# Get the parent directory path
-parent_dir = os.path.dirname(current_dir)
-# Add the parent directory to sys.path
-sys.path.append(parent_dir)
 import datetime
 from tabulate import tabulate
 from copy import deepcopy

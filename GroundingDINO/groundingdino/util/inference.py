@@ -87,7 +87,7 @@ def predict(
 
 def annotate(image_source: np.ndarray, boxes: torch.Tensor, logits: torch.Tensor, phrases: List[str]) -> np.ndarray:
     h, w, _ = image_source.shape
-    boxes = boxes * torch.Tensor([w, h, w, h])
+    boxes = boxes * torch.Tensor([w, h, w, h]).to(boxes.device)
     xyxy = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
     detections = sv.Detections(xyxy=xyxy)
 
