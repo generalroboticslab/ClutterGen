@@ -94,14 +94,22 @@ class Base_Actor(nn.Module):
 
 
 class StablePlacementPolicy_Determ(nn.Module):
-    def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
+    def __init__(self, mlp_input=2048, action_dim=4, use_pn_plus=False, device=None) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # PointNet
         assert mlp_input % 2 == 0, "mlp_input must be even"
         self.pc_ft_dim = mlp_input // 2
-        self.scene_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
-        self.qr_obj_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
+        self.use_pn_plus = use_pn_plus
+        if self.use_pn_plus:
+            self.scene_pc_encoder = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
+            self.scene_pc_encoder.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", map_location=self.device)
+            self.qr_obj_pc_encoder = get_model(num_class=40, normal_channel=False).to(self.device)
+            self.qr_obj_pc_encoder.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", map_location=self.device)
+        else:
+            self.scene_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
+            self.qr_obj_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
+
         # Linear
         self.num_action_logits = action_dim
         self.actor = Base_Actor(mlp_input, self.num_action_logits)
@@ -109,8 +117,9 @@ class StablePlacementPolicy_Determ(nn.Module):
     def forward(self, scene_pc, qr_obj_pc):
         # PC-Net Points xyz: input points position data, [B, C, N]
         # While our pc input is [B, N, C] so we need transpose (if we use pointNet)
-        # scene_pc = scene_pc.transpose(1, 2)
-        # qr_obj_pc = qr_obj_pc.transpose(1, 2)
+        if self.use_pn_plus:
+            scene_pc = scene_pc.transpose(1, 2)
+            qr_obj_pc = qr_obj_pc.transpose(1, 2)
         scene_pc_feature = self.scene_pc_encoder(scene_pc)
         qr_obj_pc_feature = self.qr_obj_pc_encoder(qr_obj_pc)
         feature = torch.cat([scene_pc_feature, qr_obj_pc_feature], dim=1)

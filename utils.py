@@ -331,6 +331,7 @@ def se3_transform_pc(t, q, pc):
         t = np.array(t)
     if not isinstance(q, np.ndarray):
         q = np.array(q)
+    # unsqueeze for broadcasting operation
     if len(t.shape) == 1:
         t = t[np.newaxis, :]
     if len(q.shape) == 1:

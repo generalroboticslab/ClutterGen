@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--main_dataset_path', type=str, default='StablePlacement/SP_Dataset/table_10_group0_dinning_table.h5')
     parser.add_argument('--save_folder', type=str, default='StablePlacement/SP_Result')
+    parser.add_argument('--force_name', default=None, type=str)
     
     # Training parameters
     parser.add_argument('--use_normal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
@@ -78,6 +79,9 @@ def parse_args():
 
     if args.auto_regression:
         args.final_name += '_AutoReg' + f"{args.num_ar_trials}"
+
+    if args.force_name is not None:
+        args.final_name = args.force_name + timer
 
     args.model_save_path = os.path.join(args.save_folder, args.final_name, "Checkpoint")
     args.json_save_path = os.path.join(args.save_folder, args.final_name, "Json")
@@ -315,7 +319,7 @@ for epoch in range(1, args.epochs+1):
                 'eval/best_val_loss': best_val_loss,
             }, commit=False)
     
-    print(f'Epoch {epoch}: Training Loss={pose_loss_record} | Best Validation Loss={best_val_loss}')
+    print(f'Epoch {epoch}: Training Loss={pose_loss_record} | Best Validation Loss={best_val_loss} | Best Sim Success Rate={best_sim_success_rate} | Best AR Success Rate={best_ar_success_rate}')
 
     if args.collect_data and args.wandb:
         wandb.log({

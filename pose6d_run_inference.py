@@ -20,7 +20,7 @@ sys.path.append(foundationdir)
 from FoundationPose.estimater import *
 from FoundationPose.datareader import *
 from grounded_sam import GD_SAM
-from realsense_test import RealSenseCamera
+from realsense_camera import RealSenseCamera
 
 
 class ObjectEstimator:

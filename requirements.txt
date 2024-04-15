@@ -1,3 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.1.0+cu121
+torchvision==0.16.0+cu121
+torchaudio==2.1.0+cu121
+torch-geometric
+
 gym
 ipython
 joblib
@@ -14,10 +20,6 @@ scikit-learn
 scipy
 seaborn
 stable-baselines3
-torch
-torch-geometric
-torchaudio
-torchvision
 tqdm
 trimesh
 wandb

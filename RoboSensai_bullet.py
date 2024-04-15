@@ -117,7 +117,7 @@ class RoboSensaiBullet:
         qr_pose, qr_ori, qr_half_extents = [0., 0., self.tableHalfExtents[2]+0.1], p.getQuaternionFromEuler([0., 0., 0.]), [*self.tableHalfExtents[:2], 0.1]
         table_pc = self.get_obj_pc_from_id(tableId, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
         table_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(table_pc)
-        self.convert_BaseLinkPC_2_BboxCenterPC(table_pc, table_axes_bbox)
+        table_pc = self.convert_BaseLinkPC_2_BboxCenterPC(table_pc, table_axes_bbox)
         self.fixed_scene_name_data["table"] = {"id": tableId,
                                                "init_z_offset": 0.0,
                                                "init_pose": ([0., 0., self.tableHalfExtents[2]], p.getQuaternionFromEuler([0., 0., 0.])),
@@ -148,7 +148,7 @@ class RoboSensaiBullet:
                 scene_mesh_num = pu.get_body_mesh_num(scene_id, client_id=self.client_id)
                 scene_pc = self.get_obj_pc_from_id(scene_id, num_points=self.args.max_num_qr_scene_points, use_worldpos=False)
                 scene_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(scene_pc)
-                self.convert_BaseLinkPC_2_BboxCenterPC(scene_pc, scene_axes_bbox)
+                scene_pc = self.convert_BaseLinkPC_2_BboxCenterPC(scene_pc, scene_axes_bbox)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 init_z_offset = 5. if not self.args.eval_result else 0. # For training, we hang the scene in the air; For evaluation, we place the scene on the ground
                 assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
@@ -196,7 +196,7 @@ class RoboSensaiBullet:
                 obj_mesh_num = pu.get_body_mesh_num(object_id, client_id=self.client_id)
                 obj_pc = self.get_obj_pc_from_id(object_id, num_points=self.args.max_num_urdf_points, use_worldpos=False)
                 obj_axes_bbox = pu.get_obj_axes_aligned_bbox_from_pc(obj_pc)
-                self.convert_BaseLinkPC_2_BboxCenterPC(obj_pc, obj_axes_bbox)
+                obj_pc = self.convert_BaseLinkPC_2_BboxCenterPC(obj_pc, obj_axes_bbox)
                 obj_init_pos_z = obj_axes_bbox[9] - obj_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 self.obj_name_data[obj_uni_name] = {
                                                     "id": object_id,
@@ -616,49 +616,44 @@ class RoboSensaiBullet:
 
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
         if self.his_steps <= (self.args.max_stable_steps + self.args.min_continue_stable_steps):
-            placed_obj_poses = self.placed_obj_poses.copy()
+            # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
+            self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
+            self.unplaced_objs_name.remove(self.selected_obj_name)
+            # Update the placement success rate of each object
+            self.update_running_avg(record_dict=self.info['obj_success_rate'],
+                                    key_name=self.selected_obj_name,
+                                    new_value=1.)
+            # Record the successful object base pose
             World2SelectedObjBase_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
-            placed_obj_poses[self.selected_obj_name] = World2SelectedObjBase_pose
-            
-            if self.post_check_scene_stable(placed_obj_poses):
-                # This object is successfully placed!! Jump to the next object; The whole scene is also stable
-                self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
-                self.unplaced_objs_name.remove(self.selected_obj_name)
-                # Update the placement success rate of each object
-                self.update_running_avg(record_dict=self.info['obj_success_rate'],
-                                        key_name=self.selected_obj_name,
-                                        new_value=1.)
-                # Record the successful object base pose
-                self.placed_obj_poses[self.selected_obj_name] = World2SelectedObjBase_pose
-                # Update the scene observation | transform the selected object point cloud to world frame using the current pose
-                # Merge the placed object points cloud to the scene points cloud (scene center frame)
-                World2QRsceneBase_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
-                World2QRsceneCenter_pose = p.multiplyTransforms(
-                    World2QRsceneBase_pose[0], World2QRsceneBase_pose[1], 
-                    self.selected_qr_scene_bbox[:3], self.selected_qr_scene_bbox[3:7]
-                )
-                World2SelectedObjCenter_pose = p.multiplyTransforms(
-                    World2SelectedObjBase_pose[0], World2SelectedObjBase_pose[1], 
-                    self.selected_obj_bbox[:3], self.selected_obj_bbox[3:7]
-                )
-                QRsceneCenter_2_SelectedObjCenter = pu.multiply_multi_transforms(
-                    p.invertTransform(*World2QRsceneCenter_pose), 
-                    World2SelectedObjCenter_pose
-                )
-                transformed_selected_obj_pc = se3_transform_pc(*QRsceneCenter_2_SelectedObjCenter, self.selected_obj_pc)
-                self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
-                self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
-                self.info["selected_init_qr_scene_ft"] = None # The scene points need to be re-extracted
-                self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
-                # Run one inference needs ~0.5s!
+            World2SelectedObjCenter_pose = p.multiplyTransforms(
+                World2SelectedObjBase_pose[0], World2SelectedObjBase_pose[1], 
+                self.selected_obj_bbox[:3], self.selected_obj_bbox[3:7]
+            )
+            self.placed_obj_poses[self.selected_obj_name] = World2SelectedObjBase_pose
+            # Update the scene observation | transform the selected object point cloud to world frame using the current pose
+            # Merge the placed object points cloud to the scene points cloud (scene center frame)
+            World2QRsceneBase_pose = pu.get_body_pose(self.selected_qr_scene_id, client_id=self.client_id)
+            World2QRsceneCenter_pose = p.multiplyTransforms(
+                World2QRsceneBase_pose[0], World2QRsceneBase_pose[1], 
+                self.selected_qr_scene_bbox[:3], self.selected_qr_scene_bbox[3:7]
+            )
+            QRsceneCenter_2_SelectedObjCenter = pu.multiply_multi_transforms(
+                p.invertTransform(*World2QRsceneCenter_pose), 
+                World2SelectedObjCenter_pose
+            )
+            transformed_selected_obj_pc = se3_transform_pc(*QRsceneCenter_2_SelectedObjCenter, self.selected_obj_pc)
+            self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
+            self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
+            self.info["selected_init_qr_scene_ft"] = None # The scene points need to be re-extracted
+            self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
 
-                # vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
-                vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) \
-                            if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
-                            else self.args.reward_pobj
+            # vel_reward += len(self.placed_obj_poses) * self.args.reward_pobj
+            vel_reward += max(100, self.args.reward_pobj * self.args.max_num_placing_objs) \
+                          if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
+                          else self.args.reward_pobj
 
-                # pu.visualize_pc(self.selected_qr_scene_pc)
-                # pu.visualize_pc(self.selected_obj_pc)
+            # pu.visualize_pc(self.selected_qr_scene_pc)
+            # pu.visualize_pc(self.selected_obj_pc)
 
         self.last_reward = vel_reward
 
@@ -699,13 +694,17 @@ class RoboSensaiBullet:
                                     new_value=self.success_obj_num)
             
             if self.success_obj_num >= self.args.max_num_placing_objs:
-                # Post-Check about the stability of the placement
-                self.info['success'] = 1.
-                if self.args.rendering: # Success visualization; Only for evaluation!
-                    print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
-                    if self.args.eval_result: pu.step_real(duration=3., client_id=self.client_id)
+                # Post-Check about the stability of the placement in stable placement data collection
+                if self.args.eval_result and (self.args.strict_checking or self.args.sp_data_collection): 
+                    self.info['success'] = float(self.post_check_scene_stable())
+                else:
+                    self.info['success'] = 1.
             else:
                 self.info['success'] = 0.
+
+            if self.args.rendering and self.info['success']==1: # Success visualization; Only for evaluation!
+                print(f"Successfully Place {self.success_obj_num} Objects {self.selected_qr_scene_region} the {self.selected_qr_scene_name}!")
+                if self.args.eval_result: pu.step_real(duration=3., client_id=self.client_id)
 
             # Must deepcopy the recorder since it will be reset before the info gets returned (stablebaseline3 will reset the environment after done is True)
             if self.args.blender_record:
@@ -718,9 +717,8 @@ class RoboSensaiBullet:
                     self.stable_placement_reset()
             
             # Stable placement data collection
-            if self.args.eval_result and self.args.sp_data_collection:
-                if self.info['success'] == 1.:
-                    self.stable_placement_data_collection()
+            if self.args.eval_result and self.args.sp_data_collection and self.info['success']==1:
+                self.stable_placement_data_collection()
         
         return done
     
@@ -901,28 +899,42 @@ class RoboSensaiBullet:
         projection_matrix = p.computeProjectionMatrixFOV(fov=fov, aspect=aspect, nearVal=near, farVal=far)
 
         tableheight = self.tableHalfExtents[2] * 2
-        scene_camera_height = 0.3 + tableheight
+        scene_camera_height = 0.4 + tableheight
         obj_camera_height = 0.2 + self.sp_obj_prepared_World2Center_pose[0][2]
-        
-        camera_view_matrix_1 = pu.compute_camera_matrix([self.tableHalfExtents[0]*2, 0., scene_camera_height], [0, 0, tableheight])
-        camera_view_matrix_2 = pu.compute_camera_matrix([0, self.tableHalfExtents[1]*2, scene_camera_height], [0, 0, tableheight])
-        camera_view_matrix_3 = pu.compute_camera_matrix([-self.tableHalfExtents[0]*2, 0., scene_camera_height], [0, 0, tableheight])
-        camera_view_matrix_4 = pu.compute_camera_matrix([0, -self.tableHalfExtents[1]*2, scene_camera_height], [0, 0, tableheight])
-        self.scene_cameras[0] = {"viewMatrix": camera_view_matrix_1, "projectionMatrix": projection_matrix}
-        self.scene_cameras[1] = {"viewMatrix": camera_view_matrix_2, "projectionMatrix": projection_matrix}
-        self.scene_cameras[2] = {"viewMatrix": camera_view_matrix_3, "projectionMatrix": projection_matrix}
-        self.scene_cameras[3] = {"viewMatrix": camera_view_matrix_4, "projectionMatrix": projection_matrix}
 
-        obj_cam_offset = 0.3
-        obj_camera_view_matrix_1 = pu.compute_camera_matrix([self.sp_obj_prepared_World2Center_pose[0][0]-obj_cam_offset, 
-                                                             self.sp_obj_prepared_World2Center_pose[0][1], 
-                                                             obj_camera_height], self.sp_obj_prepared_World2Center_pose[0])
-        obj_camera_view_matrix_2 = pu.compute_camera_matrix([self.sp_obj_prepared_World2Center_pose[0][0]+obj_cam_offset, 
-                                                             self.sp_obj_prepared_World2Center_pose[0][1], 
-                                                             obj_camera_height], self.sp_obj_prepared_World2Center_pose[0])
-        self.obj_cameras[0] = {"viewMatrix": obj_camera_view_matrix_1, "projectionMatrix": projection_matrix}
-        self.obj_cameras[1] = {"viewMatrix": obj_camera_view_matrix_2, "projectionMatrix": projection_matrix}
-    
+        num_camera_poses = 4
+        scene_camera_focus_pose = [0, 0, tableheight]
+        scene_camera_view_traj_x = [[-self.tableHalfExtents[0]*2, 0., scene_camera_height], [self.tableHalfExtents[0]*2, 0., scene_camera_height]]
+        scene_camera_view_traj_y = [[0, -self.tableHalfExtents[1]*2, scene_camera_height], [0, self.tableHalfExtents[1]*2, scene_camera_height]]
+        for i, scene_camera_view_pose in enumerate(np.linspace(scene_camera_view_traj_x[0], scene_camera_view_traj_x[1], num_camera_poses)):
+            camera_view_matrix = pu.compute_camera_matrix(scene_camera_view_pose, scene_camera_focus_pose)
+            self.scene_cameras[i] = {"viewMatrix": camera_view_matrix, "projectionMatrix": projection_matrix}
+            cam_pos, cam_rot_mat = pu.get_pose_from_view_matrix(camera_view_matrix)
+            # self.scene_cameras[i]["axis_ids"] = pu.draw_camera_axis(cam_pos, cam_rot_mat, client_id=self.client_id)
+        
+        for j, obj_camera_view_pose in enumerate(np.linspace(scene_camera_view_traj_y[0], scene_camera_view_traj_y[1], num_camera_poses)):
+            camera_view_matrix = pu.compute_camera_matrix(obj_camera_view_pose, scene_camera_focus_pose)
+            self.scene_cameras[j+num_camera_poses] = {"viewMatrix": camera_view_matrix, "projectionMatrix": projection_matrix}
+            cam_pos, cam_rot_mat = pu.get_pose_from_view_matrix(camera_view_matrix)
+            # self.scene_cameras[j+num_camera_poses]["axis_ids"] = pu.draw_camera_axis(cam_pos, cam_rot_mat, client_id=self.client_id)
+        
+        obj_camera_focus_pose = self.sp_obj_prepared_World2Center_pose[0]
+        obj_camera_view_traj_x = [[self.sp_obj_prepared_World2Center_pose[0][0]-0.3, self.sp_obj_prepared_World2Center_pose[0][1], obj_camera_height],
+                                  [self.sp_obj_prepared_World2Center_pose[0][0]+0.3, self.sp_obj_prepared_World2Center_pose[0][1], obj_camera_height]]
+        obj_camera_view_traj_y = [[self.sp_obj_prepared_World2Center_pose[0][0], self.sp_obj_prepared_World2Center_pose[0][1]-0.3, obj_camera_height],
+                                    [self.sp_obj_prepared_World2Center_pose[0][0], self.sp_obj_prepared_World2Center_pose[0][1]+0.3, obj_camera_height]]
+        for i, obj_camera_view_pose in enumerate(np.linspace(obj_camera_view_traj_x[0], obj_camera_view_traj_x[1], num_camera_poses)):
+            camera_view_matrix = pu.compute_camera_matrix(obj_camera_view_pose, obj_camera_focus_pose)
+            self.obj_cameras[i] = {"viewMatrix": camera_view_matrix, "projectionMatrix": projection_matrix}
+            cam_pos, cam_rot_mat = pu.get_pose_from_view_matrix(camera_view_matrix)
+            # self.obj_cameras[i]["axis_ids"] = pu.draw_camera_axis(cam_pos, cam_rot_mat, client_id=self.client_id)
+        
+        for j, obj_camera_view_pose in enumerate(np.linspace(obj_camera_view_traj_y[0], obj_camera_view_traj_y[1], num_camera_poses)):
+            camera_view_matrix = pu.compute_camera_matrix(obj_camera_view_pose, obj_camera_focus_pose)
+            self.obj_cameras[j+num_camera_poses] = {"viewMatrix": camera_view_matrix, "projectionMatrix": projection_matrix}
+            cam_pos, cam_rot_mat = pu.get_pose_from_view_matrix(camera_view_matrix)
+            # self.obj_cameras[j+num_camera_poses]["axis_ids"] = pu.draw_camera_axis(cam_pos, cam_rot_mat, client_id=self.client_id)
+
 
     def get_scene_points_cloud(self, camera_scan=True):
         scene_pc = []
@@ -1032,6 +1044,8 @@ class RoboSensaiBullet:
         World2Scene_pc, World2Qr_obj_pc = self.sp_compute_observation(qr_obj_name=qr_obj_name, camera_scan=camera_scan)
         scene_surface_pc = self.crop_pc(World2Scene_pc, self.World2SceneCropRegion)
         qr_obj_pc = self.crop_pc(World2Qr_obj_pc, self.World2ObjCropRegion)
+        scene_surface_pc = pc_random_downsample(scene_surface_pc, self.args.max_num_scene_points)
+        qr_obj_pc = pc_random_downsample(qr_obj_pc, self.args.max_num_obj_points)
         # Transform the scene points cloud to the table surface center frame
         TableSurfaceCenter2World = p.invertTransform(*self.World2tableSurfaceCenter)
         TableSurfaceCenter2ScenePC = se3_transform_pc(*TableSurfaceCenter2World, scene_surface_pc)
@@ -1041,8 +1055,9 @@ class RoboSensaiBullet:
         self.World2QrobjCenter_pose = pu.split_7d(qr_obj_bbox[:7])
         QrobjCenter2World_pose = p.invertTransform(*self.World2QrobjCenter_pose)
         ObjCenter2ObjPC = se3_transform_pc(*QrobjCenter2World_pose, qr_obj_pc)
-        ObjCenter2ObjPC = self.obj_name_data[qr_obj_name]["pc"]
+        # ObjCenter2ObjPC = self.obj_name_data[qr_obj_name]["pc"]
         # # Compute the object grasp pose
+        # pu.visualize_pc(scene_surface_pc)
         # pu.visualize_pc(ObjCenter2ObjPC)
         self.ObjCenter2PreGripperBase_pose, self.ObjCenter2GripperBase_pose = self.grasp_planner.plan_grasps(ObjCenter2ObjPC, qr_obj_bbox[7:])
         return TableSurfaceCenter2ScenePC, ObjCenter2ObjPC
@@ -1338,9 +1353,7 @@ class RoboSensaiBullet:
 
     def convert_BaseLinkPC_2_BboxCenterPC(self, pc, Base2BboxCenter):
         BboxCenter2Base = p.invertTransform(Base2BboxCenter[:3], [0., 0., 0., 1.])
-        for i, Base2point in enumerate(pc):
-            pc[i] = p.multiplyTransforms(*BboxCenter2Base, Base2point, [0., 0., 0., 1.])[0]
-        return pc
+        return se3_transform_pc(*BboxCenter2Base, pc)
 
 
     ######################################
