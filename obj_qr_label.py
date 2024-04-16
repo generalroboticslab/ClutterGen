@@ -53,8 +53,8 @@ class ObjectLabeler:
         p.setGravity(0, 0, -9.8)
         self.plane_id = p.loadURDF("plane.urdf")
         self.cur_object_id = None
-        pu.change_obj_color(self.plane_id, rgba_color=[1., 1., 1., 0.2])
-        tableHalfExtents = [0.4, 0.5, 0.35]
+        pu.change_obj_color(self.plane_id, rgba_color=[1., 1., 1., 0.02])
+        tableHalfExtents = [0.2, 0.3, 0.35]
         tableId = pu.draw_box_body(position=[0., 0., tableHalfExtents[2]], orientation=p.getQuaternionFromEuler([0., 0., 0.]),
                                    halfExtents=tableHalfExtents, rgba_color=[1, 1, 1, 0.3])
         if reset_all:
@@ -328,7 +328,7 @@ class ObjectLabeler:
                             if continue_stable_steps > ContinuousStableSteps and not first_stable:
                                 if not first_stable:  
                                     first_stable = True
-                                    print(f"Stable Steps: {i-ContinuousStableSteps}.")
+                                    print(f"Stable Steps: {i}.")
                                 # break
                         else:
                             continue_stable_steps = 0
@@ -409,14 +409,14 @@ if __name__ == '__main__':
     Label = "scene"
     
     if Label == "obj":
-        source_folder_path = "assets/YCB/ycb_urdf"
-        target_folder_name = "selected_obj"
+        source_folder_path = "assets/group_objects/group3_kitchen_table"
+        target_folder_name = "group_objects/group3_kitchen_table"
 
-        labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=False)
+        labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
         labeler.start()
     else:
         source_folder_path = "assets/union_scene"
-        target_folder_name = "selected_scene"
+        target_folder_name = "tabletop_selected_scene"
 
         labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
         labeler.start()
