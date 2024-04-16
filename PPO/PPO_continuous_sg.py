@@ -344,7 +344,10 @@ class Agent(nn.Module):
         else:
             raw_action = self.unsquashed_action(action)
 
-        logprob = self.squashed_logprob(probs, raw_action).sum(1) # Enforcing Action Bound
+        try:
+            logprob = self.squashed_logprob(probs, raw_action).sum(1) # Enforcing Action Bound
+        except:
+            import ipdb; ipdb.set_trace()
         self.prob_entropy = self.squashed_entropy(probs) # Record the current probs for logging
         entropy = self.prob_entropy.sum(1)
         return action, logprob, entropy, self.critic(x)
