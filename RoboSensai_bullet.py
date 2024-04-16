@@ -499,8 +499,8 @@ class RoboSensaiBullet:
                 self.continue_stable_steps += 1
                 if self.continue_stable_steps >= self.args.min_continue_stable_steps: 
                     break
-            else:
-                self.continue_stable_steps = 0
+            # else:
+            #     self.continue_stable_steps = 0
 
             self.prev_obj_vel = obj_vel
 
