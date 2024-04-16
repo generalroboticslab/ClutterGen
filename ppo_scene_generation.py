@@ -132,7 +132,7 @@ def parse_args():
         args.rendering = True
 
     # Uniformalize training name
-    additional = 'Sync_Beta'
+    additional = '_Sync_Beta'
     ###--- suffix for final name ---###
     if args.specific_scene is not None:
         additional += f'_{args.specific_scene}'
@@ -168,7 +168,8 @@ def parse_args():
     additional += f'_entropy{args.ent_coef}'
     additional += f'_seed{args.seed}'
 
-    args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
+    args.timer = '_' + datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")  # a time name file
+    print(args.timer)
 
     if args.random_policy:  # final_name is in all file names: .csv / .json / trajectory / checkpoints
         args.final_name = args.object_pool_name + args.timer + additional.replace('-train', '-random_policy')
