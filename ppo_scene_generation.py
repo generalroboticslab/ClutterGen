@@ -135,6 +135,7 @@ def parse_args():
 
     # Uniformalize training name
     additional = '_Sync_Beta'
+    additional += f"_{os.path.basename(args.object_pool_folder)}"
     ###--- suffix for final name ---###
     if args.specific_scene is not None:
         additional += f'_{args.specific_scene}'
