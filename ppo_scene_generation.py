@@ -21,6 +21,8 @@ import torch.optim as optim
 
 from multi_envs import *
 from utils import *
+import threadpoolctl as tpc
+import multiprocessing
 
 
 def parse_args():
@@ -68,7 +70,7 @@ def parse_args():
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='group_objects/group1_studying_table', help="folder path that stores all urdf files")
     parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
 
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -226,6 +228,11 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
+    # Compute the limits for the threadpool
+    n_cpu_cores = multiprocessing.cpu_count()
+    n_gpu_used = 1
+    thread_limits = max(1, int(n_cpu_cores * n_gpu_used / args.num_envs))
+
     # env and scene setup
     if args.num_envs > 1:
         envs = create_multi_envs(args, 'forkserver')
@@ -311,366 +318,368 @@ if __name__ == "__main__":
     meta_data = {"milestone": {}, "training_info": {}}
     best_agent_state_dict, best_optimizer_state_dict = None, None
 
-    for num_placing_objs in num_placing_objs_lst:
-        torch.cuda.empty_cache()
-        torch.autograd.set_detect_anomaly(True)
 
-        if args.num_envs > 1:
-            envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
-            envs.env_method('create_info_buffer') # reset the info to record the new training miscs
-        else:
-            envs.args.max_num_placing_objs = num_placing_objs
-            envs.create_info_buffer()
-        
-        args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps global_episodes to update
-        args.batch_size = int(args.num_envs * args.num_steps)
-        args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
-        meta_data["training_info"].update({
-            num_placing_objs: {
-                "batch_size": args.batch_size,
-                "num_steps": args.num_steps,
-            }
-        })
+    with tpc.threadpool_limits(limits=thread_limits):
+        for num_placing_objs in num_placing_objs_lst:
+            torch.cuda.empty_cache()
+            torch.autograd.set_detect_anomaly(True)
 
-        # Load the best parameters for next curriculum
-        if best_agent_state_dict is not None:
-            agent.load_state_dict(best_agent_state_dict)
-            best_agent_state_dict = None # Consume the best agent state dict
-        if best_optimizer_state_dict is not None:
-            optimizer.load_state_dict(best_optimizer_state_dict)
-            best_optimizer_state_dict = None # Consume the best optimizer state dict
+            if args.num_envs > 1:
+                envs.env_method('set_args', 'max_num_placing_objs', num_placing_objs)
+                envs.env_method('create_info_buffer') # reset the info to record the new training miscs
+            else:
+                envs.args.max_num_placing_objs = num_placing_objs
+                envs.create_info_buffer()
+            
+            args.num_steps = max(args.num_steps, ((args.max_trials * num_placing_objs) * 4)) # At least 4 * num_envs or 80/avg_steps global_episodes to update
+            args.batch_size = int(args.num_envs * args.num_steps)
+            args.num_minibatches = ceil(args.batch_size // args.minibatch_size)
+            meta_data["training_info"].update({
+                num_placing_objs: {
+                    "batch_size": args.batch_size,
+                    "num_steps": args.num_steps,
+                }
+            })
 
-        # Storage
-        seq_obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
-        scene_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
-        obj_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
-        actions = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=temp_env.tensor_dtype).to(device)
-        logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
-        rewards = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
-        dones = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
-        values = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+            # Load the best parameters for next curriculum
+            if best_agent_state_dict is not None:
+                agent.load_state_dict(best_agent_state_dict)
+                best_agent_state_dict = None # Consume the best agent state dict
+            if best_optimizer_state_dict is not None:
+                optimizer.load_state_dict(best_optimizer_state_dict)
+                best_optimizer_state_dict = None # Consume the best optimizer state dict
 
-        # TRY NOT TO MODIFY: start the game
-        start_time = time.time()
-        next_seq_obs = torch.Tensor(envs.reset()).to(device)
-        # Scene and obj feature tensor are keeping updated inplace
-        next_scene_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
-        next_obj_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
-        reset_infos = envs.reset_infos if args.num_envs > 1 else [envs.info]
-        agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, reset_infos, use_mask=True)
-        next_done = torch.zeros(args.num_envs).to(device)
-        num_updates = args.total_timesteps // args.batch_size  # ?? same as global_episodes? No!! global_episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
+            # Storage
+            seq_obs = torch.zeros((args.num_steps, args.num_envs) + temp_env.raw_act_hist_qr_obs_shape[1:], dtype=tensor_dtype).to(device)
+            scene_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+            obj_ft_obs = torch.zeros((args.num_steps, args.num_envs) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
+            actions = torch.zeros((args.num_steps, args.num_envs) + temp_env.action_shape[1:], dtype=temp_env.tensor_dtype).to(device)
+            logprobs = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+            rewards = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+            dones = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
+            values = torch.zeros((args.num_steps, args.num_envs), dtype=temp_env.tensor_dtype).to(device)
 
-        # custom record information
-        episode_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_pos_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_ori_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_act_penalties = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+            # TRY NOT TO MODIFY: start the game
+            start_time = time.time()
+            next_seq_obs = torch.Tensor(envs.reset()).to(device)
+            # Scene and obj feature tensor are keeping updated inplace
+            next_scene_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.scene_ft_dim, ), dtype=tensor_dtype).to(device)
+            next_obj_ft_obs = torch.zeros((args.num_envs, ) + (temp_env.obj_ft_dim, ), dtype=tensor_dtype).to(device)
+            reset_infos = envs.reset_infos if args.num_envs > 1 else [envs.info]
+            agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, reset_infos, use_mask=True)
+            next_done = torch.zeros(args.num_envs).to(device)
+            num_updates = args.total_timesteps // args.batch_size  # ?? same as global_episodes? No!! global_episodes = (total_timsteps / batch_size) * num_envs * (avg num_episodes in 128 steps, usually are 20)
 
-        episode_rewards_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_success_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
-        episode_placed_objs_box = torch.zeros((args.reward_episodes, ), dtype=tensor_dtype).to(device)
-        iter_success_rate_box = torch.zeros((args.patience_iters, ), dtype=temp_env.tensor_dtype).to(device)
+            # custom record information
+            episode_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+            episode_pos_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+            episode_ori_rewards = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
+            episode_act_penalties = torch.zeros((args.num_envs, ), dtype=temp_env.tensor_dtype).to(device)
 
-        pos_r_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
-        ori_r_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
-        act_p_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
-        best_acc = 0; curri_episodes = 0; curri_steps = 0; curri_update_iters = 0; avg_buffer_reset = True
+            episode_rewards_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+            episode_success_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+            episode_placed_objs_box = torch.zeros((args.reward_episodes, ), dtype=tensor_dtype).to(device)
+            iter_success_rate_box = torch.zeros((args.patience_iters, ), dtype=temp_env.tensor_dtype).to(device)
 
-        # training
-        for update in range(1, num_updates + 1):
+            pos_r_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+            ori_r_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+            act_p_box = torch.zeros((args.reward_episodes, ), dtype=temp_env.tensor_dtype).to(device)
+            best_acc = 0; curri_episodes = 0; curri_steps = 0; curri_update_iters = 0; avg_buffer_reset = True
 
-            # Annealing the rate if instructed to do so.
-            if args.anneal_lr:  # schedule learning rate
-                frac = 1.0 - (update - 1.0) / num_updates
-                lrnow = frac * args.lr
-                optimizer.param_groups[0]["lr"] = lrnow
+            # training
+            for update in range(1, num_updates + 1):
 
-            for step in range(0, args.num_steps):
-                global_step += args.num_envs
-                curri_steps += args.num_envs
-                seq_obs[step] = next_seq_obs
-                scene_ft_obs[step] = next_scene_ft_obs
-                obj_ft_obs[step] = next_obj_ft_obs
+                # Annealing the rate if instructed to do so.
+                if args.anneal_lr:  # schedule learning rate
+                    frac = 1.0 - (update - 1.0) / num_updates
+                    lrnow = frac * args.lr
+                    optimizer.param_groups[0]["lr"] = lrnow
 
-                dones[step] = next_done
+                for step in range(0, args.num_steps):
+                    global_step += args.num_envs
+                    curri_steps += args.num_envs
+                    seq_obs[step] = next_seq_obs
+                    scene_ft_obs[step] = next_scene_ft_obs
+                    obj_ft_obs[step] = next_obj_ft_obs
 
-                ## ----- ALGO LOGIC: action logic ----- ##
-                ## if not expert_action, normal training; Otherwise use only expert actions
-                # transfer discrete actions to real actions; TODO: Logical problem about next_seq_obs (terminal observation to query step action for the first action)
-                if args.random_policy:
-                    step_action = torch.rand((args.num_envs, temp_env.action_shape[1]), device=device)
-                else:
-                    with torch.no_grad():
-                        step_action, logprob, _, value = agent.get_action_and_value([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
-                        values[step] = value.flatten()
-                    actions[step] = step_action
-                    logprobs[step] = logprob
+                    dones[step] = next_done
 
-                # TRY NOT TO MODIFY: execute the game and log data.
-                next_seq_obs, reward, done, infos = envs.step(step_action)
-                update_env_ids = agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
-
-                next_seq_obs, next_done = torch.Tensor(next_seq_obs).to(device), torch.Tensor(done).to(device)
-                rewards[step] = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
-                episode_rewards += rewards[step]
-                
-                terminal_index = next_done == 1
-                terminal_nums = terminal_index.sum().item()
-                # Compute the average episode rewards.
-                if terminal_nums > 0:
-                    global_episodes += terminal_nums
-                    curri_episodes += terminal_nums
-                    update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
-                    update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
-                    update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
-                    
-                    terminal_ids = terminal_index.nonzero().flatten()
-                    success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
-                    update_tensor_buffer(episode_success_box, success_buf)
-                    placed_obj_num_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success_placed_obj_num', terminal_ids)).to(device)
-                    update_tensor_buffer(episode_placed_objs_box, placed_obj_num_buf)
-
-                    # Empty the episode rewards
-                    episode_rewards[terminal_index] = 0.
-                    episode_reward = torch.mean(episode_rewards_box[-curri_episodes:]).item()
-                    episode_success_rate = torch.mean(episode_success_box[-curri_episodes:]).item()
-                    episode_placed_objs = torch.mean(episode_placed_objs_box[-curri_episodes:]).item()
-
-                    if not args.quiet:
-                        print(f"Global Steps:{global_step}/{args.total_timesteps}," 
-                              f"Episode:{global_episodes}, Success Rate:{episode_success_rate:.2f},"
-                              f"Reward:{episode_reward:.4f}")
-                    
-                    if args.collect_data:
-                        # Save success rate and placed objects number
-                        meta_data['training_info'].update({
-                            num_placing_objs: {
-                                "global_episodes": global_episodes,
-                                "global_steps": global_step,
-                                "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
-                                "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
-                            }
-                        })
-
-                        if args.wandb:
-                            wandb.log({'global_episodes': global_episodes, 
-                                       'global_steps': global_step,
-                                       'global_iterations': global_update_iter,
-                                       'reward/reward_train': episode_reward})
-
-                            if curri_episodes >= args.reward_episodes:  # episode success rate
-                                if avg_buffer_reset: # Only add once per curriculum
-                                    reward_episodes += curri_episodes
-                                    reward_update_iters += curri_update_iters
-                                    reward_steps += curri_steps
-                                    avg_buffer_reset = False
-                                wandb.log({'s_episodes': global_episodes - reward_episodes, 
-                                           's_iterations': global_update_iter - reward_update_iters,
-                                           's_steps': global_step - reward_steps,
-                                           'reward/success_rate': episode_success_rate,
-                                           'reward/num_placed_objs': episode_placed_objs})
-
-                        if curri_episodes > args.reward_episodes and episode_success_rate > best_acc:
-                            best_acc = episode_success_rate
-                            best_agent_state_dict = deepcopy(agent.state_dict())
-                            best_optimizer_state_dict = deepcopy(optimizer.state_dict())
-                            agent.save_checkpoint(folder_path=args.checkpoint_dir,
-                                                folder_name=args.final_name, 
-                                                suffix='best')
-                            print(f"s_episodes: {global_episodes - reward_episodes} | " 
-                                  f"Now best accuracy is {best_acc * 100:.3f}% | " 
-                                  f"Number of placed objects is {episode_placed_objs:.2f}")
-                        
-                        # about every args.reward_episodes (because of multi-envs) global_episodes to save one model
-                        if (global_episodes - save_mile_stone) >= args.reward_episodes:
-                            agent.save_checkpoint(folder_path=args.checkpoint_dir, 
-                                                  folder_name=args.final_name,
-                                                  suffix=str(global_episodes))
-                            save_mile_stone = global_episodes
-                            save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
-
-
-            ####----- force action to test variance; Skip the training process ----####
-            if args.random_policy: continue
-
-            ####----- Curriculum next stage checker ----####
-            # update_tensor_buffer(iter_success_rate_box, torch.tensor([episode_success_rate], dtype=iter_success_rate_box.dtype, device=iter_success_rate_box.device))
-            if args.use_curriculum and num_placing_objs < args.max_num_placing_objs:
-                if best_acc>=0.4:
-                    if args.collect_data: 
-                        meta_data["milestone"].update({
-                                num_placing_objs: {
-                                "num_placing_objs": num_placing_objs,
-                                "success_rate": best_acc,
-                                's_episodes': global_episodes - reward_episodes, 
-                                's_iterations': global_update_iter - reward_update_iters,
-                                's_steps': global_step - reward_steps,
-                            }
-                        })
-                        save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
-                    print(f"Curriculum update: {num_placing_objs} -> {num_placing_objs + args.train_step}")
-                    break
-
-
-            ####----- Compute advantage for each state in the markov chain ----####
-            with torch.no_grad():
-                next_value = agent.get_value([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs]).reshape(1, -1)
-                if args.gae:
-                    advantages = torch.zeros_like(rewards).to(device)
-                    lastgaelam = 0
-                    for t in reversed(range(args.num_steps)):
-                        if t == args.num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            nextvalues = next_value
-                        else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            nextvalues = values[t + 1]
-                        delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                        advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                    returns = advantages + values
-                else:
-                    returns = torch.zeros_like(rewards).to(device)
-                    for t in reversed(range(args.num_steps)):
-                        if t == args.num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            next_return = next_value
-                        else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            next_return = returns[t + 1]
-                        returns[t] = rewards[t] + args.gamma * nextnonterminal * next_return
-                    advantages = returns - values
-
-            # flatten the batch
-            b_seq_obs = seq_obs.reshape((-1,) + temp_env.raw_act_hist_qr_obs_shape[1:])
-            b_scene_ft_obs = scene_ft_obs.reshape((-1,) + (temp_env.scene_ft_dim, ))
-            b_obj_ft_obs = obj_ft_obs.reshape((-1,) + (temp_env.obj_ft_dim, ))
-            b_logprobs = logprobs.reshape(-1)
-            b_actions = actions.reshape((-1,) + temp_env.action_shape[1:])
-            b_advantages = advantages.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_values = values.reshape(-1)
-
-            # Optimizing the policy and value network
-            b_inds = np.arange(args.batch_size)
-            clipfracs = []
-            # Save previous parameters
-            if args.target_kl is not None:
-                agent_params_store = copy.deepcopy(agent.state_dict())
-                optim_params_store = copy.deepcopy(optimizer.state_dict())
-
-            for epoch in range(args.update_epochs):
-                np.random.shuffle(b_inds)
-                for start in range(0, args.batch_size, args.minibatch_size):
-                    end = start + args.minibatch_size
-                    mb_inds = b_inds[start:end]
-                    _, newlogprob, entropy, newvalue = agent.get_action_and_value([b_seq_obs[mb_inds], b_scene_ft_obs[mb_inds], b_obj_ft_obs[mb_inds]], b_actions[mb_inds])
-                    logratio = newlogprob - b_logprobs[mb_inds]
-                    ratio = logratio.exp()
-
-                    with torch.no_grad():
-                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                        old_approx_kl = (-logratio).mean()
-                        approx_kl = ((ratio - 1) - logratio).mean()
-                        clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
-
-                    mb_advantages = b_advantages[mb_inds]
-                    if args.norm_adv:
-                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-
-                    # Policy loss
-                    pg_loss1 = -mb_advantages * ratio
-                    pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                    # Value loss
-                    newvalue = newvalue.view(-1)
-                    if args.clip_vloss:
-                        v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                        v_clipped = b_values[mb_inds] + torch.clamp(
-                            newvalue - b_values[mb_inds],
-                            -args.clip_coef,
-                            args.clip_coef,
-                        )
-                        v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                        v_loss = 0.5 * v_loss_max.mean()
+                    ## ----- ALGO LOGIC: action logic ----- ##
+                    ## if not expert_action, normal training; Otherwise use only expert actions
+                    # transfer discrete actions to real actions; TODO: Logical problem about next_seq_obs (terminal observation to query step action for the first action)
+                    if args.random_policy:
+                        step_action = torch.rand((args.num_envs, temp_env.action_shape[1]), device=device)
                     else:
-                        v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                        with torch.no_grad():
+                            step_action, logprob, _, value = agent.get_action_and_value([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
+                            values[step] = value.flatten()
+                        actions[step] = step_action
+                        logprobs[step] = logprob
 
-                    entropy_loss = entropy.mean()
-                    loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    # TRY NOT TO MODIFY: execute the game and log data.
+                    next_seq_obs, reward, done, infos = envs.step(step_action)
+                    update_env_ids = agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, infos, use_mask=True)
 
-                    optimizer.zero_grad()
-                    loss.backward()
-                    # Clip grad norm seperately to avoid large value gradients to affect the policy gradients
-                    nn.utils.clip_grad_norm_(agent.critic.parameters(), args.max_grad_norm)
-                    nn.utils.clip_grad_norm_(agent.actor.parameters(), args.max_grad_norm)
-                    optimizer.step()
+                    next_seq_obs, next_done = torch.Tensor(next_seq_obs).to(device), torch.Tensor(done).to(device)
+                    rewards[step] = torch.Tensor(reward).to(device).view(-1) # if reward is not tensor inside
+                    episode_rewards += rewards[step]
+                    
+                    terminal_index = next_done == 1
+                    terminal_nums = terminal_index.sum().item()
+                    # Compute the average episode rewards.
+                    if terminal_nums > 0:
+                        global_episodes += terminal_nums
+                        curri_episodes += terminal_nums
+                        update_tensor_buffer(episode_rewards_box, episode_rewards[terminal_index])
+                        update_tensor_buffer(pos_r_box, episode_pos_rewards[terminal_index])
+                        update_tensor_buffer(act_p_box, episode_act_penalties[terminal_index])
+                        
+                        terminal_ids = terminal_index.nonzero().flatten()
+                        success_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success', terminal_ids)).to(device)
+                        update_tensor_buffer(episode_success_box, success_buf)
+                        placed_obj_num_buf = torch.Tensor(combine_envs_float_info2list(infos, 'success_placed_obj_num', terminal_ids)).to(device)
+                        update_tensor_buffer(episode_placed_objs_box, placed_obj_num_buf)
+
+                        # Empty the episode rewards
+                        episode_rewards[terminal_index] = 0.
+                        episode_reward = torch.mean(episode_rewards_box[-curri_episodes:]).item()
+                        episode_success_rate = torch.mean(episode_success_box[-curri_episodes:]).item()
+                        episode_placed_objs = torch.mean(episode_placed_objs_box[-curri_episodes:]).item()
+
+                        if not args.quiet:
+                            print(f"Global Steps:{global_step}/{args.total_timesteps}," 
+                                f"Episode:{global_episodes}, Success Rate:{episode_success_rate:.2f},"
+                                f"Reward:{episode_reward:.4f}")
+                        
+                        if args.collect_data:
+                            # Save success rate and placed objects number
+                            meta_data['training_info'].update({
+                                num_placing_objs: {
+                                    "global_episodes": global_episodes,
+                                    "global_steps": global_step,
+                                    "scene_obj_success_num": combine_envs_dict_info2dict(infos, key="scene_obj_success_num"),
+                                    "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
+                                }
+                            })
+
+                            if args.wandb:
+                                wandb.log({'global_episodes': global_episodes, 
+                                        'global_steps': global_step,
+                                        'global_iterations': global_update_iter,
+                                        'reward/reward_train': episode_reward})
+
+                                if curri_episodes >= args.reward_episodes:  # episode success rate
+                                    if avg_buffer_reset: # Only add once per curriculum
+                                        reward_episodes += curri_episodes
+                                        reward_update_iters += curri_update_iters
+                                        reward_steps += curri_steps
+                                        avg_buffer_reset = False
+                                    wandb.log({'s_episodes': global_episodes - reward_episodes, 
+                                            's_iterations': global_update_iter - reward_update_iters,
+                                            's_steps': global_step - reward_steps,
+                                            'reward/success_rate': episode_success_rate,
+                                            'reward/num_placed_objs': episode_placed_objs})
+
+                            if curri_episodes > args.reward_episodes and episode_success_rate > best_acc:
+                                best_acc = episode_success_rate
+                                best_agent_state_dict = deepcopy(agent.state_dict())
+                                best_optimizer_state_dict = deepcopy(optimizer.state_dict())
+                                agent.save_checkpoint(folder_path=args.checkpoint_dir,
+                                                    folder_name=args.final_name, 
+                                                    suffix='best')
+                                print(f"s_episodes: {global_episodes - reward_episodes} | " 
+                                    f"Now best accuracy is {best_acc * 100:.3f}% | " 
+                                    f"Number of placed objects is {episode_placed_objs:.2f}")
+                            
+                            # about every args.reward_episodes (because of multi-envs) global_episodes to save one model
+                            if (global_episodes - save_mile_stone) >= args.reward_episodes:
+                                agent.save_checkpoint(folder_path=args.checkpoint_dir, 
+                                                    folder_name=args.final_name,
+                                                    suffix=str(global_episodes))
+                                save_mile_stone = global_episodes
+                                save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
+
+
+                ####----- force action to test variance; Skip the training process ----####
+                if args.random_policy: continue
+
+                ####----- Curriculum next stage checker ----####
+                # update_tensor_buffer(iter_success_rate_box, torch.tensor([episode_success_rate], dtype=iter_success_rate_box.dtype, device=iter_success_rate_box.device))
+                if args.use_curriculum and num_placing_objs < args.max_num_placing_objs:
+                    if best_acc>=0.4:
+                        if args.collect_data: 
+                            meta_data["milestone"].update({
+                                    num_placing_objs: {
+                                    "num_placing_objs": num_placing_objs,
+                                    "success_rate": best_acc,
+                                    's_episodes': global_episodes - reward_episodes, 
+                                    's_iterations': global_update_iter - reward_update_iters,
+                                    's_steps': global_step - reward_steps,
+                                }
+                            })
+                            save_json(meta_data, os.path.join(args.trajectory_dir, "meta_data.json"))
+                        print(f"Curriculum update: {num_placing_objs} -> {num_placing_objs + args.train_step}")
+                        break
+
+
+                ####----- Compute advantage for each state in the markov chain ----####
+                with torch.no_grad():
+                    next_value = agent.get_value([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs]).reshape(1, -1)
+                    if args.gae:
+                        advantages = torch.zeros_like(rewards).to(device)
+                        lastgaelam = 0
+                        for t in reversed(range(args.num_steps)):
+                            if t == args.num_steps - 1:
+                                nextnonterminal = 1.0 - next_done
+                                nextvalues = next_value
+                            else:
+                                nextnonterminal = 1.0 - dones[t + 1]
+                                nextvalues = values[t + 1]
+                            delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                            advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                        returns = advantages + values
+                    else:
+                        returns = torch.zeros_like(rewards).to(device)
+                        for t in reversed(range(args.num_steps)):
+                            if t == args.num_steps - 1:
+                                nextnonterminal = 1.0 - next_done
+                                next_return = next_value
+                            else:
+                                nextnonterminal = 1.0 - dones[t + 1]
+                                next_return = returns[t + 1]
+                            returns[t] = rewards[t] + args.gamma * nextnonterminal * next_return
+                        advantages = returns - values
+
+                # flatten the batch
+                b_seq_obs = seq_obs.reshape((-1,) + temp_env.raw_act_hist_qr_obs_shape[1:])
+                b_scene_ft_obs = scene_ft_obs.reshape((-1,) + (temp_env.scene_ft_dim, ))
+                b_obj_ft_obs = obj_ft_obs.reshape((-1,) + (temp_env.obj_ft_dim, ))
+                b_logprobs = logprobs.reshape(-1)
+                b_actions = actions.reshape((-1,) + temp_env.action_shape[1:])
+                b_advantages = advantages.reshape(-1)
+                b_returns = returns.reshape(-1)
+                b_values = values.reshape(-1)
+
+                # Optimizing the policy and value network
+                b_inds = np.arange(args.batch_size)
+                clipfracs = []
+                # Save previous parameters
+                if args.target_kl is not None:
+                    agent_params_store = copy.deepcopy(agent.state_dict())
+                    optim_params_store = copy.deepcopy(optimizer.state_dict())
+
+                for epoch in range(args.update_epochs):
+                    np.random.shuffle(b_inds)
+                    for start in range(0, args.batch_size, args.minibatch_size):
+                        end = start + args.minibatch_size
+                        mb_inds = b_inds[start:end]
+                        _, newlogprob, entropy, newvalue = agent.get_action_and_value([b_seq_obs[mb_inds], b_scene_ft_obs[mb_inds], b_obj_ft_obs[mb_inds]], b_actions[mb_inds])
+                        logratio = newlogprob - b_logprobs[mb_inds]
+                        ratio = logratio.exp()
+
+                        with torch.no_grad():
+                            # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                            old_approx_kl = (-logratio).mean()
+                            approx_kl = ((ratio - 1) - logratio).mean()
+                            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+                        mb_advantages = b_advantages[mb_inds]
+                        if args.norm_adv:
+                            mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+
+                        # Policy loss
+                        pg_loss1 = -mb_advantages * ratio
+                        pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                        pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                        # Value loss
+                        newvalue = newvalue.view(-1)
+                        if args.clip_vloss:
+                            v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                            v_clipped = b_values[mb_inds] + torch.clamp(
+                                newvalue - b_values[mb_inds],
+                                -args.clip_coef,
+                                args.clip_coef,
+                            )
+                            v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                            v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                            v_loss = 0.5 * v_loss_max.mean()
+                        else:
+                            v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+
+                        entropy_loss = entropy.mean()
+                        loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+
+                        optimizer.zero_grad()
+                        loss.backward()
+                        # Clip grad norm seperately to avoid large value gradients to affect the policy gradients
+                        nn.utils.clip_grad_norm_(agent.critic.parameters(), args.max_grad_norm)
+                        nn.utils.clip_grad_norm_(agent.actor.parameters(), args.max_grad_norm)
+                        optimizer.step()
+
+                    if args.target_kl is not None and approx_kl > args.target_kl:
+                        agent.load_state_dict(agent_params_store)
+                        optimizer.load_state_dict(optim_params_store)
+                        break
 
                 if args.target_kl is not None and approx_kl > args.target_kl:
-                    agent.load_state_dict(agent_params_store)
-                    optimizer.load_state_dict(optim_params_store)
-                    break
+                    skipped_update_iter += 1
+                    if args.collect_data and args.wandb:
+                        wandb.log({
+                            'debug/skipped_update_iter': skipped_update_iter,
+                            'debug/skipped_kl': approx_kl.item(),
+                            'debug/skipped_adv': mb_advantages.mean().item()
+                        })
+                    continue # Skip the wandb log since the update is not successful
 
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                skipped_update_iter += 1
+                global_update_iter += 1
+                curri_update_iters += 1
+                # To float32 is because it does support for bfloat16 to numpy
+                y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()
+                var_y = np.var(y_true)
+                explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
                 if args.collect_data and args.wandb:
+                    concentration_alpha = agent.probs.concentration0.mean(dim=0)
+                    concentration_beta = agent.probs.concentration1.mean(dim=0)
+                    con_a_x, con_a_y, con_a_z, con_a_Rz = \
+                        concentration_alpha[0].item(), concentration_alpha[1].item(), concentration_alpha[2].item(), concentration_alpha[3].item()
+                    con_b_x, con_b_y, con_b_z, con_b_Rz = \
+                        concentration_beta[0].item(), concentration_beta[1].item(), concentration_beta[2].item(), concentration_beta[3].item()
+                    entropy_log = agent.prob_entropy.mean(dim=0)
+                    entropy_x, entropy_y, entropy_z, entropy_Rz = \
+                        entropy_log[0].item(), entropy_log[1].item(), entropy_log[2].item(), entropy_log[3].item()
                     wandb.log({
-                        'debug/skipped_update_iter': skipped_update_iter,
-                        'debug/skipped_kl': approx_kl.item(),
-                        'debug/skipped_adv': mb_advantages.mean().item()
+                        'steps': global_step, 
+                        'iterations': global_update_iter,
+                        'train/learning_rate': optimizer.param_groups[0]["lr"],
+                        'train/critic_loss': v_loss.item(),
+                        'train/policy_loss': pg_loss.item(),
+                        'train/approx_kl': approx_kl.item(),
+                        'train/advantages': mb_advantages.mean().item(),
+                        'train/explained_variance': explained_var,
+                        
+                        'entropy/entropy': entropy_loss.item(),
+                        'entropy/entropy_x': entropy_x,
+                        'entropy/entropy_y': entropy_y,
+                        'entropy/entropy_z': entropy_z,
+                        'entropy/entropy_Rz': entropy_Rz,
+                        'concentration_a/alpha_x': con_a_x,
+                        'concentration_a/alpha_y': con_a_y,
+                        'concentration_a/alpha_z': con_a_z,
+                        'concentration_a/alpha_Rz': con_a_Rz,
+                        'concentration_b/beta_x': con_b_x,
+                        'concentration_b/beta_y': con_b_y,
+                        'concentration_b/beta_z': con_b_z,
+                        'concentration_b/beta_Rz': con_b_Rz,
                     })
-                continue # Skip the wandb log since the update is not successful
 
-            global_update_iter += 1
-            curri_update_iters += 1
-            # To float32 is because it does support for bfloat16 to numpy
-            y_pred, y_true = b_values.to(torch.float32).cpu().numpy(), b_returns.to(torch.float32).cpu().numpy()
-            var_y = np.var(y_true)
-            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-            if args.collect_data and args.wandb:
-                concentration_alpha = agent.probs.concentration0.mean(dim=0)
-                concentration_beta = agent.probs.concentration1.mean(dim=0)
-                con_a_x, con_a_y, con_a_z, con_a_Rz = \
-                    concentration_alpha[0].item(), concentration_alpha[1].item(), concentration_alpha[2].item(), concentration_alpha[3].item()
-                con_b_x, con_b_y, con_b_z, con_b_Rz = \
-                    concentration_beta[0].item(), concentration_beta[1].item(), concentration_beta[2].item(), concentration_beta[3].item()
-                entropy_log = agent.prob_entropy.mean(dim=0)
-                entropy_x, entropy_y, entropy_z, entropy_Rz = \
-                    entropy_log[0].item(), entropy_log[1].item(), entropy_log[2].item(), entropy_log[3].item()
-                wandb.log({
-                    'steps': global_step, 
-                    'iterations': global_update_iter,
-                    'train/learning_rate': optimizer.param_groups[0]["lr"],
-                    'train/critic_loss': v_loss.item(),
-                    'train/policy_loss': pg_loss.item(),
-                    'train/approx_kl': approx_kl.item(),
-                    'train/advantages': mb_advantages.mean().item(),
-                    'train/explained_variance': explained_var,
-                    
-                    'entropy/entropy': entropy_loss.item(),
-                    'entropy/entropy_x': entropy_x,
-                    'entropy/entropy_y': entropy_y,
-                    'entropy/entropy_z': entropy_z,
-                    'entropy/entropy_Rz': entropy_Rz,
-                    'concentration_a/alpha_x': con_a_x,
-                    'concentration_a/alpha_y': con_a_y,
-                    'concentration_a/alpha_z': con_a_z,
-                    'concentration_a/alpha_Rz': con_a_Rz,
-                    'concentration_b/beta_x': con_b_x,
-                    'concentration_b/beta_y': con_b_y,
-                    'concentration_b/beta_z': con_b_z,
-                    'concentration_b/beta_Rz': con_b_Rz,
-                })
-
-            if not args.quiet:
-                print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
+                if not args.quiet:
+                    print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
 
 
-    if args.collect_data and not args.random_policy:  # not random policy or expert action
-        agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name, suffix='last')  # last
-    print('Process Over here')
-    envs.close()
-    wandb.finish()
+        if args.collect_data and not args.random_policy:  # not random policy or expert action
+            agent.save_checkpoint(folder_path=args.checkpoint_dir, folder_name=args.final_name, suffix='last')  # last
+        print('Process Over here')
+        envs.close()
+        wandb.finish()
