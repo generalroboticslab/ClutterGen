@@ -1,0 +1,2 @@
+link_0 hinge usb_rotation
+link_1 free usb_body

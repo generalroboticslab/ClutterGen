@@ -1,0 +1,2 @@
+link_0 hinge sphere
+link_1 heavy globe_frame

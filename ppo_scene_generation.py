@@ -70,7 +70,7 @@ def parse_args():
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    parser.add_argument('--object_pool_folder', type=str, default='group_objects/group2_office_table', help="folder path that stores all urdf files")
+    parser.add_argument('--object_pool_folder', type=str, default='group_objects/group0_dinning_table', help="folder path that stores all urdf files")
     parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
 
     parser.add_argument('--debug', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
