@@ -134,12 +134,7 @@ def parse_args():
         args.rendering = True
 
     # Uniformalize training name
-<<<<<<< HEAD
     additional = '_Sync_Normal'
-=======
-    additional = '_Sync_Beta'
-    additional += f"_{os.path.basename(args.object_pool_folder)}"
->>>>>>> multienv_sg_simple_temp
     ###--- suffix for final name ---###
     if args.specific_scene is not None:
         additional += f'_{args.specific_scene}'
