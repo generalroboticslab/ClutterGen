@@ -674,7 +674,6 @@ if __name__ == "__main__":
                         'concentration_b/beta_Rz': con_b_Rz,
                     })
 
-<<<<<<< HEAD
             global_update_iter += 1
             curri_update_iters += 1
             # To float32 is because it does support for bfloat16 to numpy
@@ -705,10 +704,6 @@ if __name__ == "__main__":
 
             if not args.quiet:
                 print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
-=======
-                if not args.quiet:
-                    print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
->>>>>>> multienv_sg_simple_temp
 
 
         if args.collect_data and not args.random_policy:  # not random policy or expert action
