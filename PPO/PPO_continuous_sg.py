@@ -344,10 +344,7 @@ class Agent(nn.Module):
         else:
             raw_action = self.unsquashed_action(action)
 
-        try:
-            logprob = self.squashed_logprob(probs, raw_action).sum(1) # Enforcing Action Bound
-        except:
-            import ipdb; ipdb.set_trace()
+        logprob = self.squashed_logprob(probs, raw_action).sum(1) # Enforcing Action Bound
         self.prob_entropy = self.squashed_entropy(probs) # Record the current probs for logging
         entropy = self.prob_entropy.sum(1)
         return action, logprob, entropy, self.critic(x)
@@ -378,6 +375,9 @@ class Agent(nn.Module):
 
     def squashed_logprob(self, normal, raw_action):
         logprob = normal.log_prob(raw_action)
+        if (logprob==torch.inf).any() or (logprob==-torch.inf).any() or torch.isnan(logprob).any():
+            print("logprob has inf or nan")
+            import ipdb; ipdb.set_trace()
         action = self.squashed_action(raw_action)
         logprob -= torch.log(self.action_scale * (1 - action.pow(2)) + 1e-6)
         logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training)
