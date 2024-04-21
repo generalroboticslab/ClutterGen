@@ -127,7 +127,7 @@ class ObjectLabeler:
             print(f"Current object id: {self.cur_object_id}.")
             self.cur_obj_pc = pu.get_obj_pc_from_id(self.cur_object_id)
             self.cur_obj_bbox = pu.get_obj_axes_aligned_bbox_from_pc(self.cur_obj_pc)
-            pu.change_obj_color(self.cur_object_id, rgba_color=[0., 0., 0., 0.2])
+            # pu.change_obj_color(self.cur_object_id, rgba_color=[0., 0., 0., 0.2])
             
             p.changeDynamics(self.cur_object_id, -1, mass=0.)
             obj_joints_num = pu.get_num_joints(self.cur_object_id)
@@ -178,8 +178,8 @@ class ObjectLabeler:
         global_scaling_read = p.readUserDebugParameter(self.global_scaling_param)
         if self.old_gb_scaling != global_scaling_read:
             self.old_gb_scaling = global_scaling_read
-        #     self.meta_data['globalScaling'] = global_scaling_read
-        #     self.load_cur_obj_and_pc()
+            # self.meta_data['globalScaling'] = global_scaling_read
+            # self.load_cur_obj_and_pc()
             print(f"Object Size changed to X: {self.cur_obj_bbox[7]*2*100}cm, Y: {self.cur_obj_bbox[8]*2*100}cm, Z: {self.cur_obj_bbox[9]*2*100}cm.")
 
         
@@ -406,11 +406,11 @@ class ObjectLabeler:
         
 
 if __name__ == '__main__':
-    Label = "scene"
+    Label = "obj"
     
     if Label == "obj":
         source_folder_path = "assets/group_objects/group3_kitchen_table"
-        target_folder_name = "group_objects/group3_kitchen_table"
+        target_folder_name = "group4_real_objects_selected"
 
         labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
         labeler.start()

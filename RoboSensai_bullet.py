@@ -393,6 +393,8 @@ class RoboSensaiBullet:
         # You can use unplaced_objs to decide how many objs should be placed on the scene
         selected_obj_pool = list(self.obj_name_data.keys())
         self.unplaced_objs_name = []
+        if self.args.random_select_placing:
+            self.rng.shuffle(selected_obj_pool)
         
         # Sequence selection to check the dataset stabability (only for evaluation)
         if self.args.seq_select_placing:
@@ -420,10 +422,6 @@ class RoboSensaiBullet:
                     raise NotImplementedError(f"Scene region {self.selected_qr_scene_region} is not implemented!")
                 
                 if len(self.unplaced_objs_name) >= self.args.max_num_placing_objs or len(selected_obj_pool)==0: break
-            
-            # TODO: Check whether this kind of curriculu will overfitting training or not.
-            if self.args.random_select_placing:
-                self.rng.shuffle(self.unplaced_objs_name)
 
 
     def update_unquery_scenes(self):

@@ -1,0 +1,3 @@
+link_0 hinge toggle_button
+link_1 free lamp_base
+link_2 hinge head

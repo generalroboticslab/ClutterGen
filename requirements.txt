@@ -42,6 +42,7 @@ scp
 str2bool
 ipdb
 h5py
+threadpoolctl
 
 # For real robot tasks
 notebook
