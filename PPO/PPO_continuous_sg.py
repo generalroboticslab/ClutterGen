@@ -370,7 +370,10 @@ class Agent(nn.Module):
     
 
     def unsquashed_action(self, action):
-        return torch.atanh((action - self.action_bias) / self.action_scale)
+        # Clamp the action to avoid numerical issues
+        tanh_raw_action = (action - self.action_bias) / self.action_scale
+        clamped_tanh_raw_action = torch.clamp(tanh_raw_action, -0.999, 0.999)
+        return torch.atanh(clamped_tanh_raw_action)
 
 
     def squashed_logprob(self, normal, raw_action):
