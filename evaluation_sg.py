@@ -38,6 +38,7 @@ def get_args():
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
     parser.add_argument('--graphics_device_id', type=int, default=0, help='Graphics Device ID')
     parser.add_argument('--num_trials', type=int, default=10000)  # database length if have
+    parser.add_argument('--num_success_trials', type=int, default=None)  # database length if have
 
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--heuristic_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -229,7 +230,8 @@ if __name__ == "__main__":
         agent.load_checkpoint(eval_args.checkpoint_path, evaluate=True, map_location="cuda:0")
 
     sp_data_index = 0
-    if eval_args.sp_data_collection and eval_args.sp_num_data is not None:
+    if eval_args.num_success_trials is not None or \
+      (eval_args.sp_data_collection and eval_args.sp_num_data is not None):
         eval_args.num_trials = int(1e5) # Set a large number to collect data
     # Evaluate checkpoint before replay
     for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
@@ -238,7 +240,7 @@ if __name__ == "__main__":
         else:
             envs.args.max_num_placing_objs = max_num_placing_objs
 
-        num_episodes = 0 
+        num_episodes = 0
         episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
         episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
@@ -360,6 +362,9 @@ if __name__ == "__main__":
                 print(print_info)
                 
                 episode_rewards[terminal_index] = 0.
+                if eval_args.num_success_trials is not None \
+                    and episode_success_box[-num_episodes:].sum().item() >= eval_args.num_success_trials:
+                    break
                 
         episode_reward = torch.mean(episode_rewards_box[-num_episodes:]).item()
         success_rate = torch.mean(episode_success_box[-num_episodes:]).item()
