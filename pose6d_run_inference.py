@@ -81,6 +81,7 @@ class ObjectEstimator:
             if not HasMask:
                 obj_mask = self.obj_detection(color)
                 if obj_mask is not None:
+                  cv2.imshow('mask', obj_mask)
                   obj_pose = self.obj_6dpose_est(color, depth, obj_mask)
                   HasMask = True
                 else:
@@ -141,10 +142,13 @@ class ObjectEstimator:
 
 
 if __name__=='__main__':
+  RealObjectsDict = ["Chinese Ceramic Bowl.", "White M Mug", "Blue Tape", "Blue Pepsi", 
+                     "Transparent Wine Glass Cup.", "Transparent Water Glass Cup.", "Pink Spray.", 
+                     "Yellow Mustard Bottle.", "Red Pepper Powder Container.", "Blue Dish Wash Bottle.", "Spam Can.", "Yellow Domino Sugar Box"]
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
-  parser.add_argument('--target_name', type=str, default="red cube.")
-  parser.add_argument('--mesh_file', type=str, default=f'{code_dir}/FoundationPose/demo_data/custom_test/red_cube.obj')
+  parser.add_argument('--target_name', type=str, default="Yellow Domino Sugar Box")
+  parser.add_argument('--mesh_file', type=str, default=f'assets/group_objects/group4_real_objects_mesh_downsampled/133_domino_suger.ply')
   parser.add_argument('--video_file', type=str, default=f'{code_dir}/FoundationPose/demo_data/custom_test/red_cube.MOV')
   parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/FoundationPose/demo_data/mustard0')
   parser.add_argument('--est_refine_iter', type=int, default=5)
