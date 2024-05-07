@@ -11,7 +11,7 @@ import os
 import argparse
 # Add FoundationPose to sys.path so that the module inside can be imported
 # Get the directory of the current script
-current_dir = os.path.dirname(os.path.abspath(__file__))
+current_dir = os.path.dirname(os.path.realpath(__file__))
 # Get the parent directory path
 foundationdir = os.path.join(current_dir, 'FoundationPose')
 # Add the parent directory to sys.path
@@ -46,12 +46,12 @@ class ObjectEstimator:
         self.gd_sam = GD_SAM()
 
     
-    def update_est_target(self, UniName, mesh, to_origin, bbox):
+    def update_est_target(self, semantic_label, mesh, to_origin, bbox, UniName=None):
        self.target_name = UniName
+       self.semantic_label = semantic_label
        self.mesh = mesh
        self.to_origin = to_origin
        self.bbox = bbox
-       self.ReMASK = True
        self.est = FoundationPose(
             model_pts=self.mesh.vertices, 
             model_normals=self.mesh.vertex_normals, 
@@ -62,16 +62,36 @@ class ObjectEstimator:
             debug=self.debug, 
             glctx=self.glctx
         )
+       self.prev_pose = None
 
       
     def update_camera(self, camera=None):
       if camera is not None:
           self.camera = camera
-          self.intrinsic_K = self.camera.color_intrin_mat
       else:
           self.camera = RealSenseCamera(color_align=True)
-          self.intrinsic_K = self.camera.color_intrin_mat
+      self.intrinsic_K = self.camera.color_intrin_mat
+      self.img_h, self.img_w = self.camera.img_h, self.camera.img_w
        
+
+    def est_obj_pose6d(self, strict=False, visualization=False):
+        color, depth = self.camera.get_rgbd_frame()
+        image_source, image = self.gd_sam.img2tensor(color)
+        obj_mask = self.obj_detection(color)
+        if obj_mask is not None:
+            if not strict and self.prev_pose is not None:
+                obj_pose = self.track_object(color, depth)
+            else:
+                obj_pose = self.obj_6dpose_est(color, depth, obj_mask)
+            if visualization:
+                self.visualize_pose(obj_pose, color)
+            self.prev_pose = obj_pose
+            return color, obj_mask, obj_pose
+        else:
+            self.prev_pose = None
+            logging.warning(f'Did not detect {self.semantic_label} in current frame or the object is out of track')
+            return color, None, None
+
 
     def run(self):
         HasMask = False
@@ -86,7 +106,7 @@ class ObjectEstimator:
                   HasMask = True
                 else:
                     HasMask = False
-                    logging.info(f'Cant detect {self.target_name} in frame {i}')
+                    logging.info(f'Cant detect {self.semantic_label} in frame {i}')
                     continue
             
             obj_pose = self.track_object(color, depth)
@@ -95,7 +115,7 @@ class ObjectEstimator:
 
     def obj_detection(self, color):
         image_source, image = self.gd_sam.img2tensor(color)
-        masks, phrases, annotated_frame_sam = self.gd_sam.predict(image, image_source, self.target_name, gd_annotated=False, sam_annotated=False)
+        masks, phrases, annotated_frame_sam = self.gd_sam.predict(image, image_source, self.semantic_label, gd_annotated=False, sam_annotated=False)
         if (masks[0] > 0).any():
             mask = masks[0].squeeze(0).cpu().numpy()
             return mask
@@ -103,11 +123,13 @@ class ObjectEstimator:
 
     def obj_6dpose_est(self, color, depth, obj_mask):
         pose = self.est.register(K=self.intrinsic_K, rgb=color, depth=depth, ob_mask=obj_mask, iteration=self.est_refine_iter)
+        pose = pose@np.linalg.inv(self.to_origin) # Why do we need to invert the to_origin matrix? Seems the to_origin has some transformation that needs to be undone
         return pose
 
 
     def track_object(self, color, depth):
         pose = self.est.track_one(rgb=color, depth=depth, K=self.intrinsic_K, iteration=self.track_refine_iter)
+        pose = pose@np.linalg.inv(self.to_origin) # Why do we need to invert the to_origin matrix? Seems the to_origin has some transformation that needs to be undone
         return pose
 
 
@@ -116,10 +138,9 @@ class ObjectEstimator:
         np.savetxt(f'{self.reader.video_dir}/ob_in_cam/{self.reader.id_strs[index]}.txt', pose.reshape(4,4))
 
 
-    def visualize_pose(self, pose, color):
-        center_pose = pose@np.linalg.inv(self.to_origin)
-        vis = draw_posed_3d_box(self.intrinsic_K, img=color, ob_in_cam=center_pose, bbox=self.bbox)
-        vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=self.intrinsic_K, thickness=3, transparency=0, is_input_rgb=True)
+    def visualize_pose(self, pose, color, index=None):
+        vis = draw_posed_3d_box(self.intrinsic_K, img=color, ob_in_cam=pose, bbox=self.bbox)
+        vis = draw_xyz_axis(color, ob_in_cam=pose, scale=0.1, K=self.intrinsic_K, thickness=3, transparency=0, is_input_rgb=True)
         vis = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
         cv2.imshow('1', vis)
         cv2.waitKey(1)
@@ -141,14 +162,28 @@ class ObjectEstimator:
         o3d.io.write_point_cloud(f'{self.debug_dir}/scene_complete.ply', pcd)
 
 
+    def draw_xyz_axis(self, color, ob_in_cam, scale=0.1, thickness=3, transparency=0, is_input_rgb=True):
+        vis = draw_xyz_axis(color, ob_in_cam=ob_in_cam, scale=scale, K=self.intrinsic_K, thickness=thickness, transparency=transparency, is_input_rgb=is_input_rgb)
+        return vis
+    
+
+    def draw_posed_3d_box(self, color, ob_in_cam):
+        vis = draw_posed_3d_box(self.intrinsic_K, img=color, ob_in_cam=ob_in_cam, bbox=self.bbox)
+        return vis
+    
+
+    def get_raw_rgbd_frame(self):
+        return self.camera.get_rgbd_frame()
+
+
 if __name__=='__main__':
   RealObjectsDict = ["Chinese Ceramic Bowl.", "White M Mug", "Blue Tape", "Blue Pepsi", 
                      "Transparent Wine Glass Cup.", "Transparent Water Glass Cup.", "Pink Spray.", 
                      "Yellow Mustard Bottle.", "Red Pepper Powder Container.", "Blue Dish Wash Bottle.", "Spam Can.", "Yellow Domino Sugar Box"]
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
-  parser.add_argument('--target_name', type=str, default="Yellow Domino Sugar Box")
-  parser.add_argument('--mesh_file', type=str, default=f'assets/group_objects/group4_real_objects_mesh_downsampled/133_domino_suger.ply')
+  parser.add_argument('--semantic_label', type=str, default="Blue Tape")
+  parser.add_argument('--mesh_file', type=str, default=f'assets/group_objects/group4_real_objects/44_paper_tape/0/textured_objs/textured.obj')
   parser.add_argument('--video_file', type=str, default=f'{code_dir}/FoundationPose/demo_data/custom_test/red_cube.MOV')
   parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/FoundationPose/demo_data/mustard0')
   parser.add_argument('--est_refine_iter', type=int, default=5)
@@ -165,65 +200,7 @@ if __name__=='__main__':
   mesh = trimesh.load(args.mesh_file)
   to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
   bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
-  obj_detector.update_est_target(args.target_name, mesh, to_origin, bbox)
+  obj_detector.update_est_target(args.semantic_label, mesh, to_origin, bbox)
+  for i in range(100000):
+      obj_detector.est_obj_pose6d(visualization=True)
   obj_detector.run()
-
-  # scorer = ScorePredictor()
-  # refiner = PoseRefinePredictor()
-  # glctx = dr.RasterizeCudaContext()
-  # est = FoundationPose(
-  #    model_pts=mesh.vertices, 
-  #    model_normals=mesh.vertex_normals, 
-  #    mesh=mesh, scorer=scorer, 
-  #    refiner=refiner, 
-  #    debug_dir=debug_dir, 
-  #    debug=debug, 
-  #    glctx=glctx
-  # )
-  # logging.info("estimator initialization done")
-
-  # camera = RealSenseCamera(color_align=False)
-  # reader = YcbineoatReader(video_dir=args.test_scene_dir, shorter_side=None, zfar=np.inf)
-  # intrinsic_K = camera.color_intrin_mat
-  # gd_sam = GD_SAM()
-  # HasMask = False
-  # for i in range(10000):
-  #   logging.info(f'i:{i}')
-  #   color, depth = camera.get_rgbd_frame()
-  #   if not HasMask:
-  #     image_source, image = gd_sam.img2tensor(color)
-  #     masks, phrases, annotated_frame_sam = gd_sam.predict(image, image_source , "red cube", gd_annotated=True, sam_annotated=True)
-  #     if (masks[0] > 0).any():
-  #       HasMask = True
-  #     else:
-  #       continue
-
-  #     mask = masks[0].squeeze(0).cpu().numpy()
-  #     pose = est.register(K=intrinsic_K, rgb=color, depth=depth, ob_mask=mask, iteration=args.est_refine_iter)
-
-  #     if debug>=3:
-  #       m = mesh.copy()
-  #       m.apply_transform(pose)
-  #       m.export(f'{debug_dir}/model_tf.obj')
-  #       xyz_map = depth2xyzmap(depth, intrinsic_K)
-  #       valid = depth>=0.1
-  #       pcd = toOpen3dCloud(xyz_map[valid], color[valid])
-  #       o3d.io.write_point_cloud(f'{debug_dir}/scene_complete.ply', pcd)
-  #   else:
-  #     pose = est.track_one(rgb=color, depth=depth, K=intrinsic_K, iteration=args.track_refine_iter)
-
-  #   os.makedirs(f'{reader.video_dir}/ob_in_cam', exist_ok=True)
-  #   np.savetxt(f'{reader.video_dir}/ob_in_cam/{reader.id_strs[i]}.txt', pose.reshape(4,4))
-
-  #   if debug>=1 and HasMask:
-  #     center_pose = pose@np.linalg.inv(to_origin)
-  #     vis = draw_posed_3d_box(intrinsic_K, img=color, ob_in_cam=center_pose, bbox=bbox)
-  #     vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=intrinsic_K, thickness=3, transparency=0, is_input_rgb=True)
-  #     vis = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
-  #     cv2.imshow('1', vis)
-  #     cv2.waitKey(1)
-
-  #   if debug>=2:
-  #     os.makedirs(f'{reader.video_dir}/track_vis', exist_ok=True)
-  #     imageio.imwrite(f'{reader.video_dir}/track_vis/{reader.id_strs[i]}.png', vis)
-

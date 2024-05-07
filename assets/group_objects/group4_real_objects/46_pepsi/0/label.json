@@ -5,5 +5,18 @@
         0.0,
         0.0,
         0.0
-    ]
+    ],
+    "Center2GripperBase_pose": [
+        [
+            0,
+            0,
+            0.14999999999999997
+        ],
+        [
+            3.141592653589793,
+            0.0,
+            0.0
+        ]
+    ],
+    "semantic_label": "Blue Pepsi Medal Can."
 }

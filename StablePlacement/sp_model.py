@@ -94,18 +94,17 @@ class Base_Actor(nn.Module):
 
 
 class StablePlacementPolicy_Determ(nn.Module):
-    def __init__(self, mlp_input=2048, action_dim=4, use_pn_plus=False, device=None) -> None:
+    def __init__(self, mlp_input=2048, action_dim=4, use_pn_plus=False, group_all=False) -> None:
         super().__init__()
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # PointNet
         assert mlp_input % 2 == 0, "mlp_input must be even"
         self.pc_ft_dim = mlp_input // 2
         self.use_pn_plus = use_pn_plus
         if self.use_pn_plus:
-            self.scene_pc_encoder = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
-            self.scene_pc_encoder.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", map_location=self.device)
-            self.qr_obj_pc_encoder = get_model(num_class=40, normal_channel=False).to(self.device)
-            self.qr_obj_pc_encoder.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", map_location=self.device)
+            self.scene_pc_encoder = get_model(num_class=40, group_all=group_all, normal_channel=False) # num_classes is used for loading checkpoint to make sure the model is the same
+            self.scene_pc_encoder.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth")
+            self.qr_obj_pc_encoder = get_model(num_class=40, group_all=group_all, normal_channel=False)
+            self.qr_obj_pc_encoder.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth")
         else:
             self.scene_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
             self.qr_obj_pc_encoder = PC_Encoder(output_dim=self.pc_ft_dim)
@@ -133,9 +132,8 @@ class StablePlacementPolicy_Determ(nn.Module):
 
 
 class StablePlacementPolicy_Beta(nn.Module):
-    def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
+    def __init__(self, mlp_input=2048, action_dim=4) -> None:
         super().__init__()
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # PointNet
         assert mlp_input % 2 == 0, "mlp_input must be even"
         self.pc_ft_dim = mlp_input // 2
@@ -166,9 +164,8 @@ class StablePlacementPolicy_Beta(nn.Module):
     
 
 class StablePlacementPolicy_Normal(nn.Module):
-    def __init__(self, mlp_input=2048, action_dim=4, device=None) -> None:
+    def __init__(self, mlp_input=2048, action_dim=4) -> None:
         super().__init__()
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # PointNet
         assert mlp_input % 2 == 0, "mlp_input must be even"
         self.pc_ft_dim = mlp_input // 2
@@ -196,3 +193,14 @@ class StablePlacementPolicy_Normal(nn.Module):
         pred_quat = F.normalize(raw_pred_quat, p=2, dim=1)
         pred_pose = torch.cat([pred_pos, pred_quat], dim=1)
         return pred_pose, probs.entropy().sum(dim=1)
+
+
+def get_sp_model(args, device=None):
+    device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.use_beta:
+        model = StablePlacementPolicy_Beta().to(device)
+    elif args.use_normal:
+        model = StablePlacementPolicy_Normal().to(device)
+    else:
+        model = StablePlacementPolicy_Determ(use_pn_plus=args.use_pn_plus, group_all=args.group_all).to(device)
+    return model

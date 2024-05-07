@@ -70,6 +70,7 @@ def get_args():
     parser.add_argument('--contact_noise_v', type=float, default=0.01, help='Contact position noise range')
     parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
     parser.add_argument('--seed', type=int, default=123456, help='Contact force noise range')
+    parser.add_argument('--tableQueryRegion', type=json.loads, default=[0.3, 0.35, 0.35], help='A list of max num of placing objs')
 
     # RoboSensai Bullet parameters
     # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
@@ -260,7 +261,7 @@ if __name__ == "__main__":
                 reset_infos = envs.reset_infos if eval_args.num_envs > 1 else [envs.info]
                 agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, reset_infos, use_mask=True)
         
-        print(f" Start Evaluating: {max_num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials")
+        print(f" Start Evaluating: {max_num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials | {eval_args.num_success_trials} Success Trials Required")
 
         start_time = time.time()
         while num_episodes < eval_args.num_trials:

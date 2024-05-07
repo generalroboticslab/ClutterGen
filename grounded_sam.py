@@ -150,7 +150,7 @@ class GD_SAM:
         return masks, scores
 
 
-    def predict(self, img_tensor_trans, img_array_org, text_prompt, box_threshold=0.7, text_threshold=0.7, gd_annotated=False, sam_annotated=False):
+    def predict(self, img_tensor_trans, img_array_org, text_prompt, box_threshold=0.6, text_threshold=0.6, gd_annotated=False, sam_annotated=False):
         # Predict the bounding box
         # boxes: Detected boxes (B, 4) where N is the number of boxes
         # masks: Predicted masks (B, 1, H, W)

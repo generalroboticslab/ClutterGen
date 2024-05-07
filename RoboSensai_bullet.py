@@ -981,8 +981,8 @@ class RoboSensaiBullet:
 
     
     def stable_placement_task_robot_init(self):
-        from UR5_related.ur5_robotiq_pybullet import UR5RobotiqPybulletController, load_ur_robotiq_robot
-        from UR5_related.robotiq_grasp_planner import RobotiqGraspPlanner
+        from robot_related.ur5_robotiq_pybullet import UR5RobotiqPybulletController, load_ur_robotiq_robot
+        from robot_related.robotiq_grasp_planner import RobotiqGraspPlanner
 
         # Load the robot; We need to use relative pose for the robot later
         self.robot_initial_pose = [[-0.7, 0., 0.79], [0., 0., 0., 1.]]

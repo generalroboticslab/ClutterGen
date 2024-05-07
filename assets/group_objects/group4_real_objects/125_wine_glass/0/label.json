@@ -5,5 +5,18 @@
         0.0,
         0.0,
         0.0
-    ]
+    ],
+    "Center2GripperBase_pose": [
+        [
+            0,
+            0.05,
+            0.15999999999999998
+        ],
+        [
+            3.141592653589793,
+            0.0,
+            0.0
+        ]
+    ],
+    "semantic_label": "Transparent Wine Glass Cup."
 }

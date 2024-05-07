@@ -57,7 +57,7 @@ def split_7d(pose):
 
 
 def merge_pose_2d(pose):
-    return pose[0] + pose[1]
+    return list(pose[0] + pose[1])
 
 
 def get_euler_from_quaternion(quaternion):
@@ -489,7 +489,7 @@ def control_joint(body, joint, value, client_id=0):
 
 
 def control_joints(body, joints, positions, control_type='hard', client_id=0):
-    forces = [get_max_force(body, joint) // 20 for joint in joints] if control_type == 'limited' else [100000] * len(joints)
+    forces = [get_max_force(body, joint) for joint in joints] if control_type == 'limited' else [100000] * len(joints)
     return p.setJointMotorControlArray(bodyUniqueId=body, 
                                        jointIndices=joints, 
                                        controlMode=p.POSITION_CONTROL,
@@ -966,13 +966,16 @@ def get_pose_from_view_matrix(view_matrix):
     return position, rotation_matrix
 
 
-def draw_camera_axis(camera_position, camera_orientation, axis_length=0.1, client_id=0):
+def draw_camera_axis(camera_pose, axis_length=0.1, old_axis_ids=None, client_id=0):
+    # Remove the old axes
+    if old_axis_ids is not None:
+        remove_markers(old_axis_ids, client_id=client_id)
     # Compute the end points of the axes
     # We manually change the sign of the Z-axis to align with PyBullet's camera orientation, which is not real orientation
-    origin = camera_position
-    x_axis = origin + camera_orientation @ np.array([axis_length, 0, 0])
-    y_axis = origin + camera_orientation @ np.array([0, axis_length, 0])
-    z_axis = origin + camera_orientation @ np.array([0, 0, -axis_length])
+    origin, camera_orientation = camera_pose
+    x_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[axis_length, 0, 0], [0, 0, 0, 1.]])[0]
+    y_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[0, axis_length, 0], [0, 0, 0, 1.]])[0]
+    z_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[0, 0, axis_length], [0, 0, 0, 1.]])[0]
 
     # Draw the axes using PyBullet's debug lines
     xline_id = p.addUserDebugLine(origin, x_axis, [1, 0, 0], lineWidth=2, physicsClientId=client_id)  # Red for the X-axis
@@ -1100,11 +1103,13 @@ def single_collision(body1, **kwargs):
             return True
     return False
 
+
 def pose_difference(pose1, pose2):
     pose1, pose2 = np.array(pose1), np.array(pose2)
     return np.linalg.norm(pose1-pose2)
 
-def pose2d_matrix(pose2d):
+
+def pose2d2matrix(pose2d):
     matrix = np.zeros((4, 4))
     position, orientation = pose2d
     orientation_m = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
@@ -1112,6 +1117,13 @@ def pose2d_matrix(pose2d):
     matrix[:3, 3] = position
     matrix[3, 3] = 1
     return matrix
+
+
+def matrix2pose2d(matrix):
+    position = matrix[:3, 3]
+    orientation = getQuaternionFromMatrix(matrix[:3, :3])
+    return position, orientation
+
 
 def multiply_multi_transforms(*args):
     assert len(args) >= 2, 'multi transforms need at least 2 pose'
@@ -1125,6 +1137,10 @@ def multiply_multi_transforms(*args):
             accumulate_pose = p.multiplyTransforms(*accumulate_pose, *args[i])
         return accumulate_pose
     
+
+def invert_transform(pose):
+    return p.invertTransform(*pose)
+
 
 def quat_apply(quat, vec):
     return p.multiplyTransforms([0, 0, 0.], quat, vec, [0, 0, 0, 1])[0]
@@ -1180,9 +1196,9 @@ def getQuaternionFromTwoVectors(v0, v1):
     return q
 
 
-def getQuaternionFromMatrix(rot_matrix):
-    # Compute the trace of the matrix
-    trace = np.trace
+def getQuaternionFromMatrix1(rot_matrix):
+    # Compute the trace of the matrix (old version)
+    trace = np.trace(rot_matrix)
     if trace > 0:
         S = np.sqrt(trace + 1.0) * 2
         w = 0.25 * S
@@ -1207,7 +1223,44 @@ def getQuaternionFromMatrix(rot_matrix):
         x = (rot_matrix[0, 2] + rot_matrix[2, 0]) / S
         y = (rot_matrix[1, 2] + rot_matrix[2, 1]) / S
         z = 0.25 * S
-    return [x, y, z, w]
+    q = np.array([x, y, z, w])
+    q = q / np.linalg.norm(q)  # Normalize quaternion
+    return q.tolist()
+
+
+def getQuaternionFromMatrix(rot_matrix):
+    """
+    Convert a rotation matrix into a quaternion.
+    
+    Args:
+    rot_matrix (np.array): A 3x3 rotation matrix.
+    
+    Returns:
+    np.array: A numpy array with four elements [x, y, z, w], where w is the scalar 
+              component, and x, y, z are the vector components of the quaternion.
+    """
+    m = np.array(rot_matrix, dtype=np.float64, copy=False)
+    q = np.empty((4,))
+    t = np.trace(m)
+    if t > np.finfo(np.float64).eps:
+        t = np.sqrt(t + 1.0)
+        q[3] = 0.5 * t  # w component
+        t = 0.5 / t
+        q[0] = (m[2, 1] - m[1, 2]) * t  # x component
+        q[1] = (m[0, 2] - m[2, 0]) * t  # y component
+        q[2] = (m[1, 0] - m[0, 1]) * t  # z component
+    else:
+        i = np.argmax(np.diagonal(m))
+        j = (i + 1) % 3
+        k = (i + 2) % 3
+        t = np.sqrt(m[i, i] - m[j, j] - m[k, k] + 1.0)
+        q[i] = 0.5 * t  # x, y, or z component based on which diagonal is largest
+        t = 0.5 / t
+        q[3] = (m[k, j] - m[j, k]) * t  # w component
+        q[j] = (m[j, i] + m[i, j]) * t  # Next component in order
+        q[k] = (m[k, i] + m[i, k]) * t  # Last component in order
+    return q
+
 
 ######### RoboSensai Specified #########
 def sample_pc_from_mesh(mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, visualize=False):
