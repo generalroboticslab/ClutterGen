@@ -189,46 +189,48 @@ class Agent(nn.Module):
 
         # Trajectory history encoder and Large sequence observation encoder
         ### TODO: We probably need give both actor and critic the same encoder!!!
-        if envs.args.use_tf_traj_encoder:
-            self.traj_hist_encoder = Transfromer_Linear(
-                input_size=envs.traj_history_shape[1], 
-                hidden_size=self.hidden_size, 
-                num_transf_layers=self.traj_hist_encoder_num_transf,
-                num_linear_layers=self.traj_hist_encoder_num_linear, 
-                output_size=envs.history_ft_dim, 
-                batch_first=True, 
-                init_std=1.0
-            ).to(self.device)
-        else:
-            self.traj_hist_encoder = MLP(
-                input_size=np.prod(envs.traj_history_shape), 
-                hidden_size=self.hidden_size, 
-                output_size=envs.history_ft_dim, 
-                num_layers=self.traj_hist_encoder_num_linear, 
-                use_relu=envs.args.use_relu,
-                init_std=1.0, auto_flatten=True
-            ).to(self.device)
+        if envs.args.use_traj_encoder:
+            if envs.args.use_tf_traj_encoder:
+                self.traj_hist_encoder = Transfromer_Linear(
+                    input_size=envs.traj_history_shape[1], 
+                    hidden_size=self.hidden_size, 
+                    num_transf_layers=self.traj_hist_encoder_num_transf,
+                    num_linear_layers=self.traj_hist_encoder_num_linear, 
+                    output_size=envs.history_ft_dim, 
+                    batch_first=True, 
+                    init_std=1.0
+                ).to(self.device)
+            else:
+                self.traj_hist_encoder = MLP(
+                    input_size=np.prod(envs.traj_history_shape), 
+                    hidden_size=self.hidden_size, 
+                    output_size=envs.history_ft_dim, 
+                    num_layers=self.traj_hist_encoder_num_linear, 
+                    use_relu=envs.args.use_relu,
+                    init_std=1.0, auto_flatten=True
+                ).to(self.device)
         
-        if envs.args.use_tf_seq_obs_encoder:
-            self.seq_obs_encoder = Transfromer_Linear(
-                input_size=envs.post_act_hist_qr_ft_shape[2], 
-                hidden_size=self.hidden_size, 
-                num_transf_layers=self.seq_obs_encoder_num_transf,
-                num_linear_layers=self.seq_obs_encoder_num_linear, 
-                output_size=envs.seq_info_ft_dim, 
-                nhead=8,
-                batch_first=True, 
-                init_std=1.0
-            ).to(self.device)
-        else:
-            self.seq_obs_encoder = MLP(
-                input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
-                hidden_size=self.hidden_size, 
-                output_size=envs.seq_info_ft_dim, 
-                num_layers=self.seq_obs_encoder_num_linear, 
-                use_relu=envs.args.use_relu,
-                init_std=1.0, auto_flatten=True
-            ).to(self.device)
+        if envs.args.use_seq_obs_encoder:
+            if envs.args.use_tf_seq_obs_encoder:
+                self.seq_obs_encoder = Transfromer_Linear(
+                    input_size=envs.post_act_hist_qr_ft_shape[2], 
+                    hidden_size=self.hidden_size, 
+                    num_transf_layers=self.seq_obs_encoder_num_transf,
+                    num_linear_layers=self.seq_obs_encoder_num_linear, 
+                    output_size=envs.seq_info_ft_dim, 
+                    nhead=8,
+                    batch_first=True, 
+                    init_std=1.0
+                ).to(self.device)
+            else:
+                self.seq_obs_encoder = MLP(
+                    input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
+                    hidden_size=self.hidden_size, 
+                    output_size=envs.seq_info_ft_dim, 
+                    num_layers=self.seq_obs_encoder_num_linear, 
+                    use_relu=envs.args.use_relu,
+                    init_std=1.0, auto_flatten=True
+                ).to(self.device)
         
         # Use MLP for the critic and actor
         self.critic = MLP(
