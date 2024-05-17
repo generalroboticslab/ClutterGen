@@ -72,7 +72,7 @@ def get_args():
     parser.add_argument('--seed', type=int, default=123456, help='Contact force noise range')
     parser.add_argument('--QueryRegion_pos', type=json.loads, default=None, help='A list of max num of placing objs')
     parser.add_argument('--QueryRegion_euler', type=json.loads, default=None, help='A list of max num of placing objs')
-    parser.add_argument('--QueryRegion_halfext', type=json.loads, default=[0.25, 0.25, 0.35], help='A list of max num of placing objs')
+    parser.add_argument('--QueryRegion_halfext', type=json.loads, default=None, help='A list of max num of placing objs') # [0.25, 0.25, 0.35] for realrobot
     
 
     # RoboSensai Bullet parameters
