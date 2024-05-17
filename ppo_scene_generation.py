@@ -52,10 +52,10 @@ def parse_args():
     parser.add_argument('--max_num_qr_scene_points', type=int, default=10240)
     parser.add_argument('--max_num_scene_points', type=int, default=20480)
     parser.add_argument('--tablehalfExtents', type=json.loads, default=[0.3, 0.35, 0.35], help='Table half extents; Before we use [0.2, 0.3, 0.35]')
-    parser.add_argument('--QueryRegion_halfext', type=json.loads, default=[0.3, 0.35, 0.35], help='A list of max num of placing objs')
+    parser.add_argument('--QueryRegion_halfext', type=json.loads, default=None, help='A list of max num of placing objs')
     
     # RoboSensai Env parameters (training)
-    parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_trials', type=int, default=3)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument("--max_stable_steps", type=int, default=40, help="the maximum steps for the env to be stable considering success")
     parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     # Compute the limits for the threadpool
     n_cpu_cores = multiprocessing.cpu_count()
     n_gpu_used = 1
-    thread_limits = max(3, int(n_cpu_cores * n_gpu_used / args.num_envs))
+    thread_limits = max(4, int(n_cpu_cores * n_gpu_used / args.num_envs))
 
     # env and scene setup
     if args.num_envs > 1:
