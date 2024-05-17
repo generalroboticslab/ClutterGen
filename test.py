@@ -827,74 +827,103 @@ How to use logging info
 # logging.error("This is an error message")
 # logging.critical("This is a critical message")
 
+# import open3d as o3d
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from realsense_camera import RealSenseCamera
+# import cv2
+
+# camera = RealSenseCamera()
+# color_intrin_mat = camera.color_intrin_mat
+# fx, fy, cx, cy = color_intrin_mat[0, 0], color_intrin_mat[1, 1], color_intrin_mat[0, 2], color_intrin_mat[1, 2]
+# width, height = camera.img_w, camera.img_h
+
+# # Load your mesh
+# mesh = o3d.io.read_triangle_mesh("assets/group_objects/group4_real_objects/23_dawn/0/textured_objs/textured.obj")
+# mesh.compute_vertex_normals()  # Optional: compute normals if needed for rendering
+
+# # Define camera intrinsic parameters
+# intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, color_intrin_mat)
+
+# # Define camera pose (6DOF: rotation + translation)
+# # Example: No rotation and a slight translation
+# # camera points to the positive z-axis
+# World2Camera_pose = np.eye(4)
+
+# # Create a transformation matrix for the mesh
+# # Example: Rotate 45 degrees around the z-axis and translate by (0.5, 0.5, 0)
+# rotation = o3d.geometry.get_rotation_matrix_from_axis_angle([np.pi / 2, 0, 0.])
+# translation = [0., 0., 0.5]
+# transformation_matrix = np.eye(4)
+# transformation_matrix[:3, :3] = rotation
+# transformation_matrix[:3, 3] = translation
+
+# # Apply the transformation to the mesh
+# mesh.transform(transformation_matrix)
+
+# # Render the mesh
+# renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
+# renderer.setup_camera(intrinsic, np.linalg.inv(World2Camera_pose)) # open3d uese camera-to-world pose
+# renderer.scene.set_background([1.0, 1.0, 1.0, 0.])
+
+# # Add mesh to scene for rendering
+# renderer.scene.add_geometry("mesh", mesh, o3d.visualization.rendering.MaterialRecord())  # Adding default material
+
+# # Add lighting
+# # light_dir = np.array([0, -1, -1.])  # Example direction
+# # light_color = np.array([1, 1, 1.])  # White light
+# # renderer.scene.scene.add_directional_light("dir_light", light_color, light_dir, 50, False)
+
+# # Create an image using the renderer
+# img = renderer.render_to_image()
+# # Convert Open3D Image to numpy array
+# img_np = np.asarray(img)
+# img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGRA)  # Ensure image has alpha
+
+# # Load another image to blend with
+
+# camera_img, _ = camera.get_rgbd_frame()
+# camera_img = cv2.resize(camera_img, (width, height))
+# camera_img = cv2.cvtColor(camera_img, cv2.COLOR_RGB2BGRA)
+# # Create an alpha channel filled with 255 (fully opaque)
+# alpha_channel = np.full((camera_img.shape[0], camera_img.shape[1]), 255, dtype=np.uint8)
+# # Add alpha channel to the RGB image to make it RGBA
+# camera_img_bgra = cv2.merge((camera_img[..., 0], camera_img[..., 1], camera_img[..., 2], alpha_channel))
+# print(camera_img_bgra.shape, img_np.shape)
+# # Combine the images
+# combined_img = cv2.addWeighted(camera_img_bgra, 1.0, img_np, 0.3, 0)
+
+# # Save and display the result
+# # cv2.imwrite("combined_image.png", combined_img)
+# plt.imshow(cv2.cvtColor(combined_img, cv2.COLOR_BGRA2RGBA))
+# plt.axis('off')
+# plt.show()
+
+
+# Better way to render mesh
 import open3d as o3d
-import numpy as np
-import matplotlib.pyplot as plt
-from realsense_camera import RealSenseCamera
-import cv2
 
-camera = RealSenseCamera()
-color_intrin_mat = camera.color_intrin_mat
-fx, fy, cx, cy = color_intrin_mat[0, 0], color_intrin_mat[1, 1], color_intrin_mat[0, 2], color_intrin_mat[1, 2]
-width, height = camera.img_w, camera.img_h
+# Load your point cloud
+pcd = o3d.io.read_point_cloud("your_point_cloud.ply")
 
-# Load your mesh
-mesh = o3d.io.read_triangle_mesh("assets/group_objects/group4_real_objects/23_dawn/0/textured_objs/textured.obj")
-mesh.compute_vertex_normals()  # Optional: compute normals if needed for rendering
+# Create a Visualizer
+vis = o3d.visualization.Visualizer()
+vis.create_window()
 
-# Define camera intrinsic parameters
-intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, color_intrin_mat)
+# Add the point cloud to the visualizer
+vis.add_geometry(pcd)
 
-# Define camera pose (6DOF: rotation + translation)
-# Example: No rotation and a slight translation
-# camera points to the positive z-axis
-World2Camera_pose = np.eye(4)
+# Add a coordinate frame to the visualizer
+coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+vis.add_geometry(coordinate_frame)
 
-# Create a transformation matrix for the mesh
-# Example: Rotate 45 degrees around the z-axis and translate by (0.5, 0.5, 0)
-rotation = o3d.geometry.get_rotation_matrix_from_axis_angle([np.pi / 2, 0, 0.])
-translation = [0., 0., 0.5]
-transformation_matrix = np.eye(4)
-transformation_matrix[:3, :3] = rotation
-transformation_matrix[:3, 3] = translation
+# Get the view control and set the camera parameters
+view_ctl = vis.get_view_control()
+view_ctl.set_lookat([0.0, 0.0, 0.0])
+view_ctl.set_front([-1.0, 0.0, 0.5])
+view_ctl.set_up([0.0, 0.0, 1.0])
+view_ctl.set_zoom(0.8)  # Adjust zoom as needed
 
-# Apply the transformation to the mesh
-mesh.transform(transformation_matrix)
-
-# Render the mesh
-renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
-renderer.setup_camera(intrinsic, np.linalg.inv(World2Camera_pose)) # open3d uese camera-to-world pose
-renderer.scene.set_background([1.0, 1.0, 1.0, 0.])
-
-# Add mesh to scene for rendering
-renderer.scene.add_geometry("mesh", mesh, o3d.visualization.rendering.MaterialRecord())  # Adding default material
-
-# Add lighting
-# light_dir = np.array([0, -1, -1.])  # Example direction
-# light_color = np.array([1, 1, 1.])  # White light
-# renderer.scene.scene.add_directional_light("dir_light", light_color, light_dir, 50, False)
-
-# Create an image using the renderer
-img = renderer.render_to_image()
-# Convert Open3D Image to numpy array
-img_np = np.asarray(img)
-img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGRA)  # Ensure image has alpha
-
-# Load another image to blend with
-
-camera_img, _ = camera.get_rgbd_frame()
-camera_img = cv2.resize(camera_img, (width, height))
-camera_img = cv2.cvtColor(camera_img, cv2.COLOR_RGB2BGRA)
-# Create an alpha channel filled with 255 (fully opaque)
-alpha_channel = np.full((camera_img.shape[0], camera_img.shape[1]), 255, dtype=np.uint8)
-# Add alpha channel to the RGB image to make it RGBA
-camera_img_bgra = cv2.merge((camera_img[..., 0], camera_img[..., 1], camera_img[..., 2], alpha_channel))
-print(camera_img_bgra.shape, img_np.shape)
-# Combine the images
-combined_img = cv2.addWeighted(camera_img_bgra, 1.0, img_np, 0.3, 0)
-
-# Save and display the result
-# cv2.imwrite("combined_image.png", combined_img)
-plt.imshow(cv2.cvtColor(combined_img, cv2.COLOR_BGRA2RGBA))
-plt.axis('off')
-plt.show()
+# Run the visualizer
+vis.run()
+vis.destroy_window()
