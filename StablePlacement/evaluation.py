@@ -6,8 +6,8 @@ from copy import deepcopy
 
 import torch
 from torch.utils.data import DataLoader
-from SP_DataLoader import HDF5Dataset, custom_collate, create_subset_dataset
-from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Normal
+from sp_dataloader import HDF5Dataset, custom_collate, create_subset_dataset
+from sp_model import get_sp_model
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 
@@ -24,10 +24,10 @@ from distutils.util import strtobool
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--env_name', type=str, default='StablePlacement_EVAL')
-    parser.add_argument('--main_dataset_path', type=str, default='StablePlacement/SP_Dataset/table_10_group0_dinning_table.h5')
-    parser.add_argument('--model_save_folder', type=str, default='StablePlacement/SP_Result')
+    parser.add_argument('--result_dir', type=str, default='StablePlacement/SP_Result')
     parser.add_argument('--visualize_pc', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--checkpoint', type=str, default='StablePlacement_03-20_16:02_Deterministic_WeightedLoss_EntCoef0.0_weiDecay0.0')
+    parser.add_argument('--num_scene_objs_thred', type=int, default=1, nargs='?', const=True, help='The threshold of the number of scene objects for visualization pc')
+    parser.add_argument('--checkpoint', type=str, default='StablePlacement_05-09_18:02_Deterministic_PNPlusGroupAll_WeightedLoss_EntCoef0.0_weiDecay0.0')
     parser.add_argument('--index_episode', type=str, default="1000")
     
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
@@ -38,14 +38,11 @@ def parse_args():
     parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
     parser.add_argument('--use_robot_sp', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
 
-    parser.add_argument('--test_dataset', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-
-
     args = parser.parse_args()
     timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
     args.final_name = args.env_name + timer
-    args.checkpoint_path = os.path.join(args.model_save_folder, args.checkpoint, "Checkpoint", f"epoch_{args.index_episode}")+".pth"
-    args.json_path = os.path.join(args.model_save_folder, args.checkpoint, "Json", f"{args.checkpoint}.json")
+    args.checkpoint_path = os.path.join(args.result_dir, args.checkpoint, "Checkpoint", f"epoch_{args.index_episode}")+".pth"
+    args.json_path = os.path.join(args.result_dir, args.checkpoint, "Json", f"{args.checkpoint}.json")
 
     # Keep the training args if evaluation args is None
     stored_args = args.__dict__.copy()  # store eval_args to avoid overwrite
@@ -80,12 +77,7 @@ if __name__ == "__main__":
         # t_agent.load_checkpoint(env_args.checkpoint_path, evaluate=True, map_location="cuda:0")
         # t_agent.pc_extractor.eval() # The PC extractor's BN layer was set to train so we keep it train first.
 
-    if args.use_beta:
-        model = StablePlacementPolicy_Beta(device=device).to(device)
-    elif args.use_normal:
-        model = StablePlacementPolicy_Normal(device=device).to(device)
-    else:
-        model = StablePlacementPolicy_Determ(device=device).to(device)
+    model = get_sp_model(args, device=device)
     model.load_state_dict(torch.load(args.checkpoint_path))
     model.eval()
     print("Model loaded from", args.checkpoint_path)
@@ -147,16 +139,17 @@ if __name__ == "__main__":
                     envs.stable_placement_reset()
                     update_success_records(rp_success_records, qr_obj_name, sp_placed_obj_poses, rp_success)
 
-            if args.visualize_pc:
+            if args.visualize_pc and len(sp_placed_obj_poses) >= args.num_scene_objs_thred:
                 scene_pc_np = scene_pc.cpu().numpy()
                 qr_obj_pc_np = qr_obj_pc.cpu().numpy()
                 pred_qr_obj_pose_np = pred_qr_obj_pose.cpu().numpy()
                 qr_obj_pose_np = qr_obj_pose.cpu().numpy()
                 # Visualize the point cloud
                 for i in range(len(scene_pc_np)):
+                    print(np.max(scene_pc_np[i], axis=0) - np.min(scene_pc_np[i], axis=0))
                     transformed_pred_qr_obj_pc = se3_transform_pc(pred_qr_obj_pose_np[i][:3], pred_qr_obj_pose_np[i][3:], qr_obj_pc_np[i])
                     transformed_ground_truth_qr_obj_pc = se3_transform_pc(qr_obj_pose_np[i][:3], qr_obj_pose_np[i][3:], qr_obj_pc_np[i])
-                    pu.visualize_pc_lst(
+                    pu.visualize_pc(
                         [scene_pc_np[i], transformed_pred_qr_obj_pc, transformed_ground_truth_qr_obj_pc], 
                          color=[[0, 0, 1], [1, 0, 0], [0, 1, 0]])
         

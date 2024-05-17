@@ -409,8 +409,8 @@ if __name__ == '__main__':
     Label = "obj"
     
     if Label == "obj":
-        source_folder_path = "assets/group_objects/group3_kitchen_table"
-        target_folder_name = "group4_real_objects_selected"
+        source_folder_path = "assets/group_objects/group4_real_objects"
+        target_folder_name = "group4_real_objects"
 
         labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
         labeler.start()

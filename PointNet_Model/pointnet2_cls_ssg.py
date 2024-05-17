@@ -5,12 +5,12 @@ from PointNet_Model.pointnet2_utils import PointNetSetAbstraction
 
 
 class get_model(nn.Module):
-    def __init__(self,num_class=40, normal_channel=False):
+    def __init__(self,num_class=40, group_all=True, normal_channel=False):
         super(get_model, self).__init__()
         in_channel = 6 if normal_channel else 3
         self.normal_channel = normal_channel
-        self.sa1 = PointNetSetAbstraction(npoint=512, radius=0.2, nsample=32, in_channel=in_channel, mlp=[64, 64, 128], group_all=True)
-        self.sa2 = PointNetSetAbstraction(npoint=128, radius=0.4, nsample=64, in_channel=128 + 3, mlp=[128, 128, 256], group_all=True)
+        self.sa1 = PointNetSetAbstraction(npoint=512, radius=0.2, nsample=32, in_channel=in_channel, mlp=[64, 64, 128], group_all=group_all)
+        self.sa2 = PointNetSetAbstraction(npoint=128, radius=0.4, nsample=64, in_channel=128 + 3, mlp=[128, 128, 256], group_all=group_all)
         self.sa3 = PointNetSetAbstraction(npoint=None, radius=None, nsample=None, in_channel=256 + 3, mlp=[256, 512, 1024], group_all=True)
         self.fc1 = nn.Linear(1024, 512)
         self.bn1 = nn.BatchNorm1d(512)
@@ -40,7 +40,7 @@ class get_model(nn.Module):
         return x
     
 
-    def load_checkpoint(self, ckpt_path, evaluate=True, map_location='cuda:0'):
+    def load_checkpoint(self, ckpt_path, evaluate=True, map_location='cpu'):
         print('Loading models from {}'.format(ckpt_path))
         if ckpt_path is not None:
             checkpoint = torch.load(ckpt_path, map_location=map_location)

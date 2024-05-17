@@ -32,7 +32,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -70,6 +70,10 @@ def get_args():
     parser.add_argument('--contact_noise_v', type=float, default=0.01, help='Contact position noise range')
     parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
     parser.add_argument('--seed', type=int, default=123456, help='Contact force noise range')
+    parser.add_argument('--QueryRegion_pos', type=json.loads, default=None, help='A list of max num of placing objs')
+    parser.add_argument('--QueryRegion_euler', type=json.loads, default=None, help='A list of max num of placing objs')
+    parser.add_argument('--QueryRegion_halfext', type=json.loads, default=[0.25, 0.25, 0.35], help='A list of max num of placing objs')
+    
 
     # RoboSensai Bullet parameters
     # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
@@ -79,7 +83,7 @@ def get_args():
     # parser.add_argument('--specific_scene', type=str, default="table")
     parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
-    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=list(range(1, 2)), help='A list of max num of placing objs')
+    parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=[10], help='A list of max num of placing objs')
     parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
     parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
@@ -260,7 +264,7 @@ if __name__ == "__main__":
                 reset_infos = envs.reset_infos if eval_args.num_envs > 1 else [envs.info]
                 agent.preprocess_pc_update_tensor(next_scene_ft_obs, next_obj_ft_obs, reset_infos, use_mask=True)
         
-        print(f" Start Evaluating: {max_num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials")
+        print(f" Start Evaluating: {max_num_placing_objs} Num of Placing Objs | {eval_args.num_trials} Trials | {eval_args.num_success_trials} Success Trials Required")
 
         start_time = time.time()
         while num_episodes < eval_args.num_trials:

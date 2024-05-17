@@ -5,8 +5,8 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from SP_DataLoader import HDF5Dataset, custom_collate, create_subset_dataset
-from sp_model import StablePlacementPolicy_Determ, StablePlacementPolicy_Beta, StablePlacementPolicy_Normal
+from sp_dataloader import HDF5Dataset, custom_collate, create_subset_dataset
+from sp_model import get_sp_model
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
 torch.autograd.set_detect_anomaly(True)
@@ -21,14 +21,16 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--env_name', type=str, default='StablePlacement')
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--main_dataset_path', type=str, default='StablePlacement/SP_Dataset/table_10_group0_dinning_table.h5')
-    parser.add_argument('--save_folder', type=str, default='StablePlacement/SP_Result')
+    parser.add_argument('--main_dataset_path', type=str, default='StablePlacement/SP_Dataset/table_10_group4_real_objects.h5')
+    parser.add_argument('--result_dir', type=str, default='StablePlacement/SP_Result')
     parser.add_argument('--force_name', default=None, type=str)
     
     # Training parameters
     parser.add_argument('--use_normal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--use_beta', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--subset_ratio', type=float, default=0.2, help='The ratio of the subset of the dataset')
+    parser.add_argument('--use_pn_plus', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use pointnet++ or not')
+    parser.add_argument('--group_all', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use pointnet++ or not')
+    parser.add_argument('--subset_ratio', type=float, default=None, help='The ratio of the subset of the dataset')
     parser.add_argument('--weighted_loss', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--epochs', type=int, default=1000, help='')
     parser.add_argument('--val_epochs', type=int, default=5, help='')
@@ -39,7 +41,7 @@ def parse_args():
 
     # Evaluation parameters
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--auto_regression', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--auto_regression', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--num_ar_trials', type=int, default=100, help='')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
@@ -48,7 +50,7 @@ def parse_args():
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
-    parser.add_argument('--env_json_name', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
+    parser.add_argument('--env_json_name', type=str, default='Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
     parser.add_argument('--save_epoch', type=int, default=50, help='')
     parser.add_argument('--wandb', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
 
@@ -70,6 +72,8 @@ def parse_args():
     else:
         args.final_name += '_Deterministic'
 
+    if args.use_pn_plus:
+        args.final_name += '_PNPlus' if not args.group_all else '_PNPlusGroupAll'
     if args.weighted_loss:
         args.final_name += '_WeightedLoss'
     if args.subset_ratio:
@@ -83,8 +87,8 @@ def parse_args():
     if args.force_name is not None:
         args.final_name = args.force_name + timer
 
-    args.model_save_path = os.path.join(args.save_folder, args.final_name, "Checkpoint")
-    args.json_save_path = os.path.join(args.save_folder, args.final_name, "Json")
+    args.model_save_path = os.path.join(args.result_dir, args.final_name, "Checkpoint")
+    args.json_save_path = os.path.join(args.result_dir, args.final_name, "Json")
     # Create folder to save the model
     if args.collect_data:
         os.makedirs(args.model_save_path, exist_ok=True)
@@ -111,12 +115,7 @@ if args.use_simulator:
     sp_sim_dataloader = DataLoader(HDF5Dataset(val_dataset_path), batch_size=1, shuffle=True, collate_fn=custom_collate)
 
 # Create the model
-if args.use_beta:
-    model = StablePlacementPolicy_Beta(device=device).to(device)
-elif args.use_normal:
-    model = StablePlacementPolicy_Normal(device=device).to(device)
-else:
-    model = StablePlacementPolicy_Determ(device=device).to(device)
+model = get_sp_model(args, device=device)
 optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
 # Create the simulator
@@ -278,7 +277,7 @@ for epoch in range(1, args.epochs+1):
                             scene_pc = torch.cat([scene_pc, torch.tensor(transformed_pred_qr_obj_pc).unsqueeze(0).to(device)], dim=1)
 
                             # # Visualize the point cloud
-                            # pu.visualize_pc_lst([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
+                            # pu.visualize_pc([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
 
                         ar_success_sum += success
                         ar_avg_placed_objs += len(sp_placed_obj_poses)

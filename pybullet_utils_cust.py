@@ -57,7 +57,7 @@ def split_7d(pose):
 
 
 def merge_pose_2d(pose):
-    return pose[0] + pose[1]
+    return list(pose[0] + pose[1])
 
 
 def get_euler_from_quaternion(quaternion):
@@ -489,7 +489,7 @@ def control_joint(body, joint, value, client_id=0):
 
 
 def control_joints(body, joints, positions, control_type='hard', client_id=0):
-    forces = [get_max_force(body, joint) // 20 for joint in joints] if control_type == 'limited' else [100000] * len(joints)
+    forces = [get_max_force(body, joint) for joint in joints] if control_type == 'limited' else [100000] * len(joints)
     return p.setJointMotorControlArray(bodyUniqueId=body, 
                                        jointIndices=joints, 
                                        controlMode=p.POSITION_CONTROL,
@@ -966,13 +966,17 @@ def get_pose_from_view_matrix(view_matrix):
     return position, rotation_matrix
 
 
-def draw_camera_axis(camera_position, camera_orientation, axis_length=0.1, client_id=0):
+def draw_camera_axis(camera_pose, axis_length=0.1, old_axis_ids=None, client_id=0):
+    # Remove the old axes
+    if old_axis_ids is not None:
+        remove_markers(old_axis_ids, client_id=client_id)
     # Compute the end points of the axes
     # We manually change the sign of the Z-axis to align with PyBullet's camera orientation, which is not real orientation
-    origin = camera_position
-    x_axis = origin + camera_orientation @ np.array([axis_length, 0, 0])
-    y_axis = origin + camera_orientation @ np.array([0, axis_length, 0])
-    z_axis = origin + camera_orientation @ np.array([0, 0, -axis_length])
+    origin, camera_orientation = camera_pose
+    origin = np.array(origin) # Make sure origin is numpy so that x, y, z are all numpy arrays
+    x_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[axis_length, 0, 0], [0, 0, 0, 1.]])[0]
+    y_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[0, axis_length, 0], [0, 0, 0, 1.]])[0]
+    z_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[0, 0, axis_length], [0, 0, 0, 1.]])[0]
 
     # Draw the axes using PyBullet's debug lines
     xline_id = p.addUserDebugLine(origin, x_axis, [1, 0, 0], lineWidth=2, physicsClientId=client_id)  # Red for the X-axis
@@ -1100,11 +1104,13 @@ def single_collision(body1, **kwargs):
             return True
     return False
 
+
 def pose_difference(pose1, pose2):
     pose1, pose2 = np.array(pose1), np.array(pose2)
     return np.linalg.norm(pose1-pose2)
 
-def pose2d_matrix(pose2d):
+
+def pose2d2matrix(pose2d):
     matrix = np.zeros((4, 4))
     position, orientation = pose2d
     orientation_m = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
@@ -1113,18 +1119,29 @@ def pose2d_matrix(pose2d):
     matrix[3, 3] = 1
     return matrix
 
+
+def matrix2pose2d(matrix):
+    position = matrix[:3, 3]
+    orientation = getQuaternionFromMatrix(matrix[:3, :3])
+    return position, orientation
+
+
 def multiply_multi_transforms(*args):
     assert len(args) >= 2, 'multi transforms need at least 2 pose'
     if len(args) == 2:
         pose1, pose2 = args
-        return p.multiplyTransforms(*pose1, *pose2)
+        accumulate_pose = p.multiplyTransforms(*pose1, *pose2)
     elif len(args) > 2:
         pose1, pose2 = args[0], args[1]
         accumulate_pose = p.multiplyTransforms(*pose1, *pose2)
         for i in range(2, len(args)):
             accumulate_pose = p.multiplyTransforms(*accumulate_pose, *args[i])
-        return accumulate_pose
+    return [list(accumulate_pose[0]), list(accumulate_pose[1])]
     
+
+def invert_transform(pose):
+    return p.invertTransform(*pose)
+
 
 def quat_apply(quat, vec):
     return p.multiplyTransforms([0, 0, 0.], quat, vec, [0, 0, 0, 1])[0]
@@ -1180,9 +1197,9 @@ def getQuaternionFromTwoVectors(v0, v1):
     return q
 
 
-def getQuaternionFromMatrix(rot_matrix):
-    # Compute the trace of the matrix
-    trace = np.trace
+def getQuaternionFromMatrix1(rot_matrix):
+    # Compute the trace of the matrix (old version)
+    trace = np.trace(rot_matrix)
     if trace > 0:
         S = np.sqrt(trace + 1.0) * 2
         w = 0.25 * S
@@ -1207,7 +1224,44 @@ def getQuaternionFromMatrix(rot_matrix):
         x = (rot_matrix[0, 2] + rot_matrix[2, 0]) / S
         y = (rot_matrix[1, 2] + rot_matrix[2, 1]) / S
         z = 0.25 * S
-    return [x, y, z, w]
+    q = np.array([x, y, z, w])
+    q = q / np.linalg.norm(q)  # Normalize quaternion
+    return q.tolist()
+
+
+def getQuaternionFromMatrix(rot_matrix):
+    """
+    Convert a rotation matrix into a quaternion.
+    
+    Args:
+    rot_matrix (np.array): A 3x3 rotation matrix.
+    
+    Returns:
+    np.array: A numpy array with four elements [x, y, z, w], where w is the scalar 
+              component, and x, y, z are the vector components of the quaternion.
+    """
+    m = np.array(rot_matrix, dtype=np.float64, copy=False)
+    q = np.empty((4,))
+    t = np.trace(m)
+    if t > np.finfo(np.float64).eps:
+        t = np.sqrt(t + 1.0)
+        q[3] = 0.5 * t  # w component
+        t = 0.5 / t
+        q[0] = (m[2, 1] - m[1, 2]) * t  # x component
+        q[1] = (m[0, 2] - m[2, 0]) * t  # y component
+        q[2] = (m[1, 0] - m[0, 1]) * t  # z component
+    else:
+        i = np.argmax(np.diagonal(m))
+        j = (i + 1) % 3
+        k = (i + 2) % 3
+        t = np.sqrt(m[i, i] - m[j, j] - m[k, k] + 1.0)
+        q[i] = 0.5 * t  # x, y, or z component based on which diagonal is largest
+        t = 0.5 / t
+        q[3] = (m[k, j] - m[j, k]) * t  # w component
+        q[j] = (m[j, i] + m[i, j]) * t  # Next component in order
+        q[k] = (m[k, i] + m[i, k]) * t  # Last component in order
+    return q
+
 
 ######### RoboSensai Specified #########
 def sample_pc_from_mesh(mesh_path, mesh_scaling=[1., 1., 1.], num_points=1024, visualize=False):
@@ -1290,21 +1344,19 @@ def get_obj_axes_aligned_bbox_from_pc(obj_pc):
     return np.concatenate([bbox.get_center(), [0., 0., 0., 1.], bbox.get_half_extent()])
 
 
-def visualize_pc(point_cloud_np, zoom=0.8):
-    # Visualize the point cloud
-    o3d_pc = o3d.geometry.PointCloud()
-    o3d_pc.points = o3d.utility.Vector3dVector(point_cloud_np)
-    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    bbox = o3d_pc.get_axis_aligned_bounding_box(); bbox.color = np.array([0, 0, 0.])
-    # front means the direction pointing to the camera (facing the camera), up means the up translation between camera and world coordinate
-    o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox], lookat=[0.0, 0.0, 0.0], 
-                                      front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
-    
+def visualize_pc(pc, other_geoms=None, color=None, zoom=0.7):
+    if not isinstance(pc, list): 
+        pc_lst = [pc]
+    else:
+        assert all([isinstance(pc_i, np.ndarray) or isinstance(pc_i, list) for pc_i in pc]), 'All elements in pc list must be numpy arrays or nested list'
+        pc_lst = pc
 
-def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
+    if other_geoms is not None and not isinstance(other_geoms, list):
+        other_geoms = [other_geoms]
     # Visualize the point cloud with specific color
     if color is None: color = [None] * len(pc_lst)
     else: assert len(color) == len(pc_lst), 'Color list must have the same length as pc list'
+    
     geometries = []
     for i, pc in enumerate(pc_lst):
         o3d_pc = o3d.geometry.PointCloud()
@@ -1312,10 +1364,71 @@ def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
         if color[i] is not None: 
             o3d_pc.paint_uniform_color(color[i])
         geometries.append(o3d_pc)
+
+    if other_geoms is not None:
+        geometries.extend(other_geoms)
+    
     coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
     geometries.append(coord_frame)
+    # camera is set in the y positive direction
     o3d.visualization.draw_geometries(geometries, lookat=[0.0, 0.0, 0.0], 
-                                      front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
+                                      front=[0.0, 1.0, 0.5], up=[0.0, 0.0, 5.0], zoom=zoom,
+                                      window_name="Point Cloud Visualization", 
+                                      width=800, height=600, left=1200, top=50)
+    
+
+def crop_pc(pc, low_up_bbox):
+    # Crop the points cloud based on the bbox
+    # Both are in the world frame
+    low_bound, up_bound = low_up_bbox
+    mask = np.all((pc >= low_bound) & (pc <= up_bound), axis=1)
+    pc = pc[mask]
+    return pc, mask
+
+
+def o3d_bounding_box(center, half_extents):
+    # Calculate the min and max bounds from center and half extents
+    min_bound = np.array(center) - np.array(half_extents)
+    max_bound = np.array(center) + np.array(half_extents)
+
+    # Create corners of the bounding box
+    corners = [
+        min_bound,
+        [max_bound[0], min_bound[1], min_bound[2]],
+        [min_bound[0], max_bound[1], min_bound[2]],
+        [max_bound[0], max_bound[1], min_bound[2]],
+        [min_bound[0], min_bound[1], max_bound[2]],
+        [max_bound[0], min_bound[1], max_bound[2]],
+        [min_bound[0], max_bound[1], max_bound[2]],
+        max_bound,
+    ]
+    corners = np.array(corners)
+
+    # Define the lines based on the corners
+    lines = [
+        [0, 1], [1, 3], [3, 2], [2, 0],
+        [4, 5], [5, 7], [7, 6], [6, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+    ]
+
+    # Create a line set from the corners and lines
+    line_set = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(corners),
+        lines=o3d.utility.Vector2iVector(lines),
+    )
+
+    # Set the colors for the lines (RGBA where A is alpha for transparency)
+    # Since Open3D does not directly support transparency, we simulate it by choosing a light color
+    colors = [[0.1, 0.9, 0.1] for i in range(len(lines))]  # Light green color
+    line_set.colors = o3d.utility.Vector3dVector(colors)
+
+    return line_set
+
+
+def o3d_coordinate_frame(origin=[0, 0, 0], size=0.1):
+    # Create the coordinate frame
+    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=origin)
+    return coord_frame
     
 
 def get_pc_from_camera(width, height, view_matrix, proj_matrix, client_id=0):

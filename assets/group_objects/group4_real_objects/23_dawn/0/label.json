@@ -5,5 +5,18 @@
         0.0,
         0.0,
         0.0
-    ]
+    ],
+    "Center2GripperBase_pose": [
+        [
+            0.0,
+            0.0,
+            0.2
+        ],
+        [
+            3.141592653589793,
+            0.0,
+            0.0
+        ]
+    ],
+    "semantic_label": "Blue Dish Wash Bottle."
 }

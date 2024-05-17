@@ -165,7 +165,7 @@ def parse_args():
     additional += f'_step{args.num_steps}'
     additional += f'_trial{args.max_trials}'
 
-    args.timer = '_' + '_'.join(str(datetime.datetime.now())[5:16].split())  # a time name file
+    args.timer = '_' + datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")  # a time name file
 
     if args.random_policy:  # final_name is in all file names: .csv / .json / trajectory / checkpoints
         args.final_name = args.object_pool_name + args.timer + additional.replace('-train', '-random_policy')

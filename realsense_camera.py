@@ -9,11 +9,15 @@ import matplotlib.pyplot as plt
 class RealSenseCamera:
     def __init__(self, img_w=640, img_h=480, fps=30, color_align=True, serial_number=None) -> None:
         # Configure depth and color streams
+        # 640x480 both 30 fps; 1280x720 depth only 6 fps and color only 15 fps
+        # "Couldn't resolve requests - 'self.pipeline.start(config)'"
         self.pipeline = rs.pipeline()
         self.cfg = rs.config()
         self.serial_number = serial_number
         if serial_number is not None:
             self.cfg.enable_device(serial_number)
+        self.img_w = img_w
+        self.img_h = img_h
         self.cfg.enable_stream(rs.stream.color, img_w, img_h, rs.format.rgb8, fps)
         self.cfg.enable_stream(rs.stream.depth, img_w, img_h, rs.format.z16, fps)
         
@@ -25,7 +29,7 @@ class RealSenseCamera:
         # Test reading and also refresh intrinsics
         self.get_rgbd_frame()
 
-
+    
     def start_stream(self):
         self.pp_profile = self.pipeline.start(self.cfg)
         self.depth_scale = self.pp_profile.get_device().first_depth_sensor().get_depth_scale()
@@ -78,7 +82,7 @@ class RealSenseCamera:
         return color_img, depth_img
     
 
-    def get_pc_from_rgbd(self, color_img, depth_img, visual=False):
+    def get_pc_from_rgbd(self, color_img, depth_img, min_depth=0., visual=False):
         assert self.aligner is not None, \
              "Color and depth images are not aligned! We currently do not support point cloud generation without alignment. Please specify color_align=True"
         color_intrin = self.color_intrinsics
@@ -103,8 +107,8 @@ class RealSenseCamera:
         rgb = color_img.reshape(-1, 3)
 
         # Filter out invalid points
-        valid_points = xyz[z.ravel() != 0]
-        valid_rgb = rgb[z.ravel() != 0]
+        valid_points = xyz[z.ravel()>min_depth]
+        valid_rgb = rgb[z.ravel()>min_depth]
 
         if visual:
             pcd = o3d.geometry.PointCloud()
@@ -113,6 +117,11 @@ class RealSenseCamera:
             o3d.visualization.draw_geometries([pcd])
 
         return valid_points, valid_rgb
+    
+
+    def __del__(self):
+        self.stop_stream()
+    
 
 
 def adjust_intrinsics(intrinsics, original_size, new_size):

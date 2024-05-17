@@ -9,6 +9,12 @@ import re
 import h5py
 import trimesh
 import cv2
+import open3d as o3d
+import trimesh
+import numpy as np
+import logging
+import importlib
+
 
 
 def read_json(json_path):
@@ -109,8 +115,8 @@ def sorted_dict(dictionary):
 def get_on_bbox(bbox, z_half_extend:float):
     # scene_center_pos is the relative translation from the scene object's baselink to the center of the scene object's bounding box
     # All bbox given should be in the center frame (baselink is at the origin when import the urdf)
-    SceneCenter_2_QRregionCenter = [0, 0, bbox[9]+z_half_extend]
-    orientation = [0, 0, 0, 1.]
+    SceneCenter_2_QRregionCenter = [bbox[0], bbox[1], bbox[9]+z_half_extend]
+    orientation = bbox[3:7]
     QRregion_half_extents = bbox[7:10].copy()
     QRregion_half_extents[2] = z_half_extend
     return np.array([*SceneCenter_2_QRregionCenter, *orientation, *QRregion_half_extents])
@@ -402,3 +408,82 @@ def create_and_save_cuboid_mesh(file_path, extents=[0.04, 0.04, 0.04]):
     cube.export(file_path)
 
     print(f"Cube mesh saved to {file_path}")
+
+
+def pc2mesh(pc_array, mesh_path):
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pc_array)
+    pcd.estimate_normals()
+
+    # estimate radius for rolling ball
+    distances = pcd.compute_nearest_neighbor_distance()
+    avg_dist = np.mean(distances)
+    radius = 1.5 * avg_dist   
+
+    radii = [0.005, 0.01, 0.02, 0.04]
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+            pcd, o3d.utility.DoubleVector(radii)
+        )
+
+    # create the triangular mesh with the vertices and faces from open3d
+    tri_mesh = trimesh.Trimesh(np.asarray(mesh.vertices), 
+                               np.asarray(mesh.triangles),
+                               vertex_normals=np.asarray(mesh.vertex_normals))
+    print(f"Mesh is Convex: {trimesh.convex.is_convex(tri_mesh)}")
+    tri_mesh.export(mesh_path)
+
+
+def pc2mesh_v2(pc_array, mesh_path):
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pc_array)
+
+    alpha = 0.03
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)
+    mesh.compute_vertex_normals()
+
+    # create the triangular mesh with the vertices and faces from open3d
+    tri_mesh = trimesh.Trimesh(np.asarray(mesh.vertices), 
+                               np.asarray(mesh.triangles),
+                               vertex_normals=np.asarray(mesh.vertex_normals))
+    print(f"Mesh is Convex: {trimesh.convex.is_convex(tri_mesh)}")
+    tri_mesh.export(mesh_path)
+
+
+def compute_pc_mesh_dim_ratio(pc_path, mesh_path):
+    pc = np.load(pc_path, allow_pickle=True)
+    mesh = trimesh.load(mesh_path)
+    # Compute the pc bounding box dimensions
+    o3d_pc = o3d.geometry.PointCloud()
+    o3d_pc.points = o3d.utility.Vector3dVector(pc)
+    pc_dim = o3d_pc.get_axis_aligned_bounding_box().get_half_extent() * 2
+    mesh_dim = mesh.bounding_box.extents
+    return pc_dim / mesh_dim
+
+
+def process_mesh(org_mesh_path, save_mesh_path, scale_factor=[1e-3, 1e-3, 1e-3], rotate_angle=[0, 0, 0]):
+    # scale mesh to meters, rotate mesh and transform mesh to origin
+    mesh = trimesh.load(org_mesh_path)
+    mesh.apply_scale(scale_factor)
+    # rotate mesh using quaternion
+    if rotate_angle != [0, 0, 0]:
+        mesh.apply_transform(trimesh.transformations.euler_matrix(*rotate_angle))
+    # transform mesh to origin
+    mesh.apply_translation(-mesh.centroid)
+    mesh.export(save_mesh_path)
+
+
+def combine_images(img1, img2, alpha=1.0, beta=0.3):
+    # Load another image to blend with
+    width, height = img1.shape[1], img1.shape[0]
+    img2 = cv2.resize(img2, (width, height))
+    img1 = cv2.cvtColor(img1, cv2.COLOR_RGBA2BGRA)
+    img2 = cv2.cvtColor(img2, cv2.COLOR_RGBA2BGRA)
+    combined_img = cv2.addWeighted(img1, alpha, img2, beta, 0)
+    return combined_img
+
+
+# Configure logging
+def set_logging_format(level=logging.INFO, simple=True):
+  importlib.reload(logging)
+  FORMAT = '[%(funcName)s] %(message)s' if simple else '%(asctime)s - %(levelname)s - %(message)s'
+  logging.basicConfig(level=level, format=FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
