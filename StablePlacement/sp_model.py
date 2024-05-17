@@ -195,7 +195,7 @@ class StablePlacementPolicy_Normal(nn.Module):
         return pred_pose, probs.entropy().sum(dim=1)
 
 
-def get_sp_model(args, device=None):
+def get_sp_model(args, checkpoint_path=None, evaluate=True, device=None):
     device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.use_beta:
         model = StablePlacementPolicy_Beta().to(device)
@@ -203,4 +203,11 @@ def get_sp_model(args, device=None):
         model = StablePlacementPolicy_Normal().to(device)
     else:
         model = StablePlacementPolicy_Determ(use_pn_plus=args.use_pn_plus, group_all=args.group_all).to(device)
+    
+    if checkpoint_path is not None:
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    if evaluate:
+        model.eval()
+    
     return model

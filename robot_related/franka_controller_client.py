@@ -13,15 +13,18 @@ class FrankaPandaCtrl:
         self.client = SocketClient()
         self.client.send_message(["START", None])
         self.num_joints = 7
-        self.HOME = [0.12449206270659029, -0.3703699495004179, -0.19126912770046828, -1.8672249069794138, -0.03057571480473276, 2.330755875025425, -2.5943454335060485]
+        self.HOME = [0.054289627618698016, -0.24698193331114637, -0.1353490755215156, -1.4598274921017433, -0.10732393256213577, 1.2574428409277323, 0.6534634736124315]
 
         """
         All message from client to server type is [command, data]. Length of the message is 2.
         It seems that we can not send multiple data in one message easily.
         """
+        
+        
+    def reset(self):
         self.home_gripper()
         self.home_arm()
-        
+
 
     def set_joint_state(self, joint_state):
         assert len(joint_state) == self.num_joints
@@ -48,8 +51,53 @@ class FrankaPandaCtrl:
             assert len(waypoint) == 7, f"waypoint should have length 7, but got {len(waypoint)}."
         command_waypoints = ["plan_eef_cartesian_path"] + [waypoints]
         self.client.send_message(command_waypoints)
+        path_len = self.client.receive_message()
+        path_len = int(eval(path_len))
+        return path_len
+    
+
+    def plan_exec_eef_cartesian_path(self, waypoints):
+        """
+        No return value or message back. This is for the short path planning and execution.
+        """
+        for waypoint in waypoints:
+            assert len(waypoint) == 7, f"waypoint should have length 7, but got {len(waypoint)}."
+        command_waypoints = ["plan_exec_eef_cartesian_path"] + [waypoints]
+        self.client.send_message(command_waypoints)
+    
+    
+    def plan_eef_cartesian_path_compare(self, multi_waypoints):
+        """
+        waypoints: [[x, y, z, qx, qy, qz, qw], ...]
+        """
+        for waypoints in multi_waypoints:
+            for waypoint in waypoints:
+                assert len(waypoint) == 7, f"waypoint should have length 7, but got {len(waypoint)}."
+        command_multi_waypoints = ["plan_eef_cartesian_path_compare"] + [multi_waypoints]
+        self.client.send_message(command_multi_waypoints)
+        lst_msg = self.client.receive_message()
+        shortest_index, path_len = eval(lst_msg)
+        if shortest_index is None:
+            return None, 0
+        return int(shortest_index), int(path_len)
+    
+
+    def execute_plan(self):
+        command_execute = ["execute_plan", None]
+        self.client.send_message(command_execute)
+
+    
+    def check_plan_loaded(self):
+        command_check = ["check_plan_loaded", None]
+        self.client.send_message(command_check)
+        message = self.client.receive_message()
+        return message
+
+
+    def clean_plan(self):
+        command_clean = ["clean_plan", None]
+        self.client.send_message(command_clean)
         # message = self.client.receive_message()
-        # return message
 
 
     def small_lift(self, cur_eef_pose=None, height=0.02):
@@ -58,7 +106,7 @@ class FrankaPandaCtrl:
         """
         cur_eef_pose = self.get_eef_pose() if cur_eef_pose is None else cur_eef_pose
         cur_eef_pose[2] += height
-        return self.plan_eef_cartesian_path([cur_eef_pose])
+        return self.plan_exec_eef_cartesian_path([cur_eef_pose])
 
     
     def open_gripper(self):
@@ -117,13 +165,14 @@ class FrankaPandaCtrl:
 
 if __name__=="__main__":
     franka_panda_ctrl = FrankaPandaCtrl()
+    # franka_panda_ctrl.reset()
     cur_eef_pose = franka_panda_ctrl.get_eef_pose()
     cur_joint_state = franka_panda_ctrl.get_joint_state()
-    franka_panda_ctrl.home_gripper()
-    input("Press Enter to continue...")
-    franka_panda_ctrl.close_gripper()
-    cur_eef_pose = franka_panda_ctrl.get_eef_pose()
-    print(cur_eef_pose)
+    # franka_panda_ctrl.home_gripper()
+    # input("Press Enter to continue...")
+    # franka_panda_ctrl.close_gripper()
+    # cur_eef_pose = franka_panda_ctrl.get_eef_pose()
+    # print(cur_eef_pose)
     # franka_panda_ctrl.home_arm()
     # franka_panda_ctrl.plan_eef_cartesian_path([goal_eef_pose])
     # franka_panda_ctrl.set_joint_state(cur_joint_state)

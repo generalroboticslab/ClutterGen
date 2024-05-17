@@ -301,7 +301,9 @@ class RoboSensaiBullet:
     
     def _init_misc_variables(self):
         self.args.tablehalfExtents = self.args.tablehalfExtents if hasattr(self.args, "tablehalfExtents") else [0.2, 0.3, 0.35]
-        self.args.tableQueryRegion = self.args.tableQueryRegion if hasattr(self.args, "tableQueryRegion") else None
+        self.args.QueryRegion_halfext = self.args.QueryRegion_halfext if hasattr(self.args, "QueryRegion_halfext") else None
+        self.args.QueryRegion_ori = self.args.QueryRegion_ori if hasattr(self.args, "QueryRegion_ori") else None
+        self.args.QueryRegion_pos = self.args.QueryRegion_pos if hasattr(self.args, "QueryRegion_pos") else None
         self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [0.005, np.pi/360] # 0.5cm/s and 0.1 degree/s
         self.args.acc_threshold = self.args.acc_threshold if hasattr(self.args, "acc_threshold") else [0.1, np.pi/36] # 0.1m/s^2 and 1degree/s^2
         self.args.max_num_placing_objs = self.args.max_num_placing_objs if hasattr(self.args, "max_num_placing_objs") else 16
@@ -330,11 +332,14 @@ class RoboSensaiBullet:
         self.args.seq_select_placing = self.args.seq_select_placing if hasattr(self.args, "seq_select_placing") else False
         self.args.new_tablehalfExtents = self.args.new_tablehalfExtents if hasattr(self.args, "new_tablehalfExtents") else None
         self.args.use_robot_sp = self.args.use_robot_sp if hasattr(self.args, "use_robot_sp") else False
+        self.args.sp_data_collection = self.args.sp_data_collection if hasattr(self.args, "sp_data_collection") else False
+        
+        self.restored_args = deepcopy(self.args)
         # Verify the args are correct
         assert self.args.max_stable_steps + self.args.min_continue_stable_steps <= self.args.max_traj_history_len, \
             "The max_stable_steps and min_continue_stable_steps should be smaller than max_traj_history_len! max_traj_history_len is the steps of simulation!"
-        if self.args.tableQueryRegion is not None:
-            assert all([self.args.tableQueryRegion[i] <= self.args.tablehalfExtents[i] for i in range(len(self.args.tableQueryRegion[:2]))]), "Table query region should be smaller than table half extents!"
+        if self.args.QueryRegion_halfext is not None:
+            assert all([self.args.QueryRegion_halfext[i] <= self.args.tablehalfExtents[i] for i in range(len(self.args.QueryRegion_halfext[:2]))]), "Table query region should be smaller than table half extents!"
 
     
     def create_info_buffer(self):
@@ -365,6 +370,7 @@ class RoboSensaiBullet:
         
         # Scene
         self.placed_obj_poses = {}
+        self.surfaceCenter2placedObjCenter_poses = {}
         self.success_obj_num = 0
         if len(self.unquried_scene_name) == 0: 
             self.update_unquery_scenes()
@@ -391,7 +397,16 @@ class RoboSensaiBullet:
     
     def update_unplaced_objs(self):
         # You can use unplaced_objs to decide how many objs should be placed on the scene
-        selected_obj_pool = list(self.obj_name_data.keys())
+        selected_obj_pool = []
+        if hasattr(self.args, "targetUniName_lst") and len(self.args.targetUniName_lst) > 0:
+            for targetUniName in self.args.targetUniName_lst:
+                if targetUniName in self.obj_name_data.keys():
+                    selected_obj_pool.append(targetUniName)
+                else:
+                    raise(f"Object {targetUniName} does not exist in the object pool!")
+        else:
+            selected_obj_pool = list(self.obj_name_data.keys())
+        
         self.unplaced_objs_name = []
         if self.args.random_select_placing:
             self.rng.shuffle(selected_obj_pool)
@@ -580,9 +595,13 @@ class RoboSensaiBullet:
         if self.selected_qr_scene_region == "on":
             max_z_half_extent = self.tallest_placed_half_z_extend + self.selected_obj_bbox[9] # If on, bbox is half extent + tallest placed obj half extent (equivalent to the current scene bbox).
             selected_qr_scene_bbox = self.selected_qr_scene_bbox.copy()
-            if self.args.fixed_qr_region: max_z_half_extent = self.default_qr_region_z
-            if self.selected_qr_scene_name == "table" and self.args.tableQueryRegion is not None: # If the table query region is set, we use it to define the query region of the table on x, y
-                selected_qr_scene_bbox[7:9] = self.args.tableQueryRegion[:2] 
+            if self.args.fixed_qr_region: 
+                max_z_half_extent = self.default_qr_region_z
+            if self.selected_qr_scene_name == "table": # If the table query region is set, we use it to define the query region of the table on x, y
+                selected_qr_scene_bbox[:3] = self.args.QueryRegion_pos if self.args.QueryRegion_pos is not None else self.selected_qr_scene_bbox[:3]
+                selected_qr_scene_bbox[3:7] = pu.get_quaternion_from_euler(self.args.QueryRegion_ori) if self.args.QueryRegion_ori is not None else self.selected_qr_scene_bbox[3:7]
+                selected_qr_scene_bbox[7:9] = self.args.QueryRegion_halfext[:2] if self.args.QueryRegion_halfext is not None else self.selected_qr_scene_bbox[7:9]
+
             self.selected_qr_region = get_on_bbox(selected_qr_scene_bbox, z_half_extend=max_z_half_extent)
         elif self.selected_qr_scene_region == "in":
             # max z-half extend should be max(self.selected_obj_bbox[9], self.latest_scene_bbox[9]) ## The latest_scene_bbox should be recomputed after the object is placed (but we did not do this for now)
@@ -639,6 +658,14 @@ class RoboSensaiBullet:
                 p.invertTransform(*World2QRsceneCenter_pose), 
                 World2SelectedObjCenter_pose
             )
+
+            QRsceneCenter2QRsurfaceCenter = [[0, 0, self.selected_qr_scene_bbox[9]], [0., 0., 0., 1.]]
+            QRsurfaceCenter2SelectedObjCenter = pu.multiply_multi_transforms(
+                p.invertTransform(*QRsceneCenter2QRsurfaceCenter), 
+                QRsceneCenter_2_SelectedObjCenter
+            )
+            self.surfaceCenter2placedObjCenter_poses[self.selected_obj_name] = QRsurfaceCenter2SelectedObjCenter
+
             transformed_selected_obj_pc = se3_transform_pc(*QRsceneCenter_2_SelectedObjCenter, self.selected_obj_pc)
             self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
@@ -678,14 +705,14 @@ class RoboSensaiBullet:
         if done:
             self.num_episode += 1
             # Record the scene pose here
-            final_scene_obj_pose_dict = deepcopy(self.placed_obj_poses)
             scene_pos, scene_quat = self.scene_init_stable_pose
             scene_init_z_offset = self.fixed_scene_name_data[self.selected_qr_scene_name]["init_z_offset"]
             self.info['qr_scene_pose'] = [[scene_pos[0], scene_pos[1], scene_pos[2] - scene_init_z_offset], 
                                            scene_quat, 
                                            self.selected_qr_scene_bbox.tolist()]
-            self.info['placed_obj_poses'] = final_scene_obj_pose_dict
-            self.info['success_placed_obj_num'] = self.success_obj_num          
+            self.info['placed_obj_poses'] = deepcopy(self.placed_obj_poses)
+            self.info['success_placed_obj_num'] = self.success_obj_num    
+            self.info['surfaceCenter2placedObjCenter_poses'] = deepcopy(self.surfaceCenter2placedObjCenter_poses)
             # Record the success number if objects successfully placed in one scene
             self.update_running_avg(record_dict=self.info['scene_obj_success_num'], 
                                     key_name=self.selected_qr_scene_name, 
@@ -1243,11 +1270,12 @@ class RoboSensaiBullet:
         World_2_QRsceneSurfaceCenter = pu.multiply_multi_transforms(
             World_2_QRsceneCenter, QRsceneCenter_2_QRsceneSurfaceCenter
         )
-        QRscene_half_extents = self.selected_qr_scene_bbox[7:]
-        # The scene top surface points cloud
+
+        # The scene top surface points cloud; Query region depends on the input of evaluation_sg
+        QRscene_half_extents = self.selected_qr_region[7:]
         QRsceneSurface_pc = self.rng.uniform(-QRscene_half_extents, QRscene_half_extents, size=(self.args.max_num_qr_scene_points, 3))
         QRsceneSurface_pc[:, 2] = 0. # The z value is 0 for the top surface
-        
+
         self.QRsceneSurface_2_placed_obj_poses = deepcopy(self.placed_obj_poses)
         for placed_obj_name in self.placed_obj_poses.keys():
             World_2_objBase = self.placed_obj_poses[placed_obj_name]
@@ -1352,7 +1380,22 @@ class RoboSensaiBullet:
     def convert_BaseLinkPC_2_BboxCenterPC(self, pc, Base2BboxCenter):
         BboxCenter2Base = p.invertTransform(Base2BboxCenter[:3], [0., 0., 0., 1.])
         return se3_transform_pc(*BboxCenter2Base, pc)
+    
 
+    ######################################
+    ######### Real Robot Task ############
+    ######################################
+    def hard_update_args(self, targetUniName_lst, qrsceneCenter2qrregionCenter=None):
+        self.args.targetUniName_lst = targetUniName_lst
+        self.args.max_num_placing_objs = len(targetUniName_lst)
+        if qrsceneCenter2qrregionCenter is not None:
+            self.args.QueryRegion_pos = qrsceneCenter2qrregionCenter[0]
+            self.args.QueryRegion_ori = qrsceneCenter2qrregionCenter[1]
+            self.args.QueryRegion_halfext = qrsceneCenter2qrregionCenter[2]
+
+
+    def restore_args(self):
+        self.args = deepcopy(self.restored_args)
 
     ######################################
     ######### Utils FUnctions ############

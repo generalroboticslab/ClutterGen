@@ -115,8 +115,8 @@ def sorted_dict(dictionary):
 def get_on_bbox(bbox, z_half_extend:float):
     # scene_center_pos is the relative translation from the scene object's baselink to the center of the scene object's bounding box
     # All bbox given should be in the center frame (baselink is at the origin when import the urdf)
-    SceneCenter_2_QRregionCenter = [0, 0, bbox[9]+z_half_extend]
-    orientation = [0, 0, 0, 1.]
+    SceneCenter_2_QRregionCenter = [bbox[0], bbox[1], bbox[9]+z_half_extend]
+    orientation = bbox[3:7]
     QRregion_half_extents = bbox[7:10].copy()
     QRregion_half_extents[2] = z_half_extend
     return np.array([*SceneCenter_2_QRregionCenter, *orientation, *QRregion_half_extents])

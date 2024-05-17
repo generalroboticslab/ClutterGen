@@ -82,7 +82,7 @@ class RealSenseCamera:
         return color_img, depth_img
     
 
-    def get_pc_from_rgbd(self, color_img, depth_img, visual=False):
+    def get_pc_from_rgbd(self, color_img, depth_img, min_depth=0., visual=False):
         assert self.aligner is not None, \
              "Color and depth images are not aligned! We currently do not support point cloud generation without alignment. Please specify color_align=True"
         color_intrin = self.color_intrinsics
@@ -107,8 +107,8 @@ class RealSenseCamera:
         rgb = color_img.reshape(-1, 3)
 
         # Filter out invalid points
-        valid_points = xyz[z.ravel() != 0]
-        valid_rgb = rgb[z.ravel() != 0]
+        valid_points = xyz[z.ravel()>min_depth]
+        valid_rgb = rgb[z.ravel()>min_depth]
 
         if visual:
             pcd = o3d.geometry.PointCloud()

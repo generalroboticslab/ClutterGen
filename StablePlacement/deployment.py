@@ -140,7 +140,7 @@ if __name__ == "__main__":
 
             if args.visualize_pc:
                 # Visualize the point cloud
-                pu.visualize_pc_lst([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
+                pu.visualize_pc([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
 
     pred_success_records["num_objs_on_qr_scene_success_rate"] = {k: v/pred_success_records["num_objs_on_qr_scene_counts"][k] for k, v in pred_success_records["num_objs_on_qr_scene_success"].items()}
     pred_success_records["num_times_obj_get_qr_success_rate"] = {k: v/pred_success_records["num_times_obj_get_qr_counts"][k] for k, v in pred_success_records["num_times_obj_get_qr_success"].items()}

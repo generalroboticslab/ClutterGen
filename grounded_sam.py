@@ -112,7 +112,7 @@ class GD_SAM:
         return np.array(Image.alpha_composite(annotated_frame_pil, mask_image_pil))
 
 
-    def gd_detect(self, img_tensor_trans, text_prompt, box_threshold = 0.5, text_threshold = 0.5, annotated = False):
+    def gd_detect(self, img_tensor_trans, text_prompt, box_threshold = 0.6, text_threshold = 0.6, annotated = False):
         # detect object using grounding DINO
         boxes, logits, phrases = predict(
             model=self.gd_model,

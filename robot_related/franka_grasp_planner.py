@@ -236,9 +236,10 @@ class FrankaGraspLabeler:
         self.cur_obj_mass = self.obj_name_data[self.cur_objUniName]["mass"]
         self.cur_obj_index = self.obj_UniNames.index(self.cur_objUniName)
         self.cur_rpy = [0., 0., 0.]
+        self.cur_obj_center2base = [-self.cur_obj_bbox[:3], [0, 0, 0, 1.]]
         self.old_gb_scaling = None
         self.placement_pos_world2center = [0.5, 0, self.cur_obj_bbox[9]+0.5]
-        self.placement_pos_world2base = p.multiplyTransforms(self.placement_pos_world2center, [0, 0, 0, 1.], -self.cur_obj_bbox[:3], [0, 0, 0, 1.])[0]
+        self.placement_pos_world2base = p.multiplyTransforms(self.placement_pos_world2center, [0, 0, 0, 1.], *self.cur_obj_center2base)[0]
         pu.set_pose(self.cur_object_id, (self.placement_pos_world2base, p.getQuaternionFromEuler(self.cur_rpy)))
         self.Center2GripperBase_pos_rpy = self.obj_name_data[self.cur_objUniName]["Center2GripperBase_pose"]
         if self.Center2GripperBase_pos_rpy is None: # Pos and RPY
@@ -373,7 +374,8 @@ class FrankaGraspLabeler:
     
 
     def update_gripper_pose(self):
-        World2ObjCenter_pose = pu.get_body_pose(self.cur_object_id, self.client_id)
+        World2ObjBase_pose = pu.get_body_pose(self.cur_object_id, self.client_id)
+        World2ObjCenter_pose = pu.multiply_multi_transforms(World2ObjBase_pose, pu.invert_transform(self.cur_obj_center2base))
         ObjCenter2GripperBase_pose = [self.Center2GripperBase_pos_rpy[0], p.getQuaternionFromEuler(self.Center2GripperBase_pos_rpy[1])]
         World2GripperBase_pose = pu.multiply_multi_transforms(World2ObjCenter_pose, ObjCenter2GripperBase_pose)
         pu.set_pose(self.gripper_id, World2GripperBase_pose)

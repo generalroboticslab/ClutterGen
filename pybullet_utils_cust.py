@@ -973,6 +973,7 @@ def draw_camera_axis(camera_pose, axis_length=0.1, old_axis_ids=None, client_id=
     # Compute the end points of the axes
     # We manually change the sign of the Z-axis to align with PyBullet's camera orientation, which is not real orientation
     origin, camera_orientation = camera_pose
+    origin = np.array(origin) # Make sure origin is numpy so that x, y, z are all numpy arrays
     x_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[axis_length, 0, 0], [0, 0, 0, 1.]])[0]
     y_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[0, axis_length, 0], [0, 0, 0, 1.]])[0]
     z_axis = origin + multiply_multi_transforms([[0, 0, 0], camera_orientation], [[0, 0, axis_length], [0, 0, 0, 1.]])[0]
@@ -1129,13 +1130,13 @@ def multiply_multi_transforms(*args):
     assert len(args) >= 2, 'multi transforms need at least 2 pose'
     if len(args) == 2:
         pose1, pose2 = args
-        return p.multiplyTransforms(*pose1, *pose2)
+        accumulate_pose = p.multiplyTransforms(*pose1, *pose2)
     elif len(args) > 2:
         pose1, pose2 = args[0], args[1]
         accumulate_pose = p.multiplyTransforms(*pose1, *pose2)
         for i in range(2, len(args)):
             accumulate_pose = p.multiplyTransforms(*accumulate_pose, *args[i])
-        return accumulate_pose
+    return [list(accumulate_pose[0]), list(accumulate_pose[1])]
     
 
 def invert_transform(pose):
@@ -1343,21 +1344,19 @@ def get_obj_axes_aligned_bbox_from_pc(obj_pc):
     return np.concatenate([bbox.get_center(), [0., 0., 0., 1.], bbox.get_half_extent()])
 
 
-def visualize_pc(point_cloud_np, zoom=0.8):
-    # Visualize the point cloud
-    o3d_pc = o3d.geometry.PointCloud()
-    o3d_pc.points = o3d.utility.Vector3dVector(point_cloud_np)
-    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    bbox = o3d_pc.get_axis_aligned_bounding_box(); bbox.color = np.array([0, 0, 0.])
-    # front means the direction pointing to the camera (facing the camera), up means the up translation between camera and world coordinate
-    o3d.visualization.draw_geometries([o3d_pc, coord_frame, bbox], lookat=[0.0, 0.0, 0.0], 
-                                      front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
-    
+def visualize_pc(pc, other_geoms=None, color=None, zoom=0.7):
+    if not isinstance(pc, list): 
+        pc_lst = [pc]
+    else:
+        assert all([isinstance(pc_i, np.ndarray) or isinstance(pc_i, list) for pc_i in pc]), 'All elements in pc list must be numpy arrays or nested list'
+        pc_lst = pc
 
-def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
+    if other_geoms is not None and not isinstance(other_geoms, list):
+        other_geoms = [other_geoms]
     # Visualize the point cloud with specific color
     if color is None: color = [None] * len(pc_lst)
     else: assert len(color) == len(pc_lst), 'Color list must have the same length as pc list'
+    
     geometries = []
     for i, pc in enumerate(pc_lst):
         o3d_pc = o3d.geometry.PointCloud()
@@ -1365,10 +1364,71 @@ def visualize_pc_lst(pc_lst, zoom=0.8, color=None):
         if color[i] is not None: 
             o3d_pc.paint_uniform_color(color[i])
         geometries.append(o3d_pc)
+
+    if other_geoms is not None:
+        geometries.extend(other_geoms)
+    
     coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
     geometries.append(coord_frame)
+    # camera is set in the y positive direction
     o3d.visualization.draw_geometries(geometries, lookat=[0.0, 0.0, 0.0], 
-                                      front=[-1.0, 0.0, 0.5], up=[0.0, 0.0, 1.0], zoom=zoom)
+                                      front=[0.0, 1.0, 0.5], up=[0.0, 0.0, 5.0], zoom=zoom,
+                                      window_name="Point Cloud Visualization", 
+                                      width=800, height=600, left=1200, top=50)
+    
+
+def crop_pc(pc, low_up_bbox):
+    # Crop the points cloud based on the bbox
+    # Both are in the world frame
+    low_bound, up_bound = low_up_bbox
+    mask = np.all((pc >= low_bound) & (pc <= up_bound), axis=1)
+    pc = pc[mask]
+    return pc, mask
+
+
+def o3d_bounding_box(center, half_extents):
+    # Calculate the min and max bounds from center and half extents
+    min_bound = np.array(center) - np.array(half_extents)
+    max_bound = np.array(center) + np.array(half_extents)
+
+    # Create corners of the bounding box
+    corners = [
+        min_bound,
+        [max_bound[0], min_bound[1], min_bound[2]],
+        [min_bound[0], max_bound[1], min_bound[2]],
+        [max_bound[0], max_bound[1], min_bound[2]],
+        [min_bound[0], min_bound[1], max_bound[2]],
+        [max_bound[0], min_bound[1], max_bound[2]],
+        [min_bound[0], max_bound[1], max_bound[2]],
+        max_bound,
+    ]
+    corners = np.array(corners)
+
+    # Define the lines based on the corners
+    lines = [
+        [0, 1], [1, 3], [3, 2], [2, 0],
+        [4, 5], [5, 7], [7, 6], [6, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+    ]
+
+    # Create a line set from the corners and lines
+    line_set = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(corners),
+        lines=o3d.utility.Vector2iVector(lines),
+    )
+
+    # Set the colors for the lines (RGBA where A is alpha for transparency)
+    # Since Open3D does not directly support transparency, we simulate it by choosing a light color
+    colors = [[0.1, 0.9, 0.1] for i in range(len(lines))]  # Light green color
+    line_set.colors = o3d.utility.Vector3dVector(colors)
+
+    return line_set
+
+
+def o3d_coordinate_frame(origin=[0, 0, 0], size=0.1):
+    # Create the coordinate frame
+    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=origin)
+    return coord_frame
     
 
 def get_pc_from_camera(width, height, view_matrix, proj_matrix, client_id=0):

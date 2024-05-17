@@ -5,7 +5,7 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from StablePlacement.sp_dataloader import HDF5Dataset, custom_collate, create_subset_dataset
+from sp_dataloader import HDF5Dataset, custom_collate, create_subset_dataset
 from sp_model import get_sp_model
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
@@ -28,10 +28,10 @@ def parse_args():
     # Training parameters
     parser.add_argument('--use_normal', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
     parser.add_argument('--use_beta', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
+    parser.add_argument('--use_pn_plus', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use pointnet++ or not')
+    parser.add_argument('--group_all', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use pointnet++ or not')
     parser.add_argument('--subset_ratio', type=float, default=None, help='The ratio of the subset of the dataset')
     parser.add_argument('--weighted_loss', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--use_pn_plus', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Use pointnet++ or not')
-    parser.add_argument('--group_all', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use pointnet++ or not')
     parser.add_argument('--epochs', type=int, default=1000, help='')
     parser.add_argument('--val_epochs', type=int, default=5, help='')
     parser.add_argument('--batch_size', type=int, default=40, help='')
@@ -277,7 +277,7 @@ for epoch in range(1, args.epochs+1):
                             scene_pc = torch.cat([scene_pc, torch.tensor(transformed_pred_qr_obj_pc).unsqueeze(0).to(device)], dim=1)
 
                             # # Visualize the point cloud
-                            # pu.visualize_pc_lst([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
+                            # pu.visualize_pc([scene_pc_np, transformed_pred_qr_obj_pc], color=[[0, 0, 1], [1, 0, 0]])
 
                         ar_success_sum += success
                         ar_avg_placed_objs += len(sp_placed_obj_poses)

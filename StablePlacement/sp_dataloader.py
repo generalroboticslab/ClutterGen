@@ -14,7 +14,6 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, Subset
 
 from utils import read_dataset_recursively, se3_transform_pc, save_json
-import pybullet_utils_cust as pu
 
 
 def split_dataset(hdf5_filename, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, random_select=True):
@@ -179,10 +178,7 @@ if __name__=="__main__":
     val_dataset_path = dataset_path.replace('.h5', '_val.h5')
     test_dataset_path = dataset_path.replace('.h5', '_test.h5')
 
-    if not os.path.exists(train_dataset_path) \
-        or not os.path.exists(val_dataset_path) \
-        or not os.path.exists(test_dataset_path):
-        split_dataset(dataset_path, random_select=True)
+    split_dataset(dataset_path, random_select=True)
 
     assert os.path.exists(train_dataset_path), f"File not found: {train_dataset_path}"
     assert os.path.exists(val_dataset_path), f"File not found: {val_dataset_path}"

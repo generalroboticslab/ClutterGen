@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import torch
 from torch.utils.data import DataLoader
-from StablePlacement.sp_dataloader import HDF5Dataset, custom_collate, create_subset_dataset
+from sp_dataloader import HDF5Dataset, custom_collate, create_subset_dataset
 from sp_model import get_sp_model
 from torch.optim import Adam
 from torch.nn.functional import mse_loss
@@ -26,8 +26,8 @@ def parse_args():
     parser.add_argument('--env_name', type=str, default='StablePlacement_EVAL')
     parser.add_argument('--result_dir', type=str, default='StablePlacement/SP_Result')
     parser.add_argument('--visualize_pc', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
-    parser.add_argument('--num_scene_objs_thred', type=int, default=0, nargs='?', const=True, help='The threshold of the number of scene objects for visualization pc')
-    parser.add_argument('--checkpoint', type=str, default='StablePlacement_05-07_00:11_Deterministic_PNPlusGroupAll_WeightedLoss_EntCoef0.0_weiDecay0.0')
+    parser.add_argument('--num_scene_objs_thred', type=int, default=1, nargs='?', const=True, help='The threshold of the number of scene objects for visualization pc')
+    parser.add_argument('--checkpoint', type=str, default='StablePlacement_05-09_18:02_Deterministic_PNPlusGroupAll_WeightedLoss_EntCoef0.0_weiDecay0.0')
     parser.add_argument('--index_episode', type=str, default="1000")
     
     parser.add_argument('--use_simulator', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Save dataset or not')
@@ -146,9 +146,10 @@ if __name__ == "__main__":
                 qr_obj_pose_np = qr_obj_pose.cpu().numpy()
                 # Visualize the point cloud
                 for i in range(len(scene_pc_np)):
+                    print(np.max(scene_pc_np[i], axis=0) - np.min(scene_pc_np[i], axis=0))
                     transformed_pred_qr_obj_pc = se3_transform_pc(pred_qr_obj_pose_np[i][:3], pred_qr_obj_pose_np[i][3:], qr_obj_pc_np[i])
                     transformed_ground_truth_qr_obj_pc = se3_transform_pc(qr_obj_pose_np[i][:3], qr_obj_pose_np[i][3:], qr_obj_pc_np[i])
-                    pu.visualize_pc_lst(
+                    pu.visualize_pc(
                         [scene_pc_np[i], transformed_pred_qr_obj_pc, transformed_ground_truth_qr_obj_pc], 
                          color=[[0, 0, 1], [1, 0, 0], [0, 1, 0]])
         

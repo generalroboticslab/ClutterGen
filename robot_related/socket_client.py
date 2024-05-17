@@ -25,7 +25,12 @@ class SocketClient:
 
 
     def send_message(self, raw_list):
-        assert isinstance(raw_list, list), f"raw_list should be a list [command, value], but got {type(raw_list)}."
+        if isinstance(raw_list, str):
+            raw_list = [raw_list, None]
+        elif isinstance(raw_list, list):
+            raw_list = raw_list
+        else:
+            raise ValueError(f"raw_list should be a list [command, value] or pure str, but got {type(raw_list)} type.")
         assert len(raw_list) == 2, f"raw_list should have length 2, but got {len(raw_list)}."
         msg = str(raw_list)
         message = msg.encode(self.FORMAT)
@@ -72,7 +77,7 @@ class SocketClient:
 if __name__ == "__main__":
     client = SocketClient()  # Use the appropriate server IP and port
     # Example usage:
-    client.send_message("Hello Server!")
+    client.send_message(["Hello Server!", None])
     response = client.receive_message()  # Assuming the server sends a response
     client.keyboard_start()
     client.disconnect()

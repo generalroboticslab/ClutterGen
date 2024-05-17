@@ -21,6 +21,7 @@ from FoundationPose.estimater import *
 from FoundationPose.datareader import *
 from grounded_sam import GD_SAM
 from realsense_camera import RealSenseCamera
+import pybullet_utils_cust as pu
 
 
 class ObjectEstimator:
@@ -174,33 +175,37 @@ class ObjectEstimator:
 
     def get_raw_rgbd_frame(self):
         return self.camera.get_rgbd_frame()
+    
+
+    def get_pc_from_rgbd(self, color, depth, min_depth=0.):
+        return self.camera.get_pc_from_rgbd(color, depth, min_depth=min_depth)
 
 
 if __name__=='__main__':
-  RealObjectsDict = ["Chinese Ceramic Bowl.", "White M Mug", "Blue Tape", "Blue Pepsi", 
-                     "Transparent Wine Glass Cup.", "Transparent Water Glass Cup.", "Pink Spray.", 
-                     "Yellow Mustard Bottle.", "Red Pepper Powder Container.", "Blue Dish Wash Bottle.", "Spam Can.", "Yellow Domino Sugar Box"]
-  parser = argparse.ArgumentParser()
-  code_dir = os.path.dirname(os.path.realpath(__file__))
-  parser.add_argument('--semantic_label', type=str, default="Blue Tape")
-  parser.add_argument('--mesh_file', type=str, default=f'assets/group_objects/group4_real_objects/44_paper_tape/0/textured_objs/textured.obj')
-  parser.add_argument('--video_file', type=str, default=f'{code_dir}/FoundationPose/demo_data/custom_test/red_cube.MOV')
-  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/FoundationPose/demo_data/mustard0')
-  parser.add_argument('--est_refine_iter', type=int, default=5)
-  parser.add_argument('--track_refine_iter', type=int, default=2)
-  parser.add_argument('--debug', type=int, default=1)
-  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/FoundationPose/debug')
-  args = parser.parse_args()
+    RealObjectsDict = ["Chinese Ceramic Bowl.", "White M Mug", "Blue Tape", "Blue Pepsi", 
+                        "Transparent Wine Glass Cup.", "Transparent Water Glass Cup.", "Pink Spray.", 
+                        "Yellow Mustard Bottle.", "Red Pepper Powder Container.", "Blue Dish Wash Bottle.", "Spam Can.", "Yellow Domino Sugar Box"]
+    parser = argparse.ArgumentParser()
+    code_dir = os.path.dirname(os.path.realpath(__file__))
+    parser.add_argument('--semantic_label', type=str, default="Blue Tape")
+    parser.add_argument('--mesh_file', type=str, default=f'assets/group_objects/group4_real_objects/44_paper_tape/0/textured_objs/textured.obj')
+    parser.add_argument('--video_file', type=str, default=f'{code_dir}/FoundationPose/demo_data/custom_test/red_cube.MOV')
+    parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/FoundationPose/demo_data/mustard0')
+    parser.add_argument('--est_refine_iter', type=int, default=5)
+    parser.add_argument('--track_refine_iter', type=int, default=2)
+    parser.add_argument('--debug', type=int, default=1)
+    parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/FoundationPose/debug')
+    args = parser.parse_args()
 
-  set_logging_format()
-  set_seed(0)
+    set_logging_format()
+    set_seed(0)
 
-  obj_detector = ObjectEstimator(args)
+    obj_detector = ObjectEstimator(args)
 
-  mesh = trimesh.load(args.mesh_file)
-  to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
-  bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
-  obj_detector.update_est_target(args.semantic_label, mesh, to_origin, bbox)
-  for i in range(100000):
-      obj_detector.est_obj_pose6d(visualization=True)
-  obj_detector.run()
+    mesh = trimesh.load(args.mesh_file)
+    to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
+    bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
+    obj_detector.update_est_target(args.semantic_label, mesh, to_origin, bbox)
+    for i in range(100000):
+        obj_detector.est_obj_pose6d(visualization=True)
+    obj_detector.run()
