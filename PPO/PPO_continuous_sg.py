@@ -28,11 +28,11 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class LSTM_Linear(nn.Module):
-    def __init__(self, input_size, hidden_size, num_lstm_layers, num_linear_layers, output_size, batch_first=True, init_std=0.01):
+    def __init__(self, input_size, hidden_size, num_lstm_layers, lin_input_size, num_linear_layers, output_size, batch_first=True, init_std=0.01):
         super().__init__()
         self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_lstm_layers, batch_first=batch_first)
         self.linear = MLP(
-            input_size=hidden_size,
+            input_size=lin_input_size,
             hidden_size=hidden_size,
             output_size=output_size,
             num_layers=num_linear_layers,
@@ -80,7 +80,7 @@ class PositionalEncoding(nn.Module):
 
 
 class Transfromer_Linear(nn.Module):
-    def __init__(self, input_size, hidden_size, num_transf_layers, num_linear_layers, output_size, nhead=1, batch_first=True, init_std=0.01) -> None:
+    def __init__(self, input_size, hidden_size, num_transf_layers, lin_input_size, num_linear_layers, output_size, nhead=1, batch_first=True, init_std=0.01) -> None:
         super().__init__()
         self.positional_encoding = PositionalEncoding(input_size, batch_first=batch_first)
         transformer_layer = nn.TransformerEncoderLayer(
@@ -95,7 +95,7 @@ class Transfromer_Linear(nn.Module):
             norm=nn.LayerNorm(input_size)
         )
         self.linear = MLP(
-            input_size=input_size,
+            input_size=lin_input_size,
             hidden_size=hidden_size,
             output_size=output_size,
             num_layers=num_linear_layers,
@@ -105,7 +105,9 @@ class Transfromer_Linear(nn.Module):
     def forward(self, x):
         x = self.positional_encoding(x)
         embeddings = self.transformer(x)
-        last_embedding = embeddings[:, -1, :] # only use the last layer output
+        # last_embedding = embeddings[:, -1, :] # only use the last layer output
+        # flatten the whole embeddings
+        last_embedding = torch.flatten(embeddings, start_dim=1)
         output = self.linear(last_embedding)
         return output
     
@@ -178,8 +180,8 @@ class Agent(nn.Module):
         self.action_logits_num = envs.action_shape[1] * 2 # 2 for mean and std
 
         # Layer Number
-        self.traj_hist_encoder_num_linear = 2; self.traj_hist_encoder_num_transf = 2
-        self.seq_obs_encoder_num_linear = 2; self.seq_obs_encoder_num_transf = 2
+        self.traj_hist_encoder_num_linear = 2; self.traj_hist_encoder_num_transf = 1
+        self.seq_obs_encoder_num_linear = 2; self.seq_obs_encoder_num_transf = 1
         self.critic_num_linear = 5; self.actor_num_linear = 5
         
         # PointNet
@@ -195,6 +197,7 @@ class Agent(nn.Module):
                     input_size=envs.traj_history_shape[1], 
                     hidden_size=self.hidden_size, 
                     num_transf_layers=self.traj_hist_encoder_num_transf,
+                    lin_input_size=np.prod(envs.traj_history_shape),
                     num_linear_layers=self.traj_hist_encoder_num_linear, 
                     output_size=envs.history_ft_dim, 
                     batch_first=True, 
@@ -216,9 +219,10 @@ class Agent(nn.Module):
                     input_size=envs.post_act_hist_qr_ft_shape[2], 
                     hidden_size=self.hidden_size, 
                     num_transf_layers=self.seq_obs_encoder_num_transf,
+                    lin_input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]),
                     num_linear_layers=self.seq_obs_encoder_num_linear, 
                     output_size=envs.seq_info_ft_dim, 
-                    nhead=8,
+                    nhead=2,
                     batch_first=True, 
                     init_std=1.0
                 ).to(self.device)
