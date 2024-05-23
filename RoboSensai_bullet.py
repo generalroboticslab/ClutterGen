@@ -151,7 +151,8 @@ class RoboSensaiBullet:
                 scene_pc = self.convert_BaseLinkPC_2_BboxCenterPC(scene_pc, scene_axes_bbox)
                 stable_init_pos_z = scene_axes_bbox[9] - scene_axes_bbox[2] # Z Half extent - Z offset between pc center and baselink
                 init_z_offset = 5. if not self.args.eval_result else 0. # For training, we hang the scene in the air; For evaluation, we place the scene on the ground
-                assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
+                # assert scene_label["queried_region"] is not None, f"Scene {scene_uni_name} does not have queried region!"
+                scene_label["queried_region"] = "on" # For now, we only have "on" relation
                 self.fixed_scene_name_data[scene_uni_name] = {  # Init_pose is floating on the air to avoid rely on the ground
                                                                 "id": scene_id,
                                                                 "init_z_offset": init_z_offset,
@@ -171,9 +172,9 @@ class RoboSensaiBullet:
                 # If the scene has joints, we need to set the joints to the lower limit
                 self.fixed_scene_name_data[scene_uni_name]["joint_limits"] = self.set_obj_joints_to_lower_limit(scene_id)
                 
-                # Only for evaluation
-                if self.args.eval_result:
-                    self.fixed_scene_name_data[scene_uni_name]["joint_limits"] = self.set_obj_joints_to_higher_limit(scene_id)
+                # Only for evaluation (If the door needs to be opened, we need to set the joints to the higher limit)
+                # if self.args.eval_result:
+                #     self.fixed_scene_name_data[scene_uni_name]["joint_limits"] = self.set_obj_joints_to_higher_limit(scene_id)
             
             except p.error as e:
                 print(f"Failed to load scene {scene_uni_name} | Error: {e}")
@@ -300,9 +301,10 @@ class RoboSensaiBullet:
 
     
     def _init_misc_variables(self):
-        self.args.tablehalfExtents = self.args.tablehalfExtents if hasattr(self.args, "tablehalfExtents") else [0.2, 0.3, 0.35]
+        self.args.tablehalfExtents = self.args.tablehalfExtents if hasattr(self.args, "tablehalfExtents") else [0.3, 0.35, 0.35]
         self.args.QueryRegion_halfext = self.args.QueryRegion_halfext if hasattr(self.args, "QueryRegion_halfext") else None
-        self.args.QueryRegion_ori = self.args.QueryRegion_ori if hasattr(self.args, "QueryRegion_ori") else None
+        self.args.QueryRegion_ori = pu.get_quaternion_from_euler([0., 0., self.args.QueryRegion_euler_z]) \
+            if (hasattr(self.args, "QueryRegion_euler_z") and self.args.QueryRegion_euler_z is not None) else None
         self.args.QueryRegion_pos = self.args.QueryRegion_pos if hasattr(self.args, "QueryRegion_pos") else None
         self.args.vel_threshold = self.args.vel_threshold if hasattr(self.args, "vel_threshold") else [0.005, np.pi/360] # 0.5cm/s and 0.1 degree/s
         self.args.acc_threshold = self.args.acc_threshold if hasattr(self.args, "acc_threshold") else [0.1, np.pi/36] # 0.1m/s^2 and 1degree/s^2
@@ -314,7 +316,8 @@ class RoboSensaiBullet:
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
         self.args.min_continue_stable_steps = self.args.min_continue_stable_steps if hasattr(self.args, "min_continue_stable_steps") else 20
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
-        self.args.specific_scene = self.args.specific_scene if hasattr(self.args, "specific_scene") else None
+        self.args.specific_scene = self.args.specific_scene \
+            if hasattr(self.args, "specific_scene") and self.args.specific_scene != "None" else None
         self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
         self.args.max_num_qr_scene_points = self.args.max_num_qr_scene_points if hasattr(self.args, "max_num_qr_scene_points") else 10 * self.args.max_num_urdf_points
         self.args.max_num_scene_points = self.args.max_num_scene_points if hasattr(self.args, "max_num_scene_points") else 10240
@@ -597,11 +600,10 @@ class RoboSensaiBullet:
             selected_qr_scene_bbox = self.selected_qr_scene_bbox.copy()
             if self.args.fixed_qr_region: 
                 max_z_half_extent = self.default_qr_region_z
-            if self.selected_qr_scene_name == "table": # If the table query region is set, we use it to define the query region of the table on x, y
-                selected_qr_scene_bbox[:3] = self.args.QueryRegion_pos if self.args.QueryRegion_pos is not None else self.selected_qr_scene_bbox[:3]
-                selected_qr_scene_bbox[3:7] = pu.get_quaternion_from_euler(self.args.QueryRegion_ori) if self.args.QueryRegion_ori is not None else self.selected_qr_scene_bbox[3:7]
-                selected_qr_scene_bbox[7:9] = self.args.QueryRegion_halfext[:2] if self.args.QueryRegion_halfext is not None else self.selected_qr_scene_bbox[7:9]
-
+            # If the table query region is set, we use it to define the query region of the table on x, y
+            selected_qr_scene_bbox[:3] = self.args.QueryRegion_pos if self.args.QueryRegion_pos is not None else [0., 0., 0.] # There is no offset from the scene center to query region center
+            selected_qr_scene_bbox[3:7] = self.args.QueryRegion_ori if self.args.QueryRegion_ori is not None else self.selected_qr_scene_bbox[3:7]
+            selected_qr_scene_bbox[7:9] = self.args.QueryRegion_halfext[:2] if self.args.QueryRegion_halfext is not None else self.selected_qr_scene_bbox[7:9]
             self.selected_qr_region = get_on_bbox(selected_qr_scene_bbox, z_half_extend=max_z_half_extent)
         elif self.selected_qr_scene_region == "in":
             # max z-half extend should be max(self.selected_obj_bbox[9], self.latest_scene_bbox[9]) ## The latest_scene_bbox should be recomputed after the object is placed (but we did not do this for now)
@@ -1407,12 +1409,14 @@ class RoboSensaiBullet:
     
 
     def blender_register(self, obj_id, body_name=None):
-        if self.args.blender_record: self.pybullet_recorder.register_object(obj_id, body_name=body_name)
+        if self.args.blender_record: 
+            self.pybullet_recorder.register_object(obj_id, body_name=body_name)
 
     
     def blender_save(self, save_path=None):
         save_path = save_path if save_path is not None else self.args.blender_record_path
-        if self.args.blender_record: self.pybullet_recorder.save(save_path)
+        if self.args.blender_record: 
+            self.pybullet_recorder.save(save_path)
 
     
     def record_placement_traj(self, obj_pose, stable_steps):

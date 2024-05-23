@@ -2,7 +2,7 @@ import socket
 from sshkeyboard import listen_keyboard
 
 class SocketClient:
-    def __init__(self, server_ip="10.197.245.55", port=5050):
+    def __init__(self, server_ip="10.194.140.188", port=5050):
         self.HEADER = 64
         self.PORT = port
         self.SERVER = server_ip

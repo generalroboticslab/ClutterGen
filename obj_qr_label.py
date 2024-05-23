@@ -178,8 +178,8 @@ class ObjectLabeler:
         global_scaling_read = p.readUserDebugParameter(self.global_scaling_param)
         if self.old_gb_scaling != global_scaling_read:
             self.old_gb_scaling = global_scaling_read
-            # self.meta_data['globalScaling'] = global_scaling_read
-            # self.load_cur_obj_and_pc()
+            self.meta_data['globalScaling'] = global_scaling_read
+            self.load_cur_obj_and_pc()
             print(f"Object Size changed to X: {self.cur_obj_bbox[7]*2*100}cm, Y: {self.cur_obj_bbox[8]*2*100}cm, Z: {self.cur_obj_bbox[9]*2*100}cm.")
 
         
@@ -406,7 +406,7 @@ class ObjectLabeler:
         
 
 if __name__ == '__main__':
-    Label = "obj"
+    Label = "scene"
     
     if Label == "obj":
         source_folder_path = "assets/group_objects/group4_real_objects"
@@ -415,7 +415,7 @@ if __name__ == '__main__':
         labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)
         labeler.start()
     else:
-        source_folder_path = "assets/union_scene"
+        source_folder_path = "assets/tabletop_selected_scene"
         target_folder_name = "tabletop_selected_scene"
 
         labeler = ObjectLabeler(source_folder_path, target_folder_name, overwrite=True)

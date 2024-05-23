@@ -164,21 +164,15 @@ class FrankaPandaCtrl:
     
 
 if __name__=="__main__":
+    # Panda eef to hand <origin rpy="0 0 -0.785398163397" xyz="0 0 0"/>
     franka_panda_ctrl = FrankaPandaCtrl()
-    # franka_panda_ctrl.reset()
-    cur_eef_pose = franka_panda_ctrl.get_eef_pose()
-    cur_joint_state = franka_panda_ctrl.get_joint_state()
+    franka_panda_ctrl.reset()
+    # cur_eef_pose = franka_panda_ctrl.get_eef_pose()
+    # cur_joint_state = franka_panda_ctrl.get_joint_state()
     # franka_panda_ctrl.home_gripper()
-    # input("Press Enter to continue...")
     # franka_panda_ctrl.close_gripper()
     # cur_eef_pose = franka_panda_ctrl.get_eef_pose()
-    # print(cur_eef_pose)
     # franka_panda_ctrl.home_arm()
-    # franka_panda_ctrl.plan_eef_cartesian_path([goal_eef_pose])
-    # franka_panda_ctrl.set_joint_state(cur_joint_state)
-    
-    # franka_panda_ctrl.plan_eef_cartesian_path([cur_eef_pose])
-    # franka_panda_ctrl.open_gripper()
-    # franka_panda_ctrl.close_gripper()
-    # franka_panda_ctrl.home_gripper()
-    # franka_panda_ctrl.stop()
+    # path_len = franka_panda_ctrl.plan_eef_cartesian_path([cur_eef_pose])
+    # franka_panda_ctrl.execute_plan()
+    # franka_panda_ctrl.clean_plan()
