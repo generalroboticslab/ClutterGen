@@ -248,7 +248,7 @@ class Plot_Eval_Misc_Utils:
         return objs_name_poss_converage
 
 
-    def plot_stable_steps(self, success_only=True, trial_threshold=0):
+    def plot_stable_steps(self, success_only=True, trial_threshold=3):
         
         episode_count = 0
         max_num_placement_objs = max(self.evalJson_dict["max_num_placing_objs_lst"])
@@ -472,7 +472,7 @@ if __name__ == "__main__":
         Plot_Eval_Misc_Utils = Plot_Eval_Misc_Utils()
         Plot_Eval_Misc_Utils.read_file(args.evalUniName)
         # Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
-        # Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
+        Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
         Plot_Eval_Misc_Utils.plot_stable_steps(success_only=True)
 
     elif TASK_NAME == "DatasetDistribution":

@@ -249,6 +249,7 @@ if __name__ == "__main__":
         episode_rewards = torch.zeros((eval_args.num_envs, ), device=device, dtype=torch.float32)
         episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
+        obj_stable_steps_box = []
         scene_cfg_dict = {}; success_scene_cfg_dict = {}; actor_traj_log_dict = {}; placement_traj_dict = {}
         for i in range(eval_args.num_envs):
             actor_traj_log_dict[i] = {
@@ -330,6 +331,10 @@ if __name__ == "__main__":
                         placement_traj_dict.update({num_episodes + i: [placement_trajs[i], success_buf[i].item()]})
                         if env_id in success_ids:
                             success_scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
+                        
+                        for obj_name in placement_trajs[i].keys():
+                            obj_stable_steps_sum = sum(placement_trajs[i][obj_name]['stable_steps'])
+                            obj_stable_steps_box.append(obj_stable_steps_sum)
 
                         if eval_args.actor_visualize:
                             success_suffix = 'success' if env_id in success_ids else 'failure'
@@ -373,9 +378,10 @@ if __name__ == "__main__":
                 
         episode_reward = torch.mean(episode_rewards_box[-num_episodes:]).item()
         success_rate = torch.mean(episode_success_box[-num_episodes:]).item()
+        obj_stable_steps_mean, obj_stable_steps_std = np.mean(obj_stable_steps_box), np.std(obj_stable_steps_box)
         machine_time = time.time() - start_time
         
-        print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Reward: {episode_reward} |", end=' ')
+        print(f"Num of Placing Objs: {max_num_placing_objs} | {eval_args.num_trials} Trials | Success Rate: {success_rate * 100}% | Avg Stable Steps: {obj_stable_steps_mean}, std: {obj_stable_steps_std} | Avg Reward: {episode_reward} |", end=' ')
         print(f"Time: {machine_time} | Num of Env: {eval_args.num_envs}", end='\n\n')
         
         # Save the evaluation result
@@ -385,6 +391,8 @@ if __name__ == "__main__":
                 "num_trials": eval_args.num_trials,
                 "success_rate": success_rate,
                 "avg_reward": episode_reward,
+                "obj_stable_steps_mean": obj_stable_steps_mean,
+                "obj_stable_steps_std": obj_stable_steps_std,
                 "machine_time": machine_time
             }
             write_csv_line(eval_args.result_file_path, csv_result)
