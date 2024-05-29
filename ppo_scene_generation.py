@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument('--QueryRegion_halfext', type=json.loads, default=None, help='A list of max num of placing objs')
     
     # RoboSensai Env parameters (training)
-    parser.add_argument('--max_trials', type=int, default=3)  # maximum steps trial for one object per episode
+    parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument("--max_stable_steps", type=int, default=40, help="the maximum steps for the env to be stable considering success")
     parser.add_argument("--min_continue_stable_steps", type=int, default=20, help="the minimum steps that the object needs to keep stable")
@@ -134,7 +134,7 @@ def parse_args():
         args.rendering = True
 
     # Uniformalize training name
-    additional = '_Sync_Normal'
+    additional = '_Sync_Beta'
     additional += f"_{os.path.basename(args.object_pool_folder)}"
     ###--- suffix for final name ---###
     if args.specific_scene is not None:
@@ -641,6 +641,12 @@ if __name__ == "__main__":
                 explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
                 if args.collect_data and args.wandb:
+                    concentration_alpha = agent.probs.concentration0.mean(dim=0)
+                    concentration_beta = agent.probs.concentration1.mean(dim=0)
+                    con_a_x, con_a_y, con_a_z, con_a_Rz = \
+                        concentration_alpha[0].item(), concentration_alpha[1].item(), concentration_alpha[2].item(), concentration_alpha[3].item()
+                    con_b_x, con_b_y, con_b_z, con_b_Rz = \
+                        concentration_beta[0].item(), concentration_beta[1].item(), concentration_beta[2].item(), concentration_beta[3].item()
                     entropy_log = agent.prob_entropy.mean(dim=0)
                     entropy_x, entropy_y, entropy_z, entropy_Rz = \
                         entropy_log[0].item(), entropy_log[1].item(), entropy_log[2].item(), entropy_log[3].item()
@@ -659,10 +665,18 @@ if __name__ == "__main__":
                         'entropy/entropy_y': entropy_y,
                         'entropy/entropy_z': entropy_z,
                         'entropy/entropy_Rz': entropy_Rz,
+                        'concentration_a/alpha_x': con_a_x,
+                        'concentration_a/alpha_y': con_a_y,
+                        'concentration_a/alpha_z': con_a_z,
+                        'concentration_a/alpha_Rz': con_a_Rz,
+                        'concentration_b/beta_x': con_b_x,
+                        'concentration_b/beta_y': con_b_y,
+                        'concentration_b/beta_z': con_b_z,
+                        'concentration_b/beta_Rz': con_b_Rz,
                     })
 
-            if not args.quiet:
-                print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
+                if not args.quiet:
+                    print("Running Time:", convert_time(time.time() - start_time), "Global Steps", global_step)
 
 
         if args.collect_data and not args.random_policy:  # not random policy or expert action

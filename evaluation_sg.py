@@ -32,7 +32,7 @@ def get_args():
     parser.add_argument('--result_dir', type=str, default='train_res', required=False)
     parser.add_argument('--save_dir', type=str, default='eval_res', required=False)
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
-    parser.add_argument('--checkpoint', type=str, default='Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456') # also point to json file path
+    parser.add_argument('--checkpoint', type=str, default='Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456') # also point to json file path
     parser.add_argument('--index_episode', type=str, default='best')
     parser.add_argument('--eval_result', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
     parser.add_argument('--sim_device', type=str, default="cuda:0", help='Physics Device in PyTorch-like syntax')
@@ -71,16 +71,12 @@ def get_args():
     parser.add_argument('--force_noise_v', type=float, default=0.0, help='Contact force noise range')
     parser.add_argument('--seed', type=int, default=123456, help='Contact force noise range')
     parser.add_argument('--QueryRegion_pos', type=json.loads, default=None, help='A list of max num of placing objs')
-    parser.add_argument('--QueryRegion_euler', type=json.loads, default=None, help='A list of max num of placing objs')
+    parser.add_argument('--QueryRegion_euler_z', type=float, default=None, help='A list of max num of placing objs')
     parser.add_argument('--QueryRegion_halfext', type=json.loads, default=None, help='A list of max num of placing objs') # [0.25, 0.25, 0.35] for realrobot
     
-
     # RoboSensai Bullet parameters
-    # parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
-    # parser.add_argument('--max_num_placing_objs', type=int, default=1)
-    # parser.add_argument('--object_pool_folder', type=str, default='group_objects/group2_single_bowl', help="folder path that stores all urdf files")
-    # parser.add_argument('--scene_pool_folder', type=str, default='union_scene', help="folder path that stores all urdf files")
-    # parser.add_argument('--specific_scene', type=str, default="table")
+    parser.add_argument('--scene_pool_folder', type=str, default='tabletop_selected_scene', help="folder path that stores all urdf files")
+    parser.add_argument('--specific_scene', type=str, default="table")
     parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--num_pool_scenes', type=int, default=1)
     parser.add_argument('-n', '--max_num_placing_objs_lst', type=json.loads, default=[10], help='A list of max num of placing objs')
@@ -95,7 +91,7 @@ def get_args():
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--actor_visualize', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
     parser.add_argument('--blender_record', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Visualize critic')
-    parser.add_argument('--new_tablehalfExtents', default=None, help='A list of max num of placing objs')
+    parser.add_argument('--new_tablehalfExtents', type=json.loads, default=None, help='A list of max num of placing objs')
     parser.add_argument('--strict_checking', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Apply a strict stable checker')
 
     # Downstream task1 stable placement parameters
@@ -132,20 +128,24 @@ def get_args():
         os.makedirs(eval_args.save_dir)
 
     # assign an uniform name
-    ckeckpoint_index = ''
+    checkpoint_index = ''
     if eval_args.random_policy: eval_args.final_name = f'EVAL_RandPolicy'
     elif eval_args.heuristic_policy: eval_args.final_name = f'EVAL_HeurPolicy'
-    else: ckeckpoint_index = '_EVAL_' + eval_args.index_episode 
+    else: checkpoint_index = '_EVAL_' + eval_args.index_episode 
     
-    if eval_args.new_tablehalfExtents: ckeckpoint_index += "_TableHalfExtents" + "_".join(map(str, eval_args.new_tablehalfExtents))
+    if eval_args.new_tablehalfExtents: checkpoint_index += "_TableHalfExtents" + "_".join(map(str, eval_args.new_tablehalfExtents))
+    if eval_args.specific_scene: checkpoint_index += "_Scene_" + eval_args.specific_scene
+    if eval_args.QueryRegion_pos: checkpoint_index += "_QRPos_" + "_".join(map(str, eval_args.QueryRegion_pos))
+    if eval_args.QueryRegion_euler_z: checkpoint_index += "_QREulerZ_" + str(eval_args.QueryRegion_euler_z)
+    if eval_args.QueryRegion_halfext: checkpoint_index += "_QRHalfExt_" + "_".join(map(str, eval_args.QueryRegion_halfext))
     obj_range = f'_objRange_{min(eval_args.max_num_placing_objs_lst)}_{max(eval_args.max_num_placing_objs_lst)}'
-    temp_filename = eval_args.final_name + ckeckpoint_index + obj_range
+    temp_filename = eval_args.final_name + checkpoint_index + obj_range
     
     maximum_name_len = 250
     if len(temp_filename) > maximum_name_len: # since the name too long error, I need to shorten the training name 
         shorten_name_range = len(temp_filename) - maximum_name_len
         eval_args.final_name = eval_args.final_name[:-shorten_name_range]
-    eval_args.final_name = eval_args.final_name + ckeckpoint_index + obj_range
+    eval_args.final_name = eval_args.final_name + checkpoint_index + obj_range
 
     # Generate benchmark table does not use collect_data
     if eval_args.generate_benchmark: 
@@ -237,7 +237,8 @@ if __name__ == "__main__":
     if eval_args.num_success_trials is not None or \
       (eval_args.sp_data_collection and eval_args.sp_num_data is not None):
         eval_args.num_trials = int(1e5) # Set a large number to collect data
-    # Evaluate checkpoint before replay
+    
+    ################ Evaluate checkpoint before replay ##################
     for max_num_placing_objs in eval_args.max_num_placing_objs_lst:
         if eval_args.num_envs > 1:
             envs.env_method('set_args', 'max_num_placing_objs', max_num_placing_objs)
@@ -284,16 +285,16 @@ if __name__ == "__main__":
                     action, probs = agent.select_action([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
                     
                     if eval_args.actor_visualize:
-                        std_range = 2 # +-2 std range
+                        std_range = 2 # +- 2 std range
                         probs_mean, probs_std = probs.mean, probs.stddev
                         raw_act_range_low = (probs_mean - std_range*probs_std).squeeze(dim=0)
                         raw_act_range_high = (probs_mean + std_range*probs_std).squeeze(dim=0)
-                        action_ranges = list(zip(raw_act_range_low.sigmoid(), raw_act_range_high.sigmoid()))
+                        act_range_low, act_range_high = torch.clamp(raw_act_range_low, 0., 1.), torch.clamp(raw_act_range_high, 0., 1.)
+                        action_ranges = list(zip(act_range_low, act_range_high))
                         act_sig_grid_tensor = create_mesh_grid(action_ranges=action_ranges, num_steps=[5]*len(action_ranges)).to(device)
-                        raw_actions = inverse_sigmoid(act_sig_grid_tensor)
-                        action_log_prob = probs.log_prob(raw_actions)
+                        action_log_prob = probs.log_prob(act_sig_grid_tensor)
 
-                        prob_pos_heatmap = envs.visualize_actor_prob(raw_actions, action_log_prob, action)
+                        prob_pos_heatmap = envs.visualize_actor_prob(act_sig_grid_tensor, action_log_prob, action)
 
                         frame_index = None
                         if eval_args.blender_record:
@@ -331,8 +332,8 @@ if __name__ == "__main__":
                             success_scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
 
                         if eval_args.actor_visualize:
-                            success_sufix = 'success' if env_id in success_ids else 'failure'
-                            path = os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_{num_episodes + i}eps_{success_sufix}_actor_traj_log.pkl")
+                            success_suffix = 'success' if env_id in success_ids else 'failure'
+                            path = os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_{num_episodes + i}eps_{success_suffix}_actor_traj_log.pkl")
                             pickle.dump(actor_traj_log_dict[env_id.item()], open(path, 'wb'))
                             actor_traj_log_dict[env_id.item()] = {
                                 "prob_pos_heatmap": [],
@@ -353,11 +354,11 @@ if __name__ == "__main__":
                 if eval_args.blender_record:
                     blender_recorders_lst = combine_envs_float_info2list(infos, 'blender_recorder', terminal_ids)
                     for i, blender_recorder in enumerate(blender_recorders_lst):
-                        index_sufix = f"{num_episodes + i}"
-                        success_sufix = 'success' if success_buf[i].item() else 'failure'
+                        index_suffix = f"{num_episodes + i}"
+                        success_suffix = 'success' if success_buf[i].item() else 'failure'
                         if eval_args.collect_data:
                             blender_recorder.save(os.path.join(eval_args.blender_dir, 
-                                                  f"{max_num_placing_objs}Objs_{index_sufix}eps_{success_sufix}_blender.pkl"))
+                                                  f"{max_num_placing_objs}Objs_{index_suffix}eps_{success_suffix}_blender.pkl"))
 
                 num_episodes += terminal_nums
                 print_info = f"Episodes: {num_episodes}" + f" / Total Success: {episode_success_box.sum().item()}" 

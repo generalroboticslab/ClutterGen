@@ -24,7 +24,7 @@ import argparse
 
 
 
-def load_pkl(filepath=None):
+def load_pkl(filepath=None, load_all=True):
     # Setting up some initial variables.
     # These include the directory of the files, file extension, frame skipping, and maximum frames.
     skip_frames = 1
@@ -115,7 +115,8 @@ def load_pkl(filepath=None):
             blender_obj.name = obj_key
 
             # Keyframing the motion of the imported object based on the data.
-            for frame_count, frame_data in enumerate(pybullet_obj['frames']):
+            loaded_frames = pybullet_obj['frames'] if load_all else [pybullet_obj['frames'][-1]]
+            for frame_count, frame_data in enumerate(loaded_frames):
                 if frame_data is None:
                     continue
                 if frame_count % skip_frames != 0:
@@ -123,7 +124,7 @@ def load_pkl(filepath=None):
                 if max_frames_limit > 1 and frame_count > max_frames_limit:
                     print('Exceed max frame count')
                     break
-                percentage_done = frame_count / len(pybullet_obj['frames'])
+                percentage_done = frame_count / len(loaded_frames)
                 print(f'\r[{percentage_done*100:.01f}% | {obj_key}]',
                         '#' * int(60*percentage_done), end='')
                 
@@ -328,7 +329,7 @@ def delete_scene_objects():
 
 
 def render_animation(output_path, encoder='H264', container='MPEG4', resolution=(1920, 1080), 
-                     start_frame=1, end_frame=250, skip_frames=1, quality=90, frame_rate=24, animation=True):
+                     start_frame=1, end_frame=250, skip_frames=1, quality=90, frame_rate=24, samples=2048, animation=True):
     """
     Renders an animation in Blender to a specified path with various customizable settings.
 
@@ -366,6 +367,26 @@ def render_animation(output_path, encoder='H264', container='MPEG4', resolution=
     bpy.context.scene.frame_start = start_frame
     bpy.context.scene.frame_end = end_frame
     bpy.context.scene.frame_step = skip_frames
+
+    # Disable denoising for Cycles
+    if bpy.context.scene.render.engine == 'CYCLES':
+        bpy.context.scene.cycles.use_denoising = False
+        # uncheck the noise threshold
+        bpy.context.scene.cycles.use_adaptive_sampling = False
+        # Change number of samples for Cycles
+        bpy.context.scene.cycles.samples = samples
+        # Set the film transparency
+        bpy.context.scene.cycles.film_transparent = True
+
+        # Set light path settings
+        bpy.context.scene.cycles.max_bounces = 6
+        bpy.context.scene.cycles.transmission_bounces = 6
+        bpy.context.scene.cycles.transparent_max_bounces = 6
+    
+    # Change the number of samples for EEVEE
+    if bpy.context.scene.render.engine == 'BLENDER_EEVEE':
+        bpy.context.scene.eevee.taa_samples = 64
+
     # Render the animation (https://blender.stackexchange.com/questions/283640/why-does-bpy-ops-render-renderanimation-true-work-but-fails-when-animation-is)
     bpy.ops.render.render(animation=animation, write_still=True)
 
@@ -409,15 +430,16 @@ def animate_camera_focus_rotate(focus_point, camera_start_location, rotation_ang
     camera.parent = axes
 
     # Insert keyframes for rotation
-    axes.rotation_mode = 'XYZ'
-    for frame in range(frame_start, frame_end + 1):
-        fraction = (frame - frame_start) / (frame_end - frame_start)
-        axes.rotation_euler[2] = math.radians(fraction * rotation_angle)
-        axes.keyframe_insert(data_path="rotation_euler", frame=frame)
+    if frame_start < frame_end:
+        axes.rotation_mode = 'XYZ'
+        for frame in range(frame_start, frame_end + 1):
+            fraction = (frame - frame_start) / (frame_end - frame_start)
+            axes.rotation_euler[2] = math.radians(fraction * rotation_angle)
+            axes.keyframe_insert(data_path="rotation_euler", frame=frame)
 
-    # Set scene frame range
-    scene.frame_start = frame_start
-    scene.frame_end = frame_end
+        # Set scene frame range
+        scene.frame_start = frame_start
+        scene.frame_end = frame_end
 
 
 def add_light(name="Light", type='POINT', location=(0, 0, 0), energy=1000, color=(1, 1, 1)):
@@ -437,7 +459,7 @@ def add_light(name="Light", type='POINT', location=(0, 0, 0), energy=1000, color
     light.data.color = color
 
 
-def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1), texture_path=None, use_emission=False, alpha=1.0):
+def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1), rotation=(0, 0, 0.), texture_path=None, use_emission=False, alpha=1.0):
     """
     Adds a primitive object to the Blender scene with optional texture, emission shader, and transparency.
 
@@ -450,7 +472,7 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
     """
 
     # Add primitive object
-    bpy.ops.mesh.primitive_cube_add(location=location, scale=scale) if object_type == 'CUBE' else None
+    bpy.ops.mesh.primitive_cube_add(location=location, scale=scale, rotation=rotation) if object_type == 'CUBE' else None
     bpy.ops.mesh.primitive_plane_add(location=location, size=scale[0], scale=scale) if object_type == 'PLANE' else None
     bpy.ops.mesh.primitive_uv_sphere_add(location=location, scale=scale) if object_type == 'SPHERE' else None
 
@@ -516,104 +538,135 @@ def natural_keys(text):
 ##############################################################################################################
                         ########################### Main Area#############################
 ##############################################################################################################
+# How to improve the rendering speed?
+# https://irendering.net/how-to-improve-speed-of-blenders-cycles-x-rendering-engine/
 # Can not use if __name__ == "__main__" here. Blender seems does not support it.
 # Only if you create the add-on operator, you can use it.
 
 blender_traj_directory = "eval_res/Union/blender"
 actor_vis_traj_directory = "eval_res/Union/trajectories"
 json_file_directory = "eval_res/Union/Json"
-evalUniName = "Union_03-12_23:41Sync_Beta_storage_furniture_6_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10"
-render_nums = 10
+evalUniName_lst = ["Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100._EVAL_best_TableHalfExtents0.3_0.35_0.35_Scene_table_objRange_10_10"]
+render_nums = 1
+specific_eps = 13 # 36, 30, 27, 9, 18, 22, 26
 animation = False
-
+multiple_lights = True
+add_plane = False
+load_all = True
 set_blender_engine(render_engine='CYCLES') # 'BLENDER_EEVEE', 'CYCLES'
-json_file_path = join("eval_res/Union/Json", evalUniName+".json")
-blender_traj_directory = join("eval_res/Union/blender", evalUniName)
-actor_vis_traj_directory = join("eval_res/Union/trajectories", evalUniName)
-blender_filename_ext = ".pkl"
-actor_vis_filename_ext = ".pkl"
-# Listing all files in the specified directory.
-blender_file_paths = []
-trajectory_file_paths = []
-blender_filepaths = sorted([join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
-actor_filepaths = sorted([join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
-save_folder = join(blender_traj_directory, "render_results")
-makedirs(save_folder, exist_ok=True)
+# For randomizing qr region
+QrSceneCenter2Camera = [2., 0., 2.2]
+resolution = (1920, 1080)
 
-# Read the json file
-with open(json_file_path, 'r') as f:
-    json_data = json.load(f)
-
-for i, filepath in enumerate(blender_filepaths):
-    delete_collection(specific_name=None)
-    delete_scene_objects()
-
-    # Add a plane as the ground with wooden texture
-    add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
-
-    # Add a table; The size might be different from the original size!
-    if json_data["specific_scene"] == "table":
-        add_primitive_object(object_type='CUBE', location=(0, 0, 0.35), scale=(0.2, 0.3, 0.35), texture_path=None)
-
-    # Load the data from the pickle file.
-    _, max_frame = load_pkl(filepath)
-
-    # Add visualization object for actor visualization
-    if len(actor_filepaths) > 0:
-        print(f"Loading actor visualization from {actor_filepaths[i]}")
-        load_actor_visualization(actor_filepaths[i])
-
-    # Adjust the camera and light
-    if json_data["specific_scene"] == "table":
-        camera_start_location = (0, 3., 3.)
-        focus_point=(0, 0, 0.35)
-        light_location = (0, 0, 5)
-        light_color = (1., 0.85, 0.72)
-    elif json_data["specific_scene"] == "storage_furniture_5":
-        camera_start_location = (0, 5., 1.8)
-        focus_point = (0, 0, 0.35)
-        light_location = (-4., 0, 4)
-        light_color = (1., 0.85, 0.72)
-    elif json_data["specific_scene"] == "storage_furniture_6":
-        camera_start_location = (0, 4.5, 1.8)
-        focus_point = (0, 0, 0.45)
-        light_location = (-3., 0, 2)
-        light_color = (1., 0.85, 0.72)
+for evalUniName in evalUniName_lst:
+    json_file_path = join("eval_res/Union/Json", evalUniName+".json")
+    meta_json_file_path = join("eval_res/Union/trajectories", evalUniName, "10Objs_meta_data.json")
+    blender_traj_directory = join("eval_res/Union/blender", evalUniName)
+    actor_vis_traj_directory = join("eval_res/Union/trajectories", evalUniName)
+    blender_filename_ext = ".pkl"
+    actor_vis_filename_ext = ".pkl"
+    # Listing all files in the specified directory.
+    blender_file_paths = []
+    trajectory_file_paths = []
+    if specific_eps is not None:
+        blender_filepaths = [join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and f"{specific_eps}eps" in filename]
+        actor_filepaths = [join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and f"{specific_eps}eps" in filename]
     else:
-        raise ValueError(f"Unknown specific_scene: {json_data['specific_scene']}")
+        blender_filepaths = sorted([join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
+        actor_filepaths = sorted([join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
 
-    # Add light
-    add_light(location=light_location, energy=5000, color=light_color)
+    save_folder = join(blender_traj_directory, "render_results")
+    makedirs(save_folder, exist_ok=True)
 
-    # Add camera
-    animate_camera_focus_rotate(
-        focus_point=focus_point,
-        camera_start_location=camera_start_location,
-        rotation_angle=90,
-        # frame_start=1,
-        # frame_end=max_frame,
-        frame_start=0,
-        frame_end=1
-    )
+    # Read the json file
+    with open(json_file_path, 'r') as f:
+        json_data = json.load(f)
+    with open(meta_json_file_path, 'r') as f:
+        meta_json_data = json.load(f)
 
-    # Render the animation
-    skip_frames = 5
-    frame_rate = 240 // skip_frames
-    start_frame = max_frame if not animation else 1
-    max_frame = max_frame if not animation else max_frame + 100
+    QueryRegion_halfext = json_data["QueryRegion_halfext"]
+    QueryRegion_pos = json_data["QueryRegion_pos"]
+    QueryRegion_euler_z = json_data["QueryRegion_euler_z"]
+    qr_scene_halfexts = meta_json_data["qr_scene_pose"][2][7:]
 
-    start_time = time.time()
-    output_name = basename(filepath).replace(blender_filename_ext, '.mp4') \
-        if animation else basename(filepath).replace(blender_filename_ext, '.png')
-    render_animation(f'{save_folder}/{output_name}', 
-                    encoder='H264', 
-                    resolution=(960, 540), 
-                    skip_frames=skip_frames, 
-                    start_frame=start_frame, 
-                    end_frame=max_frame, 
-                    quality=80, 
-                    frame_rate=frame_rate,
-                    animation=animation)
-    print(f"Total time: {time.time() - start_time:.2f}s")
+    for i, filepath in enumerate(blender_filepaths):
+        delete_collection(specific_name=None)
+        delete_scene_objects()
 
-print("All Done!")
+        # Add a plane as the ground with wooden texture
+        if add_plane:
+            add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
+
+        # Add a table; The size might be different from the original size!
+        if json_data["specific_scene"] == "table":
+            add_primitive_object(object_type='CUBE', location=(0, 0, qr_scene_halfexts[2]), scale=qr_scene_halfexts, texture_path=None)
+
+        # Load the data from the pickle file.
+        _, max_frame = load_pkl(filepath, load_all=load_all)
+
+        # Add visualization object for actor visualization
+        if len(actor_filepaths) > 0:
+            print(f"Loading actor visualization from {actor_filepaths[i]}")
+            load_actor_visualization(actor_filepaths[i])
+
+        # Adjust the camera and light
+        if "table" in json_data["specific_scene"]:
+            camera_start_location = (*QrSceneCenter2Camera[:2], QrSceneCenter2Camera[2] + qr_scene_halfexts[2])
+            focus_point=(0, 0, qr_scene_halfexts[2]-0.1) # Focus on the table center; given some offset
+            light_location1 = (0, 0, 5); light_location2 = (5, 0, 1); light_location3 = (-5, 0, 1); light_location4 = (0, 5, 5); light_location5 = (0, -5, 5)
+            light_color = (1., 1., 1.) # (1., 0.85, 0.72)
+        elif json_data["specific_scene"] == "storage_furniture_5":
+            camera_start_location = (0, 5., 1.8)
+            focus_point = (0, 0, 0.35)
+            light_location = (-4., 0, 4)
+            light_color = (1., 0.85, 0.72)
+        elif json_data["specific_scene"] == "storage_furniture_6":
+            camera_start_location = (0, 4.5, 1.8)
+            focus_point = (0, 0, 0.45)
+            light_location = (-3., 0, 2)
+            light_color = (1., 0.85, 0.72)
+        else:
+            raise ValueError(f"Unknown specific_scene: {json_data['specific_scene']}")
+
+        # Add light
+        add_light(location=light_location1, energy=5000, color=light_color)
+        if multiple_lights:
+            # Add light
+            add_light(location=light_location2, energy=2000, color=light_color)
+            add_light(location=light_location3, energy=2000, color=light_color)
+            add_light(location=light_location4, energy=500, color=light_color)
+            add_light(location=light_location5, energy=500, color=light_color)
+
+        # Add camera
+        animate_camera_focus_rotate(
+            focus_point=focus_point,
+            camera_start_location=camera_start_location,
+            rotation_angle=90,
+            # frame_start=1,
+            # frame_end=max_frame,
+            frame_start=0,
+            frame_end=0
+        )
+
+        # Render the animation
+        skip_frames = 5
+        frame_rate = 240 // skip_frames
+        start_frame = max_frame if not animation else 1
+        max_frame = max_frame if not animation else max_frame + 100
+
+        start_time = time.time()
+        output_name = basename(filepath).replace(blender_filename_ext, '.mp4') \
+            if animation else basename(filepath).replace(blender_filename_ext, '.png')
+        # render_animation(f'{save_folder}/{output_name}', 
+        #                 encoder='H264', 
+        #                 resolution=resolution, 
+        #                 skip_frames=skip_frames, 
+        #                 start_frame=start_frame, 
+        #                 end_frame=max_frame, 
+        #                 quality=80, 
+        #                 frame_rate=frame_rate,
+        #                 animation=animation)
+        print(f"Total time: {time.time() - start_time:.2f}s")
+
+    print(f"{evalUniName} All Done!")
+print("All All Done!")

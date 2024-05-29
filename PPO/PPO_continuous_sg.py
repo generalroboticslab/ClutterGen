@@ -28,11 +28,11 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class LSTM_Linear(nn.Module):
-    def __init__(self, input_size, hidden_size, num_lstm_layers, num_linear_layers, output_size, batch_first=True, init_std=0.01):
+    def __init__(self, input_size, hidden_size, num_lstm_layers, lin_input_size, num_linear_layers, output_size, batch_first=True, init_std=0.01):
         super().__init__()
         self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_lstm_layers, batch_first=batch_first)
         self.linear = MLP(
-            input_size=hidden_size,
+            input_size=lin_input_size,
             hidden_size=hidden_size,
             output_size=output_size,
             num_layers=num_linear_layers,
@@ -80,7 +80,7 @@ class PositionalEncoding(nn.Module):
 
 
 class Transfromer_Linear(nn.Module):
-    def __init__(self, input_size, hidden_size, num_transf_layers, num_linear_layers, output_size, nhead=1, batch_first=True, init_std=0.01) -> None:
+    def __init__(self, input_size, hidden_size, num_transf_layers, lin_input_size, num_linear_layers, output_size, nhead=1, batch_first=True, init_std=0.01) -> None:
         super().__init__()
         self.positional_encoding = PositionalEncoding(input_size, batch_first=batch_first)
         transformer_layer = nn.TransformerEncoderLayer(
@@ -95,7 +95,7 @@ class Transfromer_Linear(nn.Module):
             norm=nn.LayerNorm(input_size)
         )
         self.linear = MLP(
-            input_size=input_size,
+            input_size=lin_input_size,
             hidden_size=hidden_size,
             output_size=output_size,
             num_layers=num_linear_layers,
@@ -105,7 +105,9 @@ class Transfromer_Linear(nn.Module):
     def forward(self, x):
         x = self.positional_encoding(x)
         embeddings = self.transformer(x)
-        last_embedding = embeddings[:, -1, :] # only use the last layer output
+        # last_embedding = embeddings[:, -1, :] # only use the last layer output
+        # flatten the whole embeddings
+        last_embedding = torch.flatten(embeddings, start_dim=1)
         output = self.linear(last_embedding)
         return output
     
@@ -168,8 +170,6 @@ class PC_Encoder(nn.Module):
 
 
 class Agent(nn.Module):
-    LOG_STD_MAX = 2
-    LOG_STD_MIN = -5
     def __init__(self, envs):
         super().__init__()
         self.envs = envs
@@ -178,12 +178,10 @@ class Agent(nn.Module):
         self.deterministic = envs.args.deterministic
         self.hidden_size = envs.args.hidden_size
         self.action_logits_num = envs.action_shape[1] * 2 # 2 for mean and std
-        self.action_scale = 0.5
-        self.action_bias = 0.5
 
         # Layer Number
-        self.traj_hist_encoder_num_linear = 2; self.traj_hist_encoder_num_transf = 2
-        self.seq_obs_encoder_num_linear = 2; self.seq_obs_encoder_num_transf = 2
+        self.traj_hist_encoder_num_linear = 2; self.traj_hist_encoder_num_transf = 1
+        self.seq_obs_encoder_num_linear = 2; self.seq_obs_encoder_num_transf = 1
         self.critic_num_linear = 5; self.actor_num_linear = 5
         
         # PointNet
@@ -193,46 +191,50 @@ class Agent(nn.Module):
 
         # Trajectory history encoder and Large sequence observation encoder
         ### TODO: We probably need give both actor and critic the same encoder!!!
-        if envs.args.use_tf_traj_encoder:
-            self.traj_hist_encoder = Transfromer_Linear(
-                input_size=envs.traj_history_shape[1], 
-                hidden_size=self.hidden_size, 
-                num_transf_layers=self.traj_hist_encoder_num_transf,
-                num_linear_layers=self.traj_hist_encoder_num_linear, 
-                output_size=envs.history_ft_dim, 
-                batch_first=True, 
-                init_std=1.0
-            ).to(self.device)
-        else:
-            self.traj_hist_encoder = MLP(
-                input_size=np.prod(envs.traj_history_shape), 
-                hidden_size=self.hidden_size, 
-                output_size=envs.history_ft_dim, 
-                num_layers=self.traj_hist_encoder_num_linear, 
-                use_relu=envs.args.use_relu,
-                init_std=1.0, auto_flatten=True
-            ).to(self.device)
+        if envs.args.use_traj_encoder:
+            if envs.args.use_tf_traj_encoder:
+                self.traj_hist_encoder = Transfromer_Linear(
+                    input_size=envs.traj_history_shape[1], 
+                    hidden_size=self.hidden_size, 
+                    num_transf_layers=self.traj_hist_encoder_num_transf,
+                    lin_input_size=np.prod(envs.traj_history_shape),
+                    num_linear_layers=self.traj_hist_encoder_num_linear, 
+                    output_size=envs.history_ft_dim, 
+                    batch_first=True, 
+                    init_std=1.0
+                ).to(self.device)
+            else:
+                self.traj_hist_encoder = MLP(
+                    input_size=np.prod(envs.traj_history_shape), 
+                    hidden_size=self.hidden_size, 
+                    output_size=envs.history_ft_dim, 
+                    num_layers=self.traj_hist_encoder_num_linear, 
+                    use_relu=envs.args.use_relu,
+                    init_std=1.0, auto_flatten=True
+                ).to(self.device)
         
-        if envs.args.use_tf_seq_obs_encoder:
-            self.seq_obs_encoder = Transfromer_Linear(
-                input_size=envs.post_act_hist_qr_ft_shape[2], 
-                hidden_size=self.hidden_size, 
-                num_transf_layers=self.seq_obs_encoder_num_transf,
-                num_linear_layers=self.seq_obs_encoder_num_linear, 
-                output_size=envs.seq_info_ft_dim, 
-                nhead=8,
-                batch_first=True, 
-                init_std=1.0
-            ).to(self.device)
-        else:
-            self.seq_obs_encoder = MLP(
-                input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
-                hidden_size=self.hidden_size, 
-                output_size=envs.seq_info_ft_dim, 
-                num_layers=self.seq_obs_encoder_num_linear, 
-                use_relu=envs.args.use_relu,
-                init_std=1.0, auto_flatten=True
-            ).to(self.device)
+        if envs.args.use_seq_obs_encoder:
+            if envs.args.use_tf_seq_obs_encoder:
+                self.seq_obs_encoder = Transfromer_Linear(
+                    input_size=envs.post_act_hist_qr_ft_shape[2], 
+                    hidden_size=self.hidden_size, 
+                    num_transf_layers=self.seq_obs_encoder_num_transf,
+                    lin_input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]),
+                    num_linear_layers=self.seq_obs_encoder_num_linear, 
+                    output_size=envs.seq_info_ft_dim, 
+                    nhead=2,
+                    batch_first=True, 
+                    init_std=1.0
+                ).to(self.device)
+            else:
+                self.seq_obs_encoder = MLP(
+                    input_size=np.prod(envs.post_act_hist_qr_ft_shape[1:]), 
+                    hidden_size=self.hidden_size, 
+                    output_size=envs.seq_info_ft_dim, 
+                    num_layers=self.seq_obs_encoder_num_linear, 
+                    use_relu=envs.args.use_relu,
+                    init_std=1.0, auto_flatten=True
+                ).to(self.device)
         
         # Use MLP for the critic and actor
         self.critic = MLP(
@@ -334,21 +336,19 @@ class Agent(nn.Module):
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         # We currently use cat to combine all features; Later we can try to use attention to combine them
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        action_mean_logstd = self.actor(x)
-        action_mean, action_logstd = torch.chunk(action_mean_logstd, 2, dim=-1)
-        action_logstd = torch.tanh(action_logstd)
-        action_logstd = self.LOG_STD_MIN + 0.5 * (self.LOG_STD_MAX - self.LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
-        action_std = action_logstd.exp()
-        probs = Normal(action_mean, action_std)
+        action_logalpha_logbeta = self.actor(x)
+        action_logalpha, action_logbeta = torch.chunk(action_logalpha_logbeta, 2, dim=-1)
+        action_alpha = torch.exp(action_logalpha)
+        action_beta = torch.exp(action_logbeta)
+        probs = Beta(action_alpha, action_beta)
         self.probs = probs # Record the current probs for logging
         if action is None:
-            raw_action = probs.mean if self.deterministic else probs.sample()
-            action = self.squashed_action(raw_action)
-        else:
-            raw_action = self.unsquashed_action(action)
+            action = probs.mean if self.deterministic else probs.sample()
 
-        logprob = self.squashed_logprob(probs, raw_action).sum(1) # Enforcing Action Bound
-        self.prob_entropy = self.squashed_entropy(probs) # Record the current probs for logging
+        logprob = probs.log_prob(action).sum(1) # log_prb means prob density not mass! So it could be larger than 1
+        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training; Is this useful?
+
+        self.prob_entropy = probs.entropy() # Record the current probs for logging
         entropy = self.prob_entropy.sum(1)
         return action, logprob, entropy, self.critic(x)
 
@@ -357,44 +357,13 @@ class Agent(nn.Module):
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        action_mean_logstd = self.actor(x)
-        action_mean, action_logstd = torch.chunk(action_mean_logstd, 2, dim=-1)
-        action_logstd = torch.tanh(action_logstd)
-        action_logstd = self.LOG_STD_MIN + 0.5 * (self.LOG_STD_MAX - self.LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
-        action_std = action_logstd.exp()
-        probs = Normal(action_mean, action_std)
-        raw_action = probs.mean if self.deterministic else probs.sample()
-        action = self.squashed_action(raw_action)
+        action_logalpha_logbeta = self.actor(x)
+        action_logalpha, action_logbeta = torch.chunk(action_logalpha_logbeta, 2, dim=-1)
+        action_alpha = torch.exp(action_logalpha)
+        action_beta = torch.exp(action_logbeta)
+        probs = Beta(action_alpha, action_beta)
+        action = probs.mean if self.deterministic else probs.sample()
         return action, probs
-    
-
-    def squashed_action(self, raw_action):
-        return torch.tanh(raw_action) * self.action_scale + self.action_bias
-    
-
-    def unsquashed_action(self, action):
-        # Clamp the action to avoid numerical issues
-        tanh_raw_action = (action - self.action_bias) / self.action_scale
-        clamped_tanh_raw_action = torch.clamp(tanh_raw_action, -0.999, 0.999)
-        return torch.atanh(clamped_tanh_raw_action)
-
-
-    def squashed_logprob(self, normal, raw_action):
-        logprob = normal.log_prob(raw_action)
-        if (logprob==torch.inf).any() or (logprob==-torch.inf).any() or torch.isnan(logprob).any():
-            print("logprob has inf or nan")
-            import ipdb; ipdb.set_trace()
-        action = self.squashed_action(raw_action)
-        logprob -= torch.log(self.action_scale * (1 - action.pow(2)) + 1e-6)
-        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training)
-        return logprob.sum(1, keepdim=True)
-
-
-    def squashed_entropy(self, normal, num_samples=20000):
-        """Monte Carlo approximation of the entropy."""
-        samples = normal.sample((num_samples,))
-        log_prob = self.squashed_logprob(normal, samples)
-        return -torch.mean(log_prob, dim=0)
 
 
     # def get_action_and_value(self, obs_list, action=None):

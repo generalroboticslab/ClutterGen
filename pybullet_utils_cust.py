@@ -1287,6 +1287,7 @@ def get_link_pc_from_id(obj_id, link_index=-1, min_num_points=1024, use_worldpos
     world2linkjoint = get_link_pose(obj_id, link_index, client_id=client_id) 
     # if use absolute point position, we transform the point from world to link, point position in the worldframe
     # else we use relative point position, which is the point position in the baselink frame (So it will not change for movable objects)
+    # What represents world or baselink
     what2linkjoint = world2linkjoint if use_worldpos else \
                      p.multiplyTransforms(*p.invertTransform(*world2basejoint), *world2linkjoint)
     link_collision_infos = get_link_collision_shape(obj_id, link_index, client_id=client_id)
@@ -1313,8 +1314,8 @@ def get_link_pc_from_id(obj_id, link_index=-1, min_num_points=1024, use_worldpos
         elif link_type == p.GEOM_CYLINDER:
             raise NotImplementedError
         
-        linkpart_pc_world = [p.multiplyTransforms(what2linkpart[0], what2linkpart[1], point, [0, 0, 0, 1.])[0] for point in linkpart_pc_local]
-        link_pc.extend(linkpart_pc_world)
+        what2linkpart_pc = [p.multiplyTransforms(what2linkpart[0], what2linkpart[1], point, [0, 0, 0, 1.])[0] for point in linkpart_pc_local]
+        link_pc.extend(what2linkpart_pc)
     return np.array(link_pc)
 
 
@@ -1344,7 +1345,7 @@ def get_obj_axes_aligned_bbox_from_pc(obj_pc):
     return np.concatenate([bbox.get_center(), [0., 0., 0., 1.], bbox.get_half_extent()])
 
 
-def visualize_pc(pc, other_geoms=None, color=None, zoom=0.7):
+def visualize_pc(pc, other_geoms=None, color=None, zoom=0.7, lookat=[0.0, 0.0, 0.0], front=[0.0, 1.0, 0.5], up=[0.0, 0.0, 1.0], add_coord=True):
     if not isinstance(pc, list): 
         pc_lst = [pc]
     else:
@@ -1368,11 +1369,12 @@ def visualize_pc(pc, other_geoms=None, color=None, zoom=0.7):
     if other_geoms is not None:
         geometries.extend(other_geoms)
     
-    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    geometries.append(coord_frame)
+    if add_coord:
+        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+        geometries.append(coord_frame)
     # camera is set in the y positive direction
-    o3d.visualization.draw_geometries(geometries, lookat=[0.0, 0.0, 0.0], 
-                                      front=[0.0, 1.0, 0.5], up=[0.0, 0.0, 5.0], zoom=zoom,
+    o3d.visualization.draw_geometries(geometries, lookat=lookat, 
+                                      front=front, up=up, zoom=zoom,
                                       window_name="Point Cloud Visualization", 
                                       width=800, height=600, left=1200, top=50)
     
