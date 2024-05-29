@@ -60,7 +60,7 @@ if __name__=="__main__":
     from str2bool import str2bool as strtobool
     parser = argparse.ArgumentParser()
     parser.add_argument("-r", "--relative_file_path", type=str, required=True)
-    parser.add_argument("-s", "--send", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True)
+    parser.add_argument("-s", "--send", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True)
     parser.add_argument("-ip", "--server", type=str, default="00")
     args = parser.parse_args()
 
