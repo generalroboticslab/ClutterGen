@@ -515,6 +515,7 @@ class RoboSensaiBullet:
                 self.continue_stable_steps += 1
                 if self.continue_stable_steps >= self.args.min_continue_stable_steps: 
                     break
+            # TODO: Uncomment this part.
             # else:
             #     self.continue_stable_steps = 0
 
@@ -668,8 +669,8 @@ class RoboSensaiBullet:
             )
             self.surfaceCenter2placedObjCenter_poses[self.selected_obj_name] = QRsurfaceCenter2SelectedObjCenter
 
-            transformed_selected_obj_pc = se3_transform_pc(*QRsceneCenter_2_SelectedObjCenter, self.selected_obj_pc)
-            self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, transformed_selected_obj_pc], axis=0)
+            QRsceneCenter2selected_obj_pc = se3_transform_pc(*QRsceneCenter_2_SelectedObjCenter, self.selected_obj_pc)
+            self.selected_qr_scene_pc = np.concatenate([self.selected_qr_scene_pc, QRsceneCenter2selected_obj_pc], axis=0)
             self.selected_qr_scene_pc = pc_random_downsample(self.selected_qr_scene_pc, self.args.max_num_scene_points)
             self.info["selected_init_qr_scene_ft"] = None # The scene points need to be re-extracted
             self.tallest_placed_half_z_extend = max(self.tallest_placed_half_z_extend, self.obj_name_data[self.selected_obj_name]["bbox"][9])
@@ -679,8 +680,8 @@ class RoboSensaiBullet:
                           if len(self.placed_obj_poses) >= self.args.max_num_placing_objs \
                           else self.args.reward_pobj
 
-            # pu.visualize_pc(self.selected_qr_scene_pc)
-            # pu.visualize_pc(self.selected_obj_pc)
+            # pu.visualize_pc(self.selected_obj_pc, front=[0., 1.5, 1.5], add_coord=False, zoom=0.7)
+            # pu.visualize_pc(self.selected_qr_scene_pc, front=[2, 0., 2.], add_coord=False, zoom=0.8)
 
         self.last_reward = vel_reward
 

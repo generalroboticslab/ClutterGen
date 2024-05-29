@@ -128,21 +128,24 @@ def get_args():
         os.makedirs(eval_args.save_dir)
 
     # assign an uniform name
-    ckeckpoint_index = ''
+    checkpoint_index = ''
     if eval_args.random_policy: eval_args.final_name = f'EVAL_RandPolicy'
     elif eval_args.heuristic_policy: eval_args.final_name = f'EVAL_HeurPolicy'
-    else: ckeckpoint_index = '_EVAL_' + eval_args.index_episode 
+    else: checkpoint_index = '_EVAL_' + eval_args.index_episode 
     
-    if eval_args.new_tablehalfExtents: ckeckpoint_index += "_TableHalfExtents" + "_".join(map(str, eval_args.new_tablehalfExtents))
-    if eval_args.specific_scene: ckeckpoint_index += "_Scene_" + eval_args.specific_scene
+    if eval_args.new_tablehalfExtents: checkpoint_index += "_TableHalfExtents" + "_".join(map(str, eval_args.new_tablehalfExtents))
+    if eval_args.specific_scene: checkpoint_index += "_Scene_" + eval_args.specific_scene
+    if eval_args.QueryRegion_pos: checkpoint_index += "_QRPos_" + "_".join(map(str, eval_args.QueryRegion_pos))
+    if eval_args.QueryRegion_euler_z: checkpoint_index += "_QREulerZ_" + str(eval_args.QueryRegion_euler_z)
+    if eval_args.QueryRegion_halfext: checkpoint_index += "_QRHalfExt_" + "_".join(map(str, eval_args.QueryRegion_halfext))
     obj_range = f'_objRange_{min(eval_args.max_num_placing_objs_lst)}_{max(eval_args.max_num_placing_objs_lst)}'
-    temp_filename = eval_args.final_name + ckeckpoint_index + obj_range
+    temp_filename = eval_args.final_name + checkpoint_index + obj_range
     
     maximum_name_len = 250
     if len(temp_filename) > maximum_name_len: # since the name too long error, I need to shorten the training name 
         shorten_name_range = len(temp_filename) - maximum_name_len
         eval_args.final_name = eval_args.final_name[:-shorten_name_range]
-    eval_args.final_name = eval_args.final_name + ckeckpoint_index + obj_range
+    eval_args.final_name = eval_args.final_name + checkpoint_index + obj_range
 
     # Generate benchmark table does not use collect_data
     if eval_args.generate_benchmark: 

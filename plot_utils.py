@@ -14,6 +14,7 @@ import random
 from utils import read_json
 import argparse
 
+FontSize = 12
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Plotting Utils")
@@ -247,13 +248,14 @@ class Plot_Eval_Misc_Utils:
         return objs_name_poss_converage
 
 
-    def plot_stable_steps(self, success_only=True):
+    def plot_stable_steps(self, success_only=True, trial_threshold=0):
         
         episode_count = 0
         max_num_placement_objs = max(self.evalJson_dict["max_num_placing_objs_lst"])
         max_num_trials = self.evalJson_dict["max_trials"]
-        num_objs_trial_stable_steps = np.zeros((max_num_placement_objs, max_num_trials))
-        num_objs_trial_counts = np.zeros_like(num_objs_trial_stable_steps)
+        # Note: [[]] * max_num_placement_objs will create a list of references to the same list
+        num_objs_stable_steps = [[] for _ in range(max_num_placement_objs)]
+        num_trials_stable_steps = [[] for _ in range(max_num_trials)]
 
         placement_trajs = self.evalMeta_dict["placement_trajs"]
 
@@ -263,27 +265,28 @@ class Plot_Eval_Misc_Utils:
             episode_count += 1
             for num_objs, obj_name in enumerate(placement_traj.keys()):
                 obj_traj = placement_traj[obj_name]
+                if len(obj_traj["stable_steps"]) < trial_threshold: continue
                 for trial_index, obj_stable_steps in enumerate(obj_traj["stable_steps"]):
-                    num_objs_trial_stable_steps[num_objs][trial_index] += obj_stable_steps
-                    num_objs_trial_counts[num_objs][trial_index] += 1
-        
-        trial_stable_steps = np.sum(num_objs_trial_stable_steps, axis=0)
-        trial_counts = np.sum(num_objs_trial_counts, axis=0)
-        assert np.any(trial_counts > 0), "Any trials are not 0"
-        avg_trial_stable_steps = trial_stable_steps / trial_counts
+                    num_objs_stable_steps[num_objs].append(obj_stable_steps)
+                    num_trials_stable_steps[trial_index].append(obj_stable_steps)
 
-        fig, axes = plt.subplots(1, 1, figsize=(10, 5))
-        axes.plot(range(1, max_num_trials+1), avg_trial_stable_steps, '-o', label="Average Stable Steps")
-        axes.set_title(f"Average Stable Steps for Each Number of Placing Objects ({episode_count} Episodes)")
-        axes.set_xlabel("Number of Trials")
-        axes.set_ylabel("Average Stable Steps")
+        avg_std_num_trials_stable_steps = np.array([(np.mean(num_trials_stable_steps[i]), np.std(num_trials_stable_steps[i])) for i in range(max_num_trials)])
+
+        fig, axes = plt.subplots(1, 1, figsize=(8, 5))
+        # Plot the average stable steps for each trial and the standard deviation
+        # axes.errorbar(range(1, max_num_trials+1), avg_std_num_trials_stable_steps[:, 0], yerr=avg_std_num_trials_stable_steps[:, 1], fmt='-o', ecolor='red', capsize=5, label="Average Stable Steps")
+        axes.plot(range(1, max_num_trials+1), [np.mean(num_trials_stable_steps[i]) for i in range(max_num_trials)], '-o', markersize=FontSize/1.5, label="Average Stable Steps")
+        axes.set_title(f"Average Stable Steps for Each Attempt", fontsize=FontSize*1.5)
+        axes.set_xlabel("The Index of Attempts", fontsize=FontSize*1.5)
+        axes.set_ylabel("Average Stable Steps", fontsize=FontSize*1.5)
+        axes.tick_params(axis='both', labelsize=FontSize)
         axes.xaxis.set_major_locator(MaxNLocator(integer=True))  # Ensure x-axis ticks are integers
         axes.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "stable_steps.png"))
+        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "stable_steps.pdf"), dpi=300)
         plt.show()
 
-        return avg_trial_stable_steps
+        return avg_std_num_trials_stable_steps
     
 
 class Plot_Dataset_Utils:
@@ -403,6 +406,33 @@ def create_gif_from_multiple_folders(source_folders, output_filename, num_images
     images[0].save(output_filename, save_all=True, append_images=images[1:], duration=duration, loop=0)
 
 
+from PIL import Image, ImageEnhance
+
+def combine_images_with_transparency(image_paths, output_path, jump_imgs=2):
+    """
+    Combine a series of images into a single image to visualize object movement,
+    adjusting transparency from low to high as the image index increases.
+
+    :param image_paths: List of paths to the input images.
+    :param output_path: Path to save the combined image.
+    """
+    # Load the first image to get size and mode
+    base_image = Image.open(image_paths[0])
+    base_image = base_image.convert("RGBA")
+    width, height = base_image.size
+
+    # Create a blank canvas to combine the images
+    combined_image = Image.new("RGBA", (width, height))
+    for i, image_path in enumerate(image_paths):
+        if i % jump_imgs != 0: continue
+        image = Image.open(image_path).convert("RGBA")
+
+        # Composite the image onto the combined image
+        combined_image = Image.blend(combined_image, image, alpha=0.65)
+
+    # Save the combined image
+    combined_image.save(output_path)
+
 
 if __name__ == "__main__":
     args = parse_args()
@@ -441,11 +471,19 @@ if __name__ == "__main__":
     elif TASK_NAME == "MiscInfo":
         Plot_Eval_Misc_Utils = Plot_Eval_Misc_Utils()
         Plot_Eval_Misc_Utils.read_file(args.evalUniName)
-        Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
-        Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
+        # Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
+        # Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
         Plot_Eval_Misc_Utils.plot_stable_steps(success_only=True)
 
     elif TASK_NAME == "DatasetDistribution":
         plot_dataset_utils = Plot_Dataset_Utils()
         plot_dataset_utils.read_file()
         plot_dataset_utils.plot_ds_distribution()
+
+    elif TASK_NAME == "VisMove":
+        image_folder = "paper/method/vis_move_hist"
+        image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)
+        output_folder = os.path.join(image_folder, "combined")
+        os.makedirs(output_folder, exist_ok=True)
+        output_path = os.path.join(output_folder, "combined.png")
+        combine_images_with_transparency(image_files, output_path, jump_imgs=3)
