@@ -330,31 +330,30 @@ if __name__ == "__main__":
                 update_tensor_buffer(episode_success_box, success_buf)
                 success_ids = terminal_ids[success_buf.to(torch.bool)]
                 
-                if eval_args.collect_data:
-                    scene_cfg = combine_envs_float_info2list(infos, 'placed_obj_poses', terminal_ids)
-                    placement_trajs = combine_envs_float_info2list(infos, "placement_trajs", terminal_ids)
-                    qr_regions = combine_envs_float_info2list(infos, 'qr_region', terminal_ids)
-                    for i, env_id in enumerate(terminal_ids):
-                        scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
-                        placement_traj_dict.update({num_episodes + i: [placement_trajs[i], success_buf[i].item()]})
-                        qr_region_dict.update({num_episodes + i: qr_regions[i]})
-                        if env_id in success_ids:
-                            success_scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
-                        
-                        for obj_name in placement_trajs[i].keys():
-                            obj_stable_steps_sum = sum(placement_trajs[i][obj_name]['stable_steps'])
-                            obj_stable_steps_box.append(obj_stable_steps_sum)
+                scene_cfg = combine_envs_float_info2list(infos, 'placed_obj_poses', terminal_ids)
+                placement_trajs = combine_envs_float_info2list(infos, "placement_trajs", terminal_ids)
+                qr_regions = combine_envs_float_info2list(infos, 'qr_region', terminal_ids)
+                for i, env_id in enumerate(terminal_ids):
+                    scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
+                    placement_traj_dict.update({num_episodes + i: [placement_trajs[i], success_buf[i].item()]})
+                    qr_region_dict.update({num_episodes + i: qr_regions[i]})
+                    if env_id in success_ids:
+                        success_scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
+                    
+                    for obj_name in placement_trajs[i].keys():
+                        obj_stable_steps_sum = sum(placement_trajs[i][obj_name]['stable_steps'])
+                        obj_stable_steps_box.append(obj_stable_steps_sum)
 
-                        if eval_args.actor_visualize:
-                            success_suffix = 'success' if env_id in success_ids else 'failure'
-                            path = os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_{num_episodes + i}eps_{success_suffix}_actor_traj_log.pkl")
-                            pickle.dump(actor_traj_log_dict[env_id.item()], open(path, 'wb'))
-                            actor_traj_log_dict[env_id.item()] = {
-                                "prob_pos_heatmap": [],
-                                "probs_mean_std": [],
-                            }
+                    if eval_args.actor_visualize:
+                        success_suffix = 'success' if env_id in success_ids else 'failure'
+                        path = os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_{num_episodes + i}eps_{success_suffix}_actor_traj_log.pkl")
+                        pickle.dump(actor_traj_log_dict[env_id.item()], open(path, 'wb'))
+                        actor_traj_log_dict[env_id.item()] = {
+                            "prob_pos_heatmap": [],
+                            "probs_mean_std": [],
+                        }
                         
-                    if eval_args.sp_data_collection and len(success_ids) > 0:
+                    if eval_args.collect_data and eval_args.sp_data_collection and len(success_ids) > 0:
                         sp_dataset_lst = combine_envs_float_info2list(infos, 'sp_dataset', success_ids)
                         with h5py.File(eval_args.sp_dataset_path, 'a') as f:
                             for sp_data in sp_dataset_lst:
