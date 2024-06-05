@@ -73,7 +73,11 @@ def get_args():
     parser.add_argument('--QueryRegion_pos', type=json.loads, default=None, help='A list of max num of placing objs')
     parser.add_argument('--QueryRegion_euler_z', type=float, default=None, help='A list of max num of placing objs')
     parser.add_argument('--QueryRegion_halfext', type=json.loads, default=None, help='A list of max num of placing objs') # [0.25, 0.25, 0.35] for realrobot
-    
+    parser.add_argument('--random_qr_pos', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
+    parser.add_argument('--random_qr_rotz', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
+    parser.add_argument('--random_srk_qr_halfext', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
+    parser.add_argument('--random_exp_qr_halfext', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
+
     # RoboSensai Bullet parameters
     parser.add_argument('--scene_pool_folder', type=str, default='tabletop_selected_scene', help="folder path that stores all urdf files")
     parser.add_argument('--specific_scene', type=str, default="table")
@@ -138,6 +142,10 @@ def get_args():
     if eval_args.QueryRegion_pos: checkpoint_index += "_QRPos_" + "_".join(map(str, eval_args.QueryRegion_pos))
     if eval_args.QueryRegion_euler_z: checkpoint_index += "_QREulerZ_" + str(eval_args.QueryRegion_euler_z)
     if eval_args.QueryRegion_halfext: checkpoint_index += "_QRHalfExt_" + "_".join(map(str, eval_args.QueryRegion_halfext))
+    if eval_args.random_qr_pos: checkpoint_index += "_RQRPos"
+    if eval_args.random_qr_rotz: checkpoint_index += "_RQREulerZ"
+    if eval_args.random_srk_qr_halfext: checkpoint_index += "_RsrkQRHalfExt"
+    if eval_args.random_exp_qr_halfext: checkpoint_index += "_RexpQRHalfExt"
     obj_range = f'_objRange_{min(eval_args.max_num_placing_objs_lst)}_{max(eval_args.max_num_placing_objs_lst)}'
     temp_filename = eval_args.final_name + checkpoint_index + obj_range
     
@@ -181,7 +189,8 @@ def get_args():
 
     # create blender folder
     eval_args.blender_dir = os.path.join(eval_args.save_dir, 'blender', eval_args.final_name)
-    # if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.blender_dir): shutil.rmtree(eval_args.blender_dir)
+    if eval_args.collect_data and eval_args.eval_result and os.path.exists(eval_args.blender_dir): 
+        shutil.rmtree(eval_args.blender_dir)
     if eval_args.collect_data and eval_args.blender_record and not os.path.exists(eval_args.blender_dir):
         os.makedirs(eval_args.blender_dir)
 
@@ -250,7 +259,8 @@ if __name__ == "__main__":
         episode_rewards_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         episode_success_box = torch.zeros((eval_args.num_trials, ), device=device, dtype=torch.float32)
         obj_stable_steps_box = []
-        scene_cfg_dict = {}; success_scene_cfg_dict = {}; actor_traj_log_dict = {}; placement_traj_dict = {}
+        scene_cfg_dict = {}; success_scene_cfg_dict = {}; actor_traj_log_dict = {}; 
+        placement_traj_dict = {}; qr_region_dict = {}
         for i in range(eval_args.num_envs):
             actor_traj_log_dict[i] = {
                 "prob_pos_heatmap": [],
@@ -276,11 +286,8 @@ if __name__ == "__main__":
                 break
 
             ################ agent evaluation ################
-            if eval_args.random_policy:
-                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 4 # [-5, 5] before sigmoid
-            elif eval_args.heuristic_policy:
-                assert not eval_args.fixed_qr_region, "Heuristic policy only support fixed_qr_region"
-                action = torch.zeros((eval_args.num_envs, temp_env.action_shape[1]), device=device)
+            if eval_args.random_policy or eval_args.heuristic_policy:
+                action = torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device)
             else:
                 with torch.no_grad():
                     action, probs = agent.select_action([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
@@ -326,9 +333,11 @@ if __name__ == "__main__":
                 if eval_args.collect_data:
                     scene_cfg = combine_envs_float_info2list(infos, 'placed_obj_poses', terminal_ids)
                     placement_trajs = combine_envs_float_info2list(infos, "placement_trajs", terminal_ids)
+                    qr_regions = combine_envs_float_info2list(infos, 'qr_region', terminal_ids)
                     for i, env_id in enumerate(terminal_ids):
                         scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
                         placement_traj_dict.update({num_episodes + i: [placement_trajs[i], success_buf[i].item()]})
+                        qr_region_dict.update({num_episodes + i: qr_regions[i]})
                         if env_id in success_ids:
                             success_scene_cfg_dict.update({num_episodes + i: scene_cfg[i]})
                         
@@ -406,7 +415,8 @@ if __name__ == "__main__":
                 "obj_success_rate": combine_envs_dict_info2dict(infos, key="obj_success_rate"),
                 "scene_cfgs": scene_cfg_dict,
                 "success_scene_cfgs": success_scene_cfg_dict,
-                "placement_trajs": placement_traj_dict
+                "placement_trajs": placement_traj_dict,
+                "qr_region_dict": qr_region_dict
             }
             save_json(meta_data, os.path.join(eval_args.trajectory_dir, f"{max_num_placing_objs}Objs_meta_data.json"))
 

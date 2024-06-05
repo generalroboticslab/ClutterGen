@@ -13,7 +13,7 @@ import bpy
 import pickle
 from os.path import splitext, join, basename, exists
 from os import listdir, makedirs
-from mathutils import Vector
+from mathutils import Vector, Quaternion
 import math
 import time
 import random
@@ -370,22 +370,23 @@ def render_animation(output_path, encoder='H264', container='MPEG4', resolution=
 
     # Disable denoising for Cycles
     if bpy.context.scene.render.engine == 'CYCLES':
+        print("Setting up Cycles")
         bpy.context.scene.cycles.use_denoising = False
         # uncheck the noise threshold
         bpy.context.scene.cycles.use_adaptive_sampling = False
         # Change number of samples for Cycles
         bpy.context.scene.cycles.samples = samples
-        # Set the film transparency
-        bpy.context.scene.cycles.film_transparent = True
-
         # Set light path settings
         bpy.context.scene.cycles.max_bounces = 6
         bpy.context.scene.cycles.transmission_bounces = 6
         bpy.context.scene.cycles.transparent_max_bounces = 6
+        # Set the film transparency
+        bpy.context.scene.render.film_transparent = True
     
     # Change the number of samples for EEVEE
     if bpy.context.scene.render.engine == 'BLENDER_EEVEE':
         bpy.context.scene.eevee.taa_samples = 64
+        bpy.context.scene.eevee.film_transparent_glass = True
 
     # Render the animation (https://blender.stackexchange.com/questions/283640/why-does-bpy-ops-render-renderanimation-true-work-but-fails-when-animation-is)
     bpy.ops.render.render(animation=animation, write_still=True)
@@ -459,7 +460,7 @@ def add_light(name="Light", type='POINT', location=(0, 0, 0), energy=1000, color
     light.data.color = color
 
 
-def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1), rotation=(0, 0, 0.), texture_path=None, use_emission=False, alpha=1.0):
+def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1), rotation=(0, 0, 0.), color=[1., 1., 1.], alpha=1.0, texture_path=None, use_emission=False, noshadow=False):
     """
     Adds a primitive object to the Blender scene with optional texture, emission shader, and transparency.
 
@@ -487,22 +488,25 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
 
     # Add necessary nodes
     emission = nodes.new(type='ShaderNodeEmission')
-    emission.inputs['Strength'].default_value = 1.0
     transparent = nodes.new(type='ShaderNodeBsdfTransparent')
     mix_shader = nodes.new(type='ShaderNodeMixShader')
     material_output = nodes.new(type='ShaderNodeOutputMaterial')
+    # Set color and alpha value
+    color = list(color) + [1.0]  # Red color with 50% transparency
 
     # Set up node links
     if use_emission:
+        emission.inputs['Strength'].default_value = 1.0
+        emission.inputs['Color'].default_value = color
         mix_shader.inputs['Fac'].default_value = 1.0 - alpha
         mat.node_tree.links.new(mix_shader.inputs[1], emission.outputs['Emission'])
         mat.node_tree.links.new(mix_shader.inputs[2], transparent.outputs['BSDF'])
-        mat.shadow_method = 'NONE'
     else:
         bsdf = nodes.new('ShaderNodeBsdfPrincipled')
         mix_shader.inputs['Fac'].default_value = 1.0 - alpha
         mat.node_tree.links.new(mix_shader.inputs[1], bsdf.outputs['BSDF'])
         mat.node_tree.links.new(mix_shader.inputs[2], transparent.outputs['BSDF'])
+        bsdf.inputs['Base Color'].default_value = color
 
     mat.node_tree.links.new(material_output.inputs['Surface'], mix_shader.outputs['Shader'])
 
@@ -517,6 +521,16 @@ def add_primitive_object(object_type='CUBE', location=(0, 0, 0), scale=(1, 1, 1)
 
     # Adjust material blend method for transparency
     mat.blend_method = 'BLEND' if alpha < 1.0 else 'OPAQUE'
+
+    # Disable shadows for the object
+    if noshadow:
+        # print obj attributes
+        # mat.shadow_method = 'NONE'
+        obj.visible_shadow = False
+        # obj.visible_transmission = False
+        # obj.visible_diffuse = False
+        # obj.visible_glossy = False
+        # obj.visible_volume_scatter = False
 
     return obj
 
@@ -546,16 +560,45 @@ def natural_keys(text):
 blender_traj_directory = "eval_res/Union/blender"
 actor_vis_traj_directory = "eval_res/Union/trajectories"
 json_file_directory = "eval_res/Union/Json"
-evalUniName_lst = ["Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100._EVAL_best_TableHalfExtents0.3_0.35_0.35_Scene_table_objRange_10_10"]
-render_nums = 1
-specific_eps = 13 # 36, 30, 27, 9, 18, 22, 26
+# evalUniName_lst = ["Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5__EVAL_best_Scene_table_1_QRHalfExt_0.3_0.3_0.35_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy_EVAL_best_Scene_table_100_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_10_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_21_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_32_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_49_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_52_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_54_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_55_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_83_objRange_10_10",
+#                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0._EVAL_best_Scene_table_2_objRange_10_10"]
+
+# evalUniName_lst = ["Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_ma_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RQRPos_RQREulerZ_RsrkQRHalfExt_RexpQRHalfExt_objRange_10_10",
+#                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Ep_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RexpQRHalfExt_objRange_10_10",
+#                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Ep_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RsrkQRHalfExt_objRange_10_10",
+#                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2R_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RQREulerZ_objRange_10_10",
+#                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Repl_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RQRPos_objRange_10_10"]
+
+
+evalUniName_lst = ["Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_s_EVAL_best_Scene_table_1_QRHalfExt_0.2_0.3_0.35_objRange_10_10",
+                   "Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_Scene_table_100_objRange_10_10",
+                   "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entrop_EVAL_best_Scene_table_10_objRange_10_10",
+                   "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entrop_EVAL_best_Scene_table_21_objRange_10_10",
+                   "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq_EVAL_best_Scene_table_32_QRHalfExt_0.3_0.35_0.35_objRange_10_10",
+                   "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0_EVAL_best_Scene_table_49_objRange_10_10",
+                   "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy_EVAL_best_Scene_table_52_objRange_10_10",
+                   "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy_EVAL_best_Scene_table_54_objRange_10_10"]
+
+render_nums = 3
+specific_eps = None # 36, 30, 27, 9, 18, 22, 26
 animation = False
 multiple_lights = True
 add_plane = False
-load_all = True
+add_qr_region = False
+load_all = False
 set_blender_engine(render_engine='CYCLES') # 'BLENDER_EEVEE', 'CYCLES'
 # For randomizing qr region
-QrSceneCenter2Camera = [2., 0., 2.2]
+QrSceneCenter2Camera = [-2, 0., 3]
+focus_offset = (0.07, 0, -0.1)
 resolution = (1920, 1080)
 
 for evalUniName in evalUniName_lst:
@@ -588,8 +631,12 @@ for evalUniName in evalUniName_lst:
     QueryRegion_pos = json_data["QueryRegion_pos"]
     QueryRegion_euler_z = json_data["QueryRegion_euler_z"]
     qr_scene_halfexts = meta_json_data["qr_scene_pose"][2][7:]
+    qr_regions = meta_json_data["qr_region_dict"] if "qr_region_dict" in meta_json_data else None
 
     for i, filepath in enumerate(blender_filepaths):
+        filename = basename(filepath)
+        eps_index = filename.split("_")[1].replace("eps", "")
+        qr_region = qr_regions[eps_index] if qr_regions is not None else None
         delete_collection(specific_name=None)
         delete_scene_objects()
 
@@ -597,9 +644,19 @@ for evalUniName in evalUniName_lst:
         if add_plane:
             add_primitive_object(object_type='PLANE', location=(0, 0, 0), scale=(1000, 1000, 1000), texture_path=None)
 
+        # Add QR region, red color with transparency
+        if add_qr_region and qr_region is not None:
+            qr_region_location = qr_region[:3]
+            qr_region_location[2] = qr_region_location[2] + qr_scene_halfexts[2]
+            # adjust the quaternion convention from [x, y, z, w] to [w, x, y, z]
+            blender_quat = [qr_region[6], *qr_region[3:6]]
+            qr_euler = Quaternion(blender_quat).to_euler()
+            qr_region_halfexts = qr_region[7:]
+            add_primitive_object(object_type='CUBE', location=qr_region_location, scale=qr_region_halfexts, rotation=qr_euler, texture_path=None, use_emission=False, color=[1.0, 0.0, 0.0], alpha=0.5, noshadow=True)
+        
         # Add a table; The size might be different from the original size!
         if json_data["specific_scene"] == "table":
-            add_primitive_object(object_type='CUBE', location=(0, 0, qr_scene_halfexts[2]), scale=qr_scene_halfexts, texture_path=None)
+            add_primitive_object(object_type='CUBE', location=(0, 0, qr_scene_halfexts[2]), scale=qr_scene_halfexts, color=[1., 1., 1.], alpha=1., use_emission=False, texture_path=None)
 
         # Load the data from the pickle file.
         _, max_frame = load_pkl(filepath, load_all=load_all)
@@ -612,7 +669,7 @@ for evalUniName in evalUniName_lst:
         # Adjust the camera and light
         if "table" in json_data["specific_scene"]:
             camera_start_location = (*QrSceneCenter2Camera[:2], QrSceneCenter2Camera[2] + qr_scene_halfexts[2])
-            focus_point=(0, 0, qr_scene_halfexts[2]-0.1) # Focus on the table center; given some offset
+            focus_point=(focus_offset[0], focus_offset[1], qr_scene_halfexts[2]+focus_offset[2]) # Focus on the table center; given some offset
             light_location1 = (0, 0, 5); light_location2 = (5, 0, 1); light_location3 = (-5, 0, 1); light_location4 = (0, 5, 5); light_location5 = (0, -5, 5)
             light_color = (1., 1., 1.) # (1., 0.85, 0.72)
         elif json_data["specific_scene"] == "storage_furniture_5":
@@ -657,15 +714,15 @@ for evalUniName in evalUniName_lst:
         start_time = time.time()
         output_name = basename(filepath).replace(blender_filename_ext, '.mp4') \
             if animation else basename(filepath).replace(blender_filename_ext, '.png')
-        # render_animation(f'{save_folder}/{output_name}', 
-        #                 encoder='H264', 
-        #                 resolution=resolution, 
-        #                 skip_frames=skip_frames, 
-        #                 start_frame=start_frame, 
-        #                 end_frame=max_frame, 
-        #                 quality=80, 
-        #                 frame_rate=frame_rate,
-        #                 animation=animation)
+        render_animation(f'{save_folder}/{output_name}', 
+                        encoder='H264', 
+                        resolution=resolution, 
+                        skip_frames=skip_frames, 
+                        start_frame=start_frame, 
+                        end_frame=max_frame, 
+                        quality=80, 
+                        frame_rate=frame_rate,
+                        animation=animation)
         print(f"Total time: {time.time() - start_time:.2f}s")
 
     print(f"{evalUniName} All Done!")
