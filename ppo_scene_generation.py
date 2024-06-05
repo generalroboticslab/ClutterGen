@@ -138,9 +138,13 @@ def parse_args():
     # Uniformalize training name
     additional = '_Sync_Beta'
     additional += f"_{os.path.basename(args.object_pool_folder)}"
-    ###--- suffix for final name ---###
     if args.specific_scene is not None:
         additional += f'_{args.specific_scene}'
+    ###--- suffix for final name ---###
+    if args.open_loop: 
+        additional += '_OL'
+    if args.short_memory: 
+        additional += '_SM'
     if args.use_traj_encoder: 
         additional += '_TrajEncoderTF' if args.use_tf_traj_encoder else '_TrajEncoderFC'
     if args.use_seq_obs_encoder:
@@ -149,10 +153,6 @@ def parse_args():
         additional += '_PCExtractor'
     if args.checkpoint is not None: 
         additional += '_FineTune'
-    if args.open_loop: 
-        additional += '_OL'
-    if args.short_memory: 
-        additional += '_SM'
 
     additional += '_Rand'
     if args.random_select_objs_pool: additional += '_ObjPool'

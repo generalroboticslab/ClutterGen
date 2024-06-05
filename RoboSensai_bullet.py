@@ -644,6 +644,13 @@ class RoboSensaiBullet:
         self.info["selected_obj_pc_ft"] = self.selected_obj_pc_ft
         # Update the sequence observation | pop the first observation and append the last observation
         his_traj = self.to_numpy(self.traj_history).flatten()
+        
+        if hasattr(self.args, "open_loop") and self.args.open_loop:
+            his_traj[:] = 0.
+            self.last_raw_action[:] = 0.
+        if hasattr(self.args, "short_memory") and self.args.short_memory:
+            self.last_seq_obs[1:, :] = 0. # mask out the previous observations
+
         cur_seq_obs = np.concatenate([self.selected_qr_region, self.last_raw_action, his_traj])
         # Left shift the sequence observation
         self.last_seq_obs = np.concatenate([self.last_seq_obs[1:, :], np.expand_dims(cur_seq_obs, axis=0)])
