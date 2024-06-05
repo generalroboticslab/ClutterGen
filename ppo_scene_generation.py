@@ -67,6 +67,8 @@ def parse_args():
     parser.add_argument('--use_bf16', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='default data type')
     parser.add_argument('--use_curriculum', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Use curriculum learning')
     parser.add_argument('--patience_iters', type=int, default=5000)
+    parser.add_argument('--short_memory', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Short memory for the agent')
+    parser.add_argument('--open_loop', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Open loop control')
 
     # I/O hyper parameter
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
@@ -147,6 +149,10 @@ def parse_args():
         additional += '_PCExtractor'
     if args.checkpoint is not None: 
         additional += '_FineTune'
+    if args.open_loop: 
+        additional += '_OL'
+    if args.short_memory: 
+        additional += '_SM'
 
     additional += '_Rand'
     if args.random_select_objs_pool: additional += '_ObjPool'
