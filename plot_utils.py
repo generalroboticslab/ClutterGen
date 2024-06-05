@@ -7,7 +7,6 @@ import os
 import pandas as pd
 import ast
 from PIL import Image, ImageSequence
-import matplotlib.backends.backend_pdf
 sns.set_theme()
 from utils import natural_keys
 import random
@@ -53,16 +52,16 @@ class Plot_Utils:
         fig, axes = plt.subplots(1, 1, figsize=(8, 8))  # Create a 2-row, 1-column subplot grid
 
         # Plot Reset Success Rate
-        axes.set_title("Scene Generation Success Rate", fontsize=16)
-        axes.set_xlabel("Number of Objects", fontsize=14)
-        axes.set_ylabel("Average Success Rate", fontsize=14)
+        axes.set_title("The Average Success Rate of Scene Generation", fontsize=FontSize*1.5)
+        axes.set_xlabel("Number of Objects", fontsize=FontSize*1.5)
+        axes.set_ylabel("Success Rate", fontsize=FontSize*1.5)
 
         trained_obj_label = 'Trained'; trained_obj_label_act = trained_obj_label
         for checkpoint_name in self.data_full.keys():
             data, trained_objs = self.data_full[checkpoint_name]
             num_obj = data["max_num_placing_objs"]
             success_rate = data["success_rate"]
-            axes.plot(num_obj, success_rate, '-o', label=checkpoint_name, linewidth=2, markersize=8)
+            axes.plot(num_obj, success_rate, '-', label=checkpoint_name, linewidth=4, markersize=8)
             if 'best' in checkpoint_name:
                 axes.scatter(trained_objs, success_rate[num_obj.isin(trained_objs)], 
                                 marker='*', s=250, c='g', zorder=2, label=trained_obj_label_act)
@@ -74,8 +73,8 @@ class Plot_Utils:
             index_to_move = labels.index(trained_obj_label)
             handles = [handle for i, handle in enumerate(handles) if i != index_to_move] + [handles[index_to_move]]
             labels = [label for i, label in enumerate(labels) if i != index_to_move] + [labels[index_to_move]]
-        axes.legend(handles, labels, fontsize=12)
-        axes.tick_params(axis='both', labelsize=12)
+        axes.legend(handles, labels, fontsize=FontSize*1.5)
+        axes.tick_params(axis='both', labelsize=FontSize*1.5)
 
         # Adjust layout for better spacing
         plt.tight_layout()
@@ -104,6 +103,17 @@ class Plot_Eval_Misc_Utils:
 
         self.evalJson_dict = read_json(self.evalJsonPath)
         self.evalMeta_dict = read_json(self.evalMetaPath)
+        return self.evalJson_dict, self.evalMeta_dict
+
+    
+    def read_file_lst(self, evalUniName_lst):
+        self.eval_dict_lst = []
+        for i, evalUniName in enumerate(evalUniName_lst):
+            evalJson_dict, evalMeta_dict = self.read_file(evalUniName)
+            self.eval_dict_lst.append((evalJson_dict, evalMeta_dict))
+        self.evalJson_dict = None
+        self.evalMeta_dict = None
+        return self.eval_dict_lst
 
 
     def plot_obj_placement_success_rate(self):
@@ -165,7 +175,7 @@ class Plot_Eval_Misc_Utils:
             num_rows = 1; images_per_row = 1
         else:
             num_rows = 2; images_per_row = len(objs_name_poss)//num_rows
-        fig, axes = plt.subplots(num_rows, images_per_row, figsize=(15, 15))
+        fig, axes = plt.subplots(num_rows, images_per_row, figsize=(18, 18))
         axes = axes.flatten() if num_rows * images_per_row != 1 else [axes]
 
         # Compute the coverage rate, which is the mean of x, y, z and the standard deviation of the x, y, z
@@ -184,26 +194,28 @@ class Plot_Eval_Misc_Utils:
             #Draw the table (a cube)
             axes[i].plot([qr_scene_corner_pos[0, 0], qr_scene_corner_pos[1, 0], qr_scene_corner_pos[1, 0], qr_scene_corner_pos[0, 0], qr_scene_corner_pos[0, 0]], 
                          [qr_scene_corner_pos[0, 1], qr_scene_corner_pos[0, 1], qr_scene_corner_pos[1, 1], qr_scene_corner_pos[1, 1], qr_scene_corner_pos[0, 1]], 
-                         'k--', linewidth=3, label="Table Area")
+                         'k--', linewidth=6, label="Table area")
 
-            axes[i].scatter(objs_name_poss[obj_name][:, 0], objs_name_poss[obj_name][:, 1], s=10, c='b', label="Object Position-XY")
-            axes[i].scatter(obj_pos_mean[0], obj_pos_mean[1], s=100, c='r', label="Mean Position-XY")
+            axes[i].scatter(objs_name_poss[obj_name][:, 0], objs_name_poss[obj_name][:, 1], s=10, c='b', label="Object position")
+            # axes[i].scatter(obj_pos_mean[0], obj_pos_mean[1], s=100, c='r', label="Mean Position-XY")
             axes[i].plot([coverage_corner_pos[0, 0], coverage_corner_pos[1, 0], coverage_corner_pos[1, 0], coverage_corner_pos[0, 0], coverage_corner_pos[0, 0]], 
                         [coverage_corner_pos[0, 1], coverage_corner_pos[0, 1], coverage_corner_pos[1, 1], coverage_corner_pos[1, 1], coverage_corner_pos[0, 1]], 
-                        'r-', linewidth=1, label="Coverage Area")
+                        'r-', linewidth=2, label="Coverage area")
             
-            axes[i].set_title(f"{obj_name}\nCoverage Rate: {coverage_rate:.2f}")
-            axes[i].set_xlabel("X")
-            axes[i].set_ylabel("Y")
+            axes[i].set_title(f"{obj_name}", fontsize=FontSize*1.5)
+            axes[i].set_xlabel("X", fontsize=FontSize*1.5)
+            axes[i].set_ylabel("Y", fontsize=FontSize*1.5)
             axes[i].set_xlim([-qr_scene_half_extents[0], qr_scene_half_extents[0]])
             axes[i].set_ylim([-qr_scene_half_extents[1], qr_scene_half_extents[1]])
+            # Remove only the labels of the ticks
+            axes[i].tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False, labelbottom=False, labelleft=False)
             axes[i].set_aspect('equal')
 
         # Only Add legend to the first subplot
-        axes[0].legend()
+        axes[5].legend(fontsize=FontSize*1.5)
         plt.tight_layout()
         # Save the plot as a pdf under the same folder
-        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate_x_y.png"))
+        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate_x_y.pdf"), dpi=300)
         plt.show()
 
         # Plot the z-axis position
@@ -241,14 +253,14 @@ class Plot_Eval_Misc_Utils:
         axes[0].legend()
         plt.tight_layout()
         # Save the plot as a pdf under the same folder
-        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate_z.png"))
+        plt.savefig(os.path.join(os.path.dirname(self.evalMetaPath), "coverage_rate_z.pdf"), dpi=300)
         plt.show()
 
         objs_name_poss_converage[obj_name] = [obj_pos_mean, obj_pos_std, coverage_corner_pos, coverage_rate]
         return objs_name_poss_converage
 
 
-    def plot_stable_steps(self, success_only=True, trial_threshold=0):
+    def plot_stable_steps(self, success_only=True, trial_threshold=3):
         
         episode_count = 0
         max_num_placement_objs = max(self.evalJson_dict["max_num_placing_objs_lst"])
@@ -287,6 +299,55 @@ class Plot_Eval_Misc_Utils:
         plt.show()
 
         return avg_std_num_trials_stable_steps
+    
+
+    def plot_stable_steps_lst(self, success_only=True, trial_thresholds=None):
+        assert hasattr(self, "eval_dict_lst"), "Please read the files first using read_file_lst method"
+        
+        if trial_thresholds is None:
+            trial_thresholds = [0] * len(self.eval_dict_lst)
+        # draw the plot
+        fig, axes = plt.subplots(1, 1, figsize=(8, 5))
+        for i, (evalJson_dict, evalMeta_dict) in enumerate(self.eval_dict_lst):
+            num_trials_stable_steps = self.comp_trials_stable_steps(evalJson_dict, evalMeta_dict, success_only=success_only, trial_threshold=trial_thresholds[i])
+            # Plot the average stable steps for each trial and the standard deviation
+            # axes.errorbar(range(1, max_num_trials+1), avg_std_num_trials_stable_steps[:, 0], yerr=avg_std_num_trials_stable_steps[:, 1], fmt='-o', ecolor='red', capsize=5, label="Average Stable Steps")
+            axes.plot(range(1, len(num_trials_stable_steps)+1), [np.mean(num_trials_stable_steps[i]) for i in range(len(num_trials_stable_steps))], '-', markersize=FontSize/1.5, linewidth=3, label=f"Group {i+1}")
+        
+        axes.set_title(f"Average Stable Steps for Each Attempt", fontsize=FontSize*1.5)
+        axes.set_xlabel("The Index of Attempts", fontsize=FontSize*1.5)
+        axes.set_ylabel("Average Stable Steps", fontsize=FontSize*1.5)
+        axes.tick_params(axis='both', labelsize=FontSize)
+        axes.xaxis.set_major_locator(MaxNLocator(integer=True))  # Ensure x-axis ticks are integers
+        axes.legend(fontsize=FontSize*1.2)
+        plt.tight_layout()
+        plt.savefig(os.path.join(os.path.dirname(os.path.dirname(self.evalMetaPath)), "exp_stablesteps.pdf"), dpi=300)
+        plt.show()
+        
+
+    @staticmethod
+    def comp_trials_stable_steps(evalJson_dict, evalMeta_dict, success_only=True, trial_threshold=3):
+        episode_count = 0
+        max_num_placement_objs = max(evalJson_dict["max_num_placing_objs_lst"])
+        max_num_trials = evalJson_dict["max_trials"]
+        # Note: [[]] * max_num_placement_objs will create a list of references to the same list
+        num_objs_stable_steps = [[] for _ in range(max_num_placement_objs)]
+        num_trials_stable_steps = [[] for _ in range(max_num_trials)]
+
+        placement_trajs = evalMeta_dict["placement_trajs"]
+
+        for episode_index in placement_trajs.keys():
+            placement_traj, success = placement_trajs[episode_index]
+            if success_only and not success: continue
+            episode_count += 1
+            for num_objs, obj_name in enumerate(placement_traj.keys()):
+                obj_traj = placement_traj[obj_name]
+                if len(obj_traj["stable_steps"]) < trial_threshold: continue
+                for trial_index, obj_stable_steps in enumerate(obj_traj["stable_steps"]):
+                    num_objs_stable_steps[num_objs].append(obj_stable_steps)
+                    num_trials_stable_steps[trial_index].append(obj_stable_steps)
+
+        return num_trials_stable_steps
     
 
 class Plot_Dataset_Utils:
@@ -440,8 +501,8 @@ if __name__ == "__main__":
     TASK_NAME = args.task
     if TASK_NAME == "SuccessRate":
         plot_utils = Plot_Utils()
-        plot_utils.read_file("Union_02-19_15:44Sync_table_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum10_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_EVAL_best_objRange_1_10", checkpoint_name="RoboSensai")
-        plot_utils.read_file("EVAL_RandPolicy_objRange_1_10", checkpoint_name="RejectionSampling")
+        plot_utils.read_file("Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.0_EVAL_best_Scene_table_objRange_1_10", checkpoint_name="ClutterGen")
+        plot_utils.read_file("EVAL_HeurPolicy_Scene_table_objRange_1_10", checkpoint_name="Random Rejection Sampling")
         plot_utils.plot_success_steps()
     
     elif TASK_NAME == "Image2PDF":
@@ -472,15 +533,27 @@ if __name__ == "__main__":
         Plot_Eval_Misc_Utils = Plot_Eval_Misc_Utils()
         Plot_Eval_Misc_Utils.read_file(args.evalUniName)
         # Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
-        # Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
+        Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
         Plot_Eval_Misc_Utils.plot_stable_steps(success_only=True)
+
+    elif TASK_NAME == "MultiMiscInfo":
+        source_folders = [
+            "Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_Scene_table_objRange_10_10",
+            "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0._EVAL_best_Scene_table_objRange_10_10",
+            "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_EVAL_best_Scene_table_objRange_10_10",
+            "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.0_EVAL_best_Scene_table_objRange_10_10",
+            "Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_EVAL_best_Scene_table_objRange_10_10"
+        ]
+        Plot_Eval_Misc_Utils = Plot_Eval_Misc_Utils()
+        Plot_Eval_Misc_Utils.read_file_lst(source_folders)
+        Plot_Eval_Misc_Utils.plot_stable_steps_lst(success_only=True, trial_thresholds=[4, 4, 4, 3, 4])
 
     elif TASK_NAME == "DatasetDistribution":
         plot_dataset_utils = Plot_Dataset_Utils()
         plot_dataset_utils.read_file()
         plot_dataset_utils.plot_ds_distribution()
 
-    elif TASK_NAME == "VisMove":
+    elif TASK_NAME == "ObjMoveTraj":
         image_folder = "paper/method/vis_move_hist"
         image_files = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith('.png')], key=natural_keys)
         output_folder = os.path.join(image_folder, "combined")
