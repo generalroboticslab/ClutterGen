@@ -1,0 +1,16 @@
+# SSTK version 0.8.0
+# 7
+mtllib original-7.mtl
+o Group7/mesh5/mesh5-geometry#mesh5-geometry
+v 0.477374 -0.014914 0.289279
+v 0.045082 -0.014914 -0.156040
+v 0.045082 -0.014914 0.289279
+v 0.477374 -0.014914 -0.156040
+vn 0 1 0
+vn 0 -1 0
+usemtl material_0_0
+f 1//1 2//1 3//1
+f 2//1 1//1 4//1
+usemtl material_1_0
+f 3//2 2//2 1//2
+f 4//2 1//2 2//2
