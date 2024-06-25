@@ -175,7 +175,7 @@ python plot_utils.py \
 ```
 The plot will be saved to `results/post_corrector/success_summary.pdf`.
 <p align="center">
-    <img src="paper/final/png/teaser_successrate.png" width="600"> <br>
+    <img src="paper/final/png/teaser_successrate.png" width="300"> <br>
     <em>The success rate comparision between ClutterGen and RRS.</em>
 </p>
 
@@ -188,8 +188,8 @@ python plot_utils.py \
 ```
 The plots will be saved to `eval_res/Union/trajectories/[--evalUniName]`.
 <p align="center">
-    <img src="paper/final/png/Diversity_map.png" width="600"> <br>
-    <img src="paper/final/png/Stable_steps.png" width="300"> <br>
+    <img src="paper/final/png/Diversity_map.png" width="700"> <br>
+    <!-- <img src="paper/final/png/Stable_steps.png" width="300"> <br> -->
 </p>
 
 
