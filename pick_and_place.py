@@ -42,7 +42,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train Tactile Pushing Experiment')
     
     # Env hyper parameters
-    parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True) # https://docs.python.org/3/library/argparse.html#:~:text=%27%3F%27.%20One%20argument,to%20illustrate%20this%3A
+    parser.add_argument('--task', type=str, default='rearrangement', help="Task Name")
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Target object to be grasped. Ex: cube")
     parser.add_argument('--asset_root', type=str, default='assets', help="folder path that stores all urdf files")
     parser.add_argument('--object_pool_folder', type=str, default='group_objects/group4_real_objects', help="folder path that stores all urdf files")
@@ -1002,12 +1002,14 @@ if __name__ == "__main__":
     
     args = parse_args()
     pap = PickAndPlace(args)
-    pap.sp_start()
 
-    # Rearrange:
-    # rearrange_objnames = ["44_paper_tape", "37_M_mug", "46_pepsi", "36_mustard", "133_domino_suger"]
-    # rearrange_objnames = ["133_domino_suger", "37_M_mug", "46_pepsi", "34_meyerscleanday", "6_chinese_ceramic_bowl_small"]
-    # rearrange_objnames = ["133_domino_suger", "37_M_mug", "125_wine_glass", "34_meyerscleanday", "23_dawn"]
-    # rearrange_objnames = ["44_paper_tape", "37_M_mug", "46_pepsi", "125_wine_glass", "36_mustard"]
-    # rearrange_objnames = ["125_wine_glass", "44_paper_tape", "37_M_mug", "23_dawn", "36_mustard"]
-    # pap.rearange_start(objname_lst=rearrange_objnames)
+    if args.task == "stable_placement":
+        pap.sp_start()
+    elif args.task == "rearrangement":
+        # rearrange_objnames = ["44_paper_tape", "37_M_mug", "46_pepsi", "36_mustard", "133_domino_suger"]
+        # rearrange_objnames = ["133_domino_suger", "37_M_mug", "46_pepsi", "34_meyerscleanday", "6_chinese_ceramic_bowl_small"]
+        # rearrange_objnames = ["133_domino_suger", "37_M_mug", "125_wine_glass", "34_meyerscleanday", "23_dawn"]
+        # rearrange_objnames = ["44_paper_tape", "37_M_mug", "46_pepsi", "125_wine_glass", "36_mustard"]
+        rearrange_objnames = ["125_wine_glass", "44_paper_tape", "37_M_mug", "23_dawn", "36_mustard"]
+        pap.rearange_start(objname_lst=RealObjectNames)
+        pap.rearange_start(objname_lst=rearrange_objnames)

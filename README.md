@@ -1,17 +1,3 @@
-Sicne Issac Gym requires python<3.9: [Install python3.8](https://linuxgenie.net/how-to-install-python-3-8-on-ubuntu-22-04/)
-
-```
-python3.8 -m venv venv --system-site-packages
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-```
-# Python.h: No such file or directory
-sudo apt-get install python3.8-dev
-```
-
-
 # ClutterGen: A Cluttered Scene Generator for Robot Learning
 <span style="font-size:17px; display: block; text-align: left;">
     <a href=# target="_blank" style="text-decoration: underline;">[Project Page]</a> 
@@ -31,10 +17,10 @@ ClutterGen, a physically compliant simulation scene generator capable of produci
 ## Content
 <span style="font-size:17px; display: block; text-align: center;">
     <a href="#prerequisites">Prerequisites</a> <br>
-    <a href="#Training">Training</a> <br>
-    <a href="#Evaluation">Testing</a> <br>
-    <a href="#Real-robot">Real-robot</a> <br>
-    <a href="#BibTex">BibTex</a> <br>
+    <a href="#training">Training</a> <br>
+    <a href="#evaluation">Evaluation</a> <br>
+    <a href="#real-robot-applications">Real-robot</a> <br>
+    <a href="#bibTex">BibTex</a> <br>
 </span>
 
 ## Prerequisites
@@ -46,9 +32,9 @@ cd RoboSensai
 git checkout multienv_sg_simple_temp
 ```
 
-We use [`conda`](https://docs.conda.io/projects/conda/en/stable/user-guide/getting-started.html) to create a new environment with python3.8.
+We use [`conda`](https://docs.conda.io/projects/conda/en/stable/user-guide/getting-started.html) to create a virtual environment with python3.9 and other requried packages.
 ```sh
-conda create -n ClutterGen python=3.8
+conda create --name ClutterGen --file environment.yml
 ```
 
 Activate the environment,
@@ -56,182 +42,300 @@ Activate the environment,
 conda activate ClutterGen
 ```
 
-Install the required packages,
-```sh
-pip install -r requirements.txt
-```
-
 ## Training
-We use the `wandb` package to log the training stats, which will ask you to log in the account if you set `--collect_data True`. You can create a free account on [wandb](https://wandb.ai). <br>
 
 To train full _ClutterGen_ model, run the following command:
+
+We use the `wandb` package to log the training stats, which will ask you to log in the account if you specify `--collect_data`. You can create a free account on [wandb](https://wandb.ai). <br>
+
 ```sh
-python ppo_discrete_asyn.py \
+python ppo_scene_generation.py \
 --collect_data \
 --result_dir train_res \
---random_target \
---random_target_init \
---handed_search \
---num_envs 1300 \
---filter_contact \
---add_random_noise \
---use_contact_force \
---constrain_ws \
---quiet True \
---rendering \
---graphics_device_id 0
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine; If you can not see it rendering successfully, please try to change the id
-# We suggest to not use the rendering option for training; set --rendering False
+--num_envs 16 \
+--asset_root 'assets' \
+--object_pool_folder 'group_objects/group0_dinning_table'
+
+# --collect_data: Save training results and log the training stats to wandb.
+# --result_dir: The directory to save the training results.
+# --num_envs: The number of parallel environments to train (reduce if you run out of GPU memory).
+# --asset_root: The root directory of the object assets.
+# --object_pool_folder: The folder name of the object pool. We provide several object pools in the `assets/group_objects` folder.
 ```
 
-After the training is done, your checkpoint will be saved in the `/[--result_dir]/Random/checkpoint` and your environment description file will be saved in the `/[--result_dir]/Random/Json`. <br>
-To train the stage 2, find the checkpoint name which is same as the checkpoint folder name, `.json` file name (no suffix), and the name shows on `wandb`.  By running the following command, the finger will be trained to retrieve the object from the granular media. <br>
+### Baselines
+**Random Rejection Sampling (RRS).** This method heuristically computes the position of the supporting surface in the queried scene and randomly places objects within the queried region. RRS does not need to be trained. Please check the [Evaluation](#Evaluation) section for the evaluation command of this method. <br> 
 
+**ClutterGen-OpenLoop (OL).** This method uses the same architecture as ClutterGen, but without previous object movement trajectory and placement pose information (including the reward) for the next attempt. <br>
 ```sh
-python ppo_discrete_asyn.py \
---collect_data \
---random_target \
---random_target_init \
---handed_search \
---num_envs 10 \
---filter_contact \
---add_random_noise \
---use_contact_force \
---constrain_ws \
---add_gms \
---checkpoint [CHECKPOINT NAME] \
---index_episode [CHECKPOINT EPISODE] \
---reward_steps 1000 \
---min_force_filter 3. \
---quiet True \
---rendering \
---graphics_device_id 0
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine
-# We suggest to not use the rendering option for training --rendering False
-```
-
-A quick example that used our pre-trained model is shown below. <br>
-```sh
-python ppo_discrete_asyn.py \
---collect_data  \
---random_target \
---random_target_init \
---handed_search \
---num_envs 1 \
---filter_contact \
---add_random_noise \
---use_contact_force \
---constrain_ws \
---add_gms \
---result_dir saved_res \
---checkpoint Random_01-18_22:51_P2G_FineTune_FC_CPU_Rand_target_targInit_With_force_Use_search_Add_noise_filter_limitws_gms_F_filter3.0N_Weight_succ800.0_pena10.0_pos20.0_rot-1.57 \
---index_episode best \
---reward_steps 1000 \
---min_force_filter 3. \
---quiet True \
---rendering \
---graphics_device_id 0
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine
-# We suggest to not use the rendering option for training --rendering False
-```
-
-To train the _GEOTACT_ model in one stage from scratch, run the following command,
-```sh
-python ppo_discrete_asyn.py \
+python ppo_scene_generation.py \
 --collect_data \
 --result_dir train_res \
---random_target \
---random_target_init \
---handed_search \
---num_envs 10 \
---filter_contact \
---add_random_noise \
---use_contact_force \
---constrain_ws \
---add_gms \
---reward_steps 1000 \
---min_force_filter 3. \
---seed 123456 \
---quiet True \
---rendering \
---graphics_device_id 0
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine
-# We suggest to not use the rendering option for training --rendering False
+--num_envs 16 \
+--asset_root 'assets' \
+--object_pool_folder 'group_objects/group0_dinning_table'
+--open_loop
 ```
+
+**ClutterGen-ShortMemory (SM).** This method uses the same architecture but only takes the latest attempt history (buffer length = 1) for the next attempt. <br>
+```sh
+python ppo_scene_generation.py \
+--collect_data \
+--result_dir train_res \
+--num_envs 16 \
+--asset_root 'assets' \
+--object_pool_folder 'group_objects/group0_dinning_table'
+--short_memory
+```
+
+**ClutterGen-Normal.** This method uses the truncated normal distribution instead of the beta distribution for the object placement policy. <br>
+To keep the code clean and independent, we implement this method in another branch. First, you need to checkout the branch,
+```sh
+git checkout multienv_sg_normal
+```
+Then, you can run the following command to train the model,
+```sh
+python ppo_scene_generation.py \
+--collect_data \
+--result_dir train_res \
+--num_envs 16 \
+--asset_root 'assets' \
+--object_pool_folder 'group_objects/group0_dinning_table'
+```
+
+_Note_: If you want to watch the training process, you can add `--rendering` and `--realtime` to the command. However, it will slow down the training process and increase the memory usage. <br>
+
+We also provide `--seed` to set the random seed for the training. <br>
 
 ## Evaluation
+After the training is done, your checkpoint will be saved in the `/[--result_dir]/Union/checkpoint` and the training description file will be saved in the `/[--result_dir]/Union/Json`. By default, `[--result_dir]` is `train_res`. <br>
 
-We have provided a script to evaluate the saved model checkpoints `evaluation.py`. We also provide some pre-trained models under `/saved_res`. All evaluation results will be stored in `/eval_res` if `--collect_data True`.  
+Each checkpoint is saved with the following format, `[CHECKPOINT NAME]-[EPISODE]`. For example, `Union_2024_05_17_154159_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0.01_seed123456_best`. <br>
 
-To enjoy the pre-trained _GEOTACT_ model,
+We have provided a script to evaluate the saved model checkpoints `evaluation_sg.py`. All evaluation results will be stored in `/eval_res` if `--collect_data` is specified during evaluation.  
 
+The evaluations of _ClutterGen_, _ClutterGen-OL_, _ClutterGen-SM_ can be run by following commands, <br>
 ```sh
-python evaluation.py \
+python evaluation_sg.py \
 --collect_data \
---real False \
---num_envs 10 \
---num_trials 1000 \
---specific_target [Specific Target Name] \
---checkpoint [CHECKPOINT NAME] \
---index_episode [CHECKPOINT EPISODE] \
---rendering \
---graphics_device_id 0
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine
-# We suggest to not use the rendering option for training
-# --specific_target is in['cube', 'cuboid', 'ball', 'potted_meat_can', 'tomato_soup_can', 'pentagram','L-shape']; Default is None
-```
-
-A quick example that used our pre-trained model is shown below. <br>
-```sh
-python evaluation.py \
---collect_data False \
---real False \
 --num_envs 1 \
 --num_trials 1000 \
---specific_target None \
---result_dir saved_res \
---checkpoint Random_01-18_22:51_P2G_FineTune_FC_CPU_Rand_target_targInit_With_force_Use_search_Add_noise_filter_limitws_gms_F_filter3.0N_Weight_succ800.0_pena10.0_pos20.0_rot-1.57 \
---index_episode best \
---rendering \
---graphics_device_id 1
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine
-```
-
-_Note: If you meet the problem of out of GPU memory, you can decrease the number of `num_envs`_
-
-## Real-robot
-
-We use the UR5 robotic arm and the [DISCO tactile finger](https://arxiv.org/abs/2004.00685) developed in [ROAM Lab](https://roam.me.columbia.edu/) at Columbia University. The DISCO finger is not publicly available. But if you are interested in getting one, please contact [Jingxi Xu](https://jxu.ai). We use the [ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/) package for UR5 control. We also provide the CAD models of the finger coupler that connects the finger base to the UR5 arm.
-
-When you have the UR5 and DISCO finger set up, run the following code to run the evaluation on the real robot.
-
-### Real-robot Related (Optional)
-We here list the packages that are required for the real-robot experiments. If you are not interested in the real-robot experiments, you can skip this part. <br>
-
-**GroundDINO**
-[optinal] If you want to use the real robot, you need to install the `ur_rtde` package. Please follow the instructions [here](https://sdurobotics.gitlab.io/ur_rtde/).
-
-```sh
-python evaluation.py \
---real True \
---num_envs 1 \
---num_trials 10 \
 --checkpoint [CHECKPOINT NAME] \
 --index_episode [CHECKPOINT EPISODE] \
---rendering \
---graphics_device_id 0
-# The id of the GPU might be varied in 0, 1 or 2 based on your machine
+--max_num_placing_objs_lst "[10]"
+
+# --num_trials: The number of trials (episodes) to evaluate the model.
+# --checkpoint: The folder name of the checkpoint to evaluate, which is saved in the `train_res/Union` directory. E.g. "Union_2024_05_17_154159_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0.01_seed123456" is the checkpoint name.
+# --index_episode: The episode of the checkpoint to evaluate. If you want to evaluate the best success rate checkpoint, you can set it to `best`.
+# --max_num_placing_objs_lst: The maximum number of objects to place in the scene. You can specify multiple numbers in the list, e.g., "[0, 5, 10]". Each number will be evaluated separately for [--num_trials] episodes.
 ```
+
+The evaluations of _ClutterGen-Normal_ can be run by following commands, <br>
+First, you need to checkout the branch,
+
+```sh
+git checkout multienv_sg_normal
+```
+
+Then, you can run the following command to evaluate the model,
+```sh
+python evaluation_sg.py \
+--collect_data \
+--num_envs 1 \
+--num_trials 1000 \
+--checkpoint [CHECKPOINT NAME] \
+--index_episode [CHECKPOINT EPISODE] \
+--max_num_placing_objs_lst "[10]"
+```
+
+The evaluations of _RRS_ can be run by following commands, <br>
+```sh
+python evaluation_sg.py \
+--collect_data \
+--num_envs 1 \
+--num_trials 1000 \
+--heuristic_policy \
+--max_num_placing_objs_lst "[10]"
+```
+
+_Note_: If you want to watch the evaluation process, you can add `--rendering` and `--realtime` to the command. However, it will slow down the evaluation process and increase the memory usage. <br>
+
+### Visualization for Evaluation
+After evaluations with `--collect_data`, the evaluation results will be saved in `/eval_res`. We provide visualization script to visualize the result. <br>
+
+To plot the success rate curve, run the following command, <br>
+```sh
+python plot_utils.py \
+--task SuccessRate \
+--evalUniName [EVALUATION NAME] \
+--RRSName [RRS EVALUATION NAME] \
+
+# --evalUniName: The name of the evaluation result folder, which is saved in the `eval_res/Union/trajectories` directory after evaluation.
+# --RRSName: The name of the RRS evaluation result folder.
+```
+The plot will be saved to `results/post_corrector/success_summary.pdf`.
+<p align="center">
+    <img src="paper/final/png/teaser_successrate.png" width="600"> <br>
+    <em>The success rate comparision between ClutterGen and RRS.</em>
+</p>
+
+
+To plot the diversity map and the stable steps of the evaluation, run the following command, <br>
+```sh
+python plot_utils.py \
+--task MiscInfo \
+--evalUniName [EVALUATION NAME] \
+```
+The plots will be saved to `eval_res/Union/trajectories/[--evalUniName]`.
+<p align="center">
+    <img src="paper/final/png/Diversity_map.png" width="600"> <br>
+    <img src="paper/final/png/Stable_steps.png" width="300"> <br>
+</p>
+
+
+### Scene-level Generalization
+After training, ClutterGen can be directly applied to generate cluttered scenes by varing the queried region and the initial queried scene. 
+
+To vary the queried region, you can run evaluation with following command, <br>
+```sh
+python evaluation_sg.py \
+--collect_data \
+--num_envs 1 \
+--num_trials 1000 \
+--checkpoint [CHECKPOINT NAME] \
+--index_episode [CHECKPOINT EPISODE] \
+--max_num_placing_objs_lst "[10]" \
+--random_qr_pos \
+--random_qr_rotz \
+--random_srk_qr_halfext \
+--random_exp_qr_halfext \
+--new_tablehalfExtents "[0.7, 0.7, 0.35]"
+
+# --random_qr_pos: Randomize the queried region position.
+# --random_qr_rotz: Randomize the queried region rotation.
+# --random_srk_qr_halfext: Randomize the queried region half-extent by shrinkage.
+# --random_exp_qr_halfext: Randomize the queried region half-extent by expansion.
+# --new_tablehalfExtents: The new initial queried scene half-extents in the format of [x, y, z]. 
+# All randomization parameters can be found in the paper. Please make sure the queried region is within the table surface.
+```
+
+You can also specify the queried region to certain poses for desired scene generation. <br>
+```sh
+python evaluation_sg.py \
+--collect_data \
+--num_envs 1 \
+--num_trials 1000 \
+--checkpoint [CHECKPOINT NAME] \
+--index_episode [CHECKPOINT EPISODE] \
+--max_num_placing_objs_lst "[10]" \
+--QueryRegion_pos "[0.1, 0.1, 0.]" \
+--QueryRegion_euler_z 0.5 \
+--QueryRegion_halfExtents "[0.25, 0.25, 0.35]"
+
+# --QueryRegion_pos: The new queried region position in the world frame (m).
+# --QueryRegion_euler_z: The new queried region rotation in the z-axis (rad).
+# --QueryRegion_halfExtents: The new queried region half-extents (m).
+```
+
+To vary the initial queried scene (E.g. generate scene on other tables), you can run evaluation with following command, <br>
+```sh
+python evaluation_sg.py \
+--collect_data \
+--num_envs 1 \
+--num_trials 1000 \
+--checkpoint [CHECKPOINT NAME] \
+--index_episode [CHECKPOINT EPISODE] \
+--max_num_placing_objs_lst "[10]" \
+--specific_scene "table_N"
+
+# --specific_scene: The name of the specific scene to generate which is formulated by [table]_[index]. The scene index can be found in the `assets/tabletop_selected_scene/table` folder.
+```
+<p align="center">
+    <img src="paper/final/png/multiple_tables.png" width="600"> <br>
+    <em>ClutterGen generates diverse setups for various queried scene</em>
+</p>
+
+## Real Robot Applications
+We use the Franka Panda robotic arm and the RealSense RGB-D camera for Clutter Rearrangement and Stable Object Placement tasks. We use the [GroundDINO](https://github.com/IDEA-Research/GroundingDINO)+[SAM](https://github.com/facebookresearch/segment-anything)+[FoundationPose](https://github.com/NVlabs/FoundationPose) for objects detection and pose esitionmation. The [MoveIt](https://github.com/moveit/moveit) package is used for the panda arm control. We also provide the CAD models for the panda arm with the default gripper.
+
+### Franka Panda Setup and Camera Calibration
+First, please follow the [Franka Panda setup](https://frankaemika.github.io/docs/installation_linux.html) and [RealSense camera setup](https://github.com/IntelRealSense/librealsense/blob/master/doc/distribution_linux.md) to install the required packages. After that, you can follow the [Calibration_instructions](robot_related/assets/cam_calibration.pdf) to calibrate the camera and the panda arm. We consider the panda base frame as the world frame.
+
+
+### Clutter Rearrangement 
+First, please check our [video](#) to see the pipeline of the clutter rearrangement task. <br>
+
+To run the clutter rearrangement task, you can run the following command, <br>
+```sh
+python pick_and_place.py \
+--task rearrangement \
+--camera_extrinsics_path [CAMERA EXTRINSICS PATH] \
+--panda2crop_center_path [PANDA2CROP CENTER PATH] \
+--sg_checkpoint [CLUTTERGEN CHECKPOINT] \
+--sg_index_episode [CLUTTERGEN EPISODE]
+
+# --task The task to run. We provide `rearrangement` and `stable_placement`.
+# --camera_extrinsics_path The path of the camera extrinsics file.
+# --panda2crop_center_path The path of the panda2crop center file. This is used to crop the points cloud within certain region.
+# --sg_checkpoint The checkpoint of the ClutterGen model.
+# --sg_index_episode The episode of the ClutterGen checkpoint.
+```
+
+### Object Stable Placement
+First, please check our [video](#) to see the pipeline of the stable object placement task. <br>
+
+We need to collect stable placement data using ClutterGen before training the stable placement policy. You can run the following command to collect the data, <br>
+```sh
+python evaluation_sg.py \
+--collect_data \
+--num_envs 1 \
+--num_success_trials 500 \
+--checkpoint [CHECKPOINT NAME] \
+--index_episode [CHECKPOINT EPISODE] \
+--max_num_placing_objs_lst "[10]" \
+--sp_data_collection \
+--strict_checking
+
+# --num_success_trials: The number of successful episodes to collect the stable placement data. Each episode we collect 10 data points.
+# --sp_data_collection: Collect the stable placement data.
+# --strict_checking: Re-check the stability of all objects for each successfule episode.
+```
+Please use the checkpoint trained with Real Group objects. The stable placement data will be saved in the `StablePlacement/SP_Dataset` directory. <br>
+
+To split the data into training, validation, and test sets, you can run the following command, <br>
+```sh
+python StablePlacement/sp_dataloader.py
+```
+The data will be saved in the `StablePlacement/SP_Dataset` directory. <br>
+
+To train the stable placement policy, you can run the following command, <br>
+```sh
+python StablePlacement/train.py \
+--collect_data \
+--epochs 1000 \
+--batch_size 40 \
+--use_simulator \
+--evalUniName [EVALUATION NAME] \
+
+# --epochs: The number of epochs to train the policy.
+# --batch_size: The batch size for training.
+# --use_simulator: Use the simulator to evaluate the policy.
+# --evalUniName: The name of the checkpoint that used for stableplacement data collection.
+```
+
+To run the stable object placement task, you can run the following command, <br>
+```sh
+python pick_and_place.py \
+--task stable_placement \
+--camera_extrinsics_path [CAMERA EXTRINSICS PATH] \
+--panda2crop_center_path [PANDA2CROP CENTER PATH] \
+--sp_checkpoint [STABLE PLACEMENT CHECKPOINT] \
+--sp_index_episode [STABLE PLACEMENT EPISODE]
+```
+
 
 ## BibTeX
 
 If you find this repo useful, please consider citing,
-
 ```
-@article{xu2024tactile,
-  title={Tactile-based Object Retrieval From Granular Media},
-  author={Xu, Jingxi and Jia, Yinsen and Yang, Dongxiao and Meng, Patrick and Zhu, Xinyue and Guo, Zihan and Song, Shuran and Ciocarlie, Matei},
-  journal={arXiv preprint arXiv:2402.04536},
-  year={2024}
-}
 ```
