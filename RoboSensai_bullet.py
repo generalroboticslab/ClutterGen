@@ -316,6 +316,8 @@ class RoboSensaiBullet:
         self.args.max_stable_steps = self.args.max_stable_steps if hasattr(self.args, "max_stable_steps") else 50
         self.args.min_continue_stable_steps = self.args.min_continue_stable_steps if hasattr(self.args, "min_continue_stable_steps") else 20
         self.args.max_trials = self.args.max_trials if hasattr(self.args, "max_trials") else 10
+        if hasattr(self.args, "short_memory") and self.args.short_memory:
+            self.args.max_trials = 2
         self.args.specific_scene = self.args.specific_scene \
             if hasattr(self.args, "specific_scene") and self.args.specific_scene != "None" else None
         self.args.max_num_urdf_points = self.args.max_num_urdf_points if hasattr(self.args, "max_num_urdf_points") else 2048
@@ -509,6 +511,7 @@ class RoboSensaiBullet:
 
     def step_sync(self, action):
         pose_xyz, pose_quat = self.convert_actions(action)
+        self.World2SelectedObjBase_pose = (pose_xyz, pose_quat)
         pu.set_pose(self.selected_obj_id, (pose_xyz, pose_quat), client_id=self.client_id)
         
         self.traj_history = [[0.]* (7 + 6)] * self.args.max_traj_history_len  # obj_pos dimension + obj_vel dimension
@@ -649,7 +652,7 @@ class RoboSensaiBullet:
             his_traj[:] = 0.
             self.last_raw_action[:] = 0.
         if hasattr(self.args, "short_memory") and self.args.short_memory:
-            self.last_seq_obs[1:, :] = 0. # mask out the previous observations
+            self.last_seq_obs[:] = 0. # mask out the previous observations
 
         cur_seq_obs = np.concatenate([self.selected_qr_region, self.last_raw_action, his_traj])
         # Left shift the sequence observation
@@ -664,7 +667,9 @@ class RoboSensaiBullet:
             print(f"Placing {self.selected_obj_name} {self.selected_qr_scene_region} the {self.selected_qr_scene_name} | Stable Steps: {self.his_steps} | Trial: {self.cur_trial}")
 
         vel_reward = self.args.vel_reward_scale * self.accm_vel_reward
-        if self.his_steps <= (self.args.max_stable_steps + self.args.min_continue_stable_steps):
+        if hasattr(self.args, "open_loop") and self.args.open_loop:
+            vel_reward = 0.
+        if self.his_steps <= (self.args.max_stable_steps + self.args.min_continue_stable_steps) or (hasattr(self.args, "disable_check") and self.args.disable_check):
             # This object is successfully placed!! Jump to the next object, object is stable within 10 simulation steps
             self.obj_done = True; self.cur_trial = 0; self.success_obj_num += 1
             self.unplaced_objs_name.remove(self.selected_obj_name)
@@ -674,6 +679,8 @@ class RoboSensaiBullet:
                                     new_value=1.)
             # Record the successful object base pose
             World2SelectedObjBase_pose = pu.get_body_pose(self.selected_obj_id, client_id=self.client_id)
+            if hasattr(self.args, "disable_check") and self.args.disable_check:
+                World2SelectedObjBase_pose = self.World2SelectedObjBase_pose
             World2SelectedObjCenter_pose = p.multiplyTransforms(
                 World2SelectedObjBase_pose[0], World2SelectedObjBase_pose[1], 
                 self.selected_obj_bbox[:3], self.selected_obj_bbox[3:7]

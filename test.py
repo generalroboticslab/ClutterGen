@@ -901,29 +901,90 @@ How to use logging info
 
 
 # Better way to render mesh
-import open3d as o3d
+# import open3d as o3d
 
-# Load your point cloud
-pcd = o3d.io.read_point_cloud("your_point_cloud.ply")
+# # Load your point cloud
+# pcd = o3d.io.read_point_cloud("your_point_cloud.ply")
 
-# Create a Visualizer
-vis = o3d.visualization.Visualizer()
-vis.create_window()
+# # Create a Visualizer
+# vis = o3d.visualization.Visualizer()
+# vis.create_window()
 
-# Add the point cloud to the visualizer
-vis.add_geometry(pcd)
+# # Add the point cloud to the visualizer
+# vis.add_geometry(pcd)
 
-# Add a coordinate frame to the visualizer
-coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
-vis.add_geometry(coordinate_frame)
+# # Add a coordinate frame to the visualizer
+# coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+# vis.add_geometry(coordinate_frame)
 
-# Get the view control and set the camera parameters
-view_ctl = vis.get_view_control()
-view_ctl.set_lookat([0.0, 0.0, 0.0])
-view_ctl.set_front([-1.0, 0.0, 0.5])
-view_ctl.set_up([0.0, 0.0, 1.0])
-view_ctl.set_zoom(0.8)  # Adjust zoom as needed
+# # Get the view control and set the camera parameters
+# view_ctl = vis.get_view_control()
+# view_ctl.set_lookat([0.0, 0.0, 0.0])
+# view_ctl.set_front([-1.0, 0.0, 0.5])
+# view_ctl.set_up([0.0, 0.0, 1.0])
+# view_ctl.set_zoom(0.8)  # Adjust zoom as needed
 
-# Run the visualizer
-vis.run()
-vis.destroy_window()
+# # Run the visualizer
+# vis.run()
+# vis.destroy_window()
+
+# import torch
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from mpl_toolkits.mplot3d import Axes3D
+# from scipy.stats import beta
+
+# import numpy as np
+# import matplotlib.pyplot as plt
+
+# # Define data points
+# x = np.array([0, 1, 2])
+# y = np.array([0, 1, 2])
+# z = np.array([[1, 2, 3],
+#               [4, 5, 6],
+#               [7, 8, 9]])
+
+# # Flatten input data
+# x_flat = x.flatten()
+# y_flat = y.flatten()
+# z_flat = z.flatten()
+
+# # Create a grid
+# resolution = 100
+# x_grid = np.linspace(0, 2, resolution)
+# y_grid = np.linspace(0, 2, resolution)
+# x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+
+# # Perform bilinear interpolation
+# z_interp = np.interp(x_mesh.flatten(), x_flat, np.interp(y_mesh.flatten(), y_flat, z_flat)).reshape(x_mesh.shape)
+
+# # Plot the gradient surface
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(x_mesh, y_mesh, z_interp, cmap='viridis')
+
+# # Set labels and title
+# ax.set_xlabel('X')
+# ax.set_ylabel('Y')
+# ax.set_zlabel('Z')
+# ax.set_title('Smooth Gradient Surface')
+
+# # Display the plot
+# plt.show()
+
+# Load mesh, reduce UV index, and save
+# import trimesh
+# import numpy as np
+
+# mesh_path = "assets/group_objects/group2_office_table/Book/5/textured_objs/textured.obj"
+# mesh = trimesh.load(mesh_path)
+# mesh.export("assets/group_objects/group2_office_table/Book/5/textured.obj")
+
+# import pandas as pd
+# import wandb
+
+# api = wandb.Api(timeout=10000)
+# entity, project = "jiayinsen", "RoboSensai_SG"
+# runs_id = [""]
+# runs = api.run("jiayinsen/RoboSensai_SG/tsar4q3w")
+# history = runs.history(samples=100000, keys=None, x_axis="s_iterations", pandas=(True), stream="default")
