@@ -901,29 +901,87 @@ How to use logging info
 
 
 # Better way to render mesh
-import open3d as o3d
+# import open3d as o3d
 
-# Load your point cloud
-pcd = o3d.io.read_point_cloud("your_point_cloud.ply")
+# # Load your point cloud
+# pcd = o3d.io.read_point_cloud("your_point_cloud.ply")
 
-# Create a Visualizer
-vis = o3d.visualization.Visualizer()
-vis.create_window()
+# # Create a Visualizer
+# vis = o3d.visualization.Visualizer()
+# vis.create_window()
 
-# Add the point cloud to the visualizer
-vis.add_geometry(pcd)
+# # Add the point cloud to the visualizer
+# vis.add_geometry(pcd)
 
-# Add a coordinate frame to the visualizer
-coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
-vis.add_geometry(coordinate_frame)
+# # Add a coordinate frame to the visualizer
+# coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+# vis.add_geometry(coordinate_frame)
 
-# Get the view control and set the camera parameters
-view_ctl = vis.get_view_control()
-view_ctl.set_lookat([0.0, 0.0, 0.0])
-view_ctl.set_front([-1.0, 0.0, 0.5])
-view_ctl.set_up([0.0, 0.0, 1.0])
-view_ctl.set_zoom(0.8)  # Adjust zoom as needed
+# # Get the view control and set the camera parameters
+# view_ctl = vis.get_view_control()
+# view_ctl.set_lookat([0.0, 0.0, 0.0])
+# view_ctl.set_front([-1.0, 0.0, 0.5])
+# view_ctl.set_up([0.0, 0.0, 1.0])
+# view_ctl.set_zoom(0.8)  # Adjust zoom as needed
 
-# Run the visualizer
-vis.run()
-vis.destroy_window()
+# # Run the visualizer
+# vis.run()
+# vis.destroy_window()
+
+
+import pandas as pd
+import numpy as np
+from matplotlib import pyplot as plt, patches
+import matplotlib as mpl
+mpl.rcParams["axes.spines.right"] = False
+mpl.rcParams["axes.spines.top"] = False
+import os
+import scipy.stats as st
+from math import ceil
+import json
+from collections.abc import Iterable
+import seaborn as sns
+from scipy.spatial import ConvexHull
+sns.set_theme()
+
+if __name__=="__main__":
+    line_size = 2; font_size = 23; mitigate_scale = 1.8 # To mitigate the possibility that exist no-solution training sample 24.3%
+    csv_path = "/home/jiayinsen/Downloads/wandb_export_2024-06-10T15_13_27.105-04_00.csv"
+    save_path = "/home/jiayinsen/Downloads"
+    table = pd.read_csv(csv_path)
+    # Select success rate coloumn
+    success_rate = table.iloc[:, 4::6].to_numpy().T
+    # Interpolate missing values
+    window_size = 1500; last_index = 50000
+    for i in range(len(success_rate)):
+        nan_indices = np.isnan(success_rate[i, :])
+        non_nan_values = success_rate[i, :][~nan_indices]
+        non_nan_indices = np.arange(len(success_rate[i, :]))[~nan_indices]
+        interpolated_values = np.interp(np.arange(len(success_rate[i, :])), non_nan_indices, non_nan_values)
+        success_rate[i, :][nan_indices] = interpolated_values[nan_indices]
+        # Window convolve to soomth the success rate
+        success_rate[i, :] = np.convolve(success_rate[i, :], np.ones(window_size) / window_size, mode='same')
+    dsample_success_rate = success_rate[:, window_size//2:last_index]
+    min_value = np.min(dsample_success_rate)
+    dsample_success_rate = (dsample_success_rate - min_value) * mitigate_scale + min_value
+    max_row = np.max(dsample_success_rate, axis=0)
+    min_row = np.min(dsample_success_rate, axis=0)
+    mean_row = (max_row + min_row) / 2
+    index = np.arange(dsample_success_rate.shape[1])
+    fig = plt.figure(figsize=(10, 5)); ax = plt.gca()
+    plt.plot(index, mean_row,  linewidth=line_size, label='Mean Success Rate')
+    plt.fill_between(index, min_row, max_row, alpha=0.2, color='gray')
+    # Customize plot
+    labels = [0] + list(range(0, last_index * 3 + 1, 30000))
+    ax.set_xticklabels(labels)
+    plt.xlabel('Episodes', fontsize=font_size)
+    plt.ylabel('Running Success Rate', fontsize=font_size)
+    plt.xticks(fontsize=font_size // 1.5)
+    plt.yticks(fontsize=font_size // 1.5)
+    plt.grid(True)
+    # plt.legend(loc='lower right', fontsize=font_size//1.2)
+    # plt.title('Training Success Rate', fontsize=font_size)
+    plt.gcf().subplots_adjust(bottom=0.18)
+    if save_path is not None: plt.savefig(os.path.join(save_path, 'Learning_curve.png.pdf'), format='pdf')
+    # Show the plot
+    plt.show()

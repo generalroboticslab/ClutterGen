@@ -1,3 +1,4 @@
+# --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 --extra-index-url https://download.pytorch.org/whl/cu121
 torch==2.1.0+cu121
 torchvision==0.16.0+cu121
@@ -51,3 +52,7 @@ segment_anything
 # install groundDino: https://github.com/IDEA-Research/Grounded-Segment-Anything/blob/main/grounded_sam.ipynb
 pyrealsense2
 sshkeyboard
+pdf2image
+sshkeyboard
+gymnasium
+objaverse

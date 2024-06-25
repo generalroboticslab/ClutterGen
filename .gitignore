@@ -139,6 +139,7 @@ assets/objects/*
 assets/scenes/
 DG-official/
 Pointnet_Pointnet2_pytorch/
+others/
 
 # Downstream Task 1
 StablePlacement/SP_Dataset

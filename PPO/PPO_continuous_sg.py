@@ -144,6 +144,7 @@ class AutoFlatten(nn.Module):
 class PC_Encoder(nn.Module):
     def __init__(self, channels=3, output_dim=256):
         super().__init__()
+        # Simple pointNet model
         # We only use xyz (channels=3) in this work
         # while our encoder also works for xyzrgb (channels=6) in our experiments
         self.mlp = nn.Sequential(
@@ -184,13 +185,12 @@ class Agent(nn.Module):
         self.seq_obs_encoder_num_linear = 2; self.seq_obs_encoder_num_transf = 1
         self.critic_num_linear = 5; self.actor_num_linear = 5
         
-        # PointNet
+        # PointNet++
         self.pc_batchsize = envs.args.pc_batchsize
         self.pc_extractor = get_model(num_class=40, normal_channel=False).to(self.device) # num_classes is used for loading checkpoint to make sure the model is the same
         self.pc_extractor.load_checkpoint(ckpt_path="PointNet_Model/checkpoints/best_model.pth", evaluate=True, map_location=self.device)
 
-        # Trajectory history encoder and Large sequence observation encoder
-        ### TODO: We probably need give both actor and critic the same encoder!!!
+        # Trajectory history encoder and Large sequence observation encoder (Optional)
         if envs.args.use_traj_encoder:
             if envs.args.use_tf_traj_encoder:
                 self.traj_hist_encoder = Transfromer_Linear(
@@ -311,8 +311,8 @@ class Agent(nn.Module):
         scene_pc_buf = np.concatenate(scene_pc_buf, axis=0)
         # PC-Net Points xyz: input points position data, [B, C, N]
         # While our pc input is [B, N, C] so we need transpose
-        # Batch operation to increase the maximum environments
-        # Update scene point cloud features which requires re-extracted
+        # Batch operation to speed up training for multiple envs
+        # Update scene point cloud features that requires re-extracted
         for i in range(0, len(scene_pc_update_env_ids), self.pc_batchsize):
             with torch.no_grad():
                 update_env_ids_minibatch = scene_pc_update_env_ids[i:i+self.pc_batchsize]
@@ -331,7 +331,6 @@ class Agent(nn.Module):
 
 
     def get_action_and_value(self, obs_list, action=None):
-        # To EnforcE Action Boundaction range is [0, 1]; You can do any linear post-processing to fit the action range later
         seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
         seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
         # We currently use cat to combine all features; Later we can try to use attention to combine them
@@ -345,8 +344,8 @@ class Agent(nn.Module):
         if action is None:
             action = probs.mean if self.deterministic else probs.sample()
 
-        logprob = probs.log_prob(action).sum(1) # log_prb means prob density not mass! So it could be larger than 1
-        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training; Is this useful?
+        logprob = probs.log_prob(action).sum(1) # log_prb means prob density not mass! This could be larger than 1
+        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training
 
         self.prob_entropy = probs.entropy() # Record the current probs for logging
         entropy = self.prob_entropy.sum(1)
@@ -364,32 +363,6 @@ class Agent(nn.Module):
         probs = Beta(action_alpha, action_beta)
         action = probs.mean if self.deterministic else probs.sample()
         return action, probs
-
-
-    # def get_action_and_value(self, obs_list, action=None):
-    #     # action range is [-1, 1]; You can do any linear post-processing to fit the action range later
-    #     seq_obs, scene_ft_tensor, obj_ft_tensor = obs_list
-    #     seq_obs_ft = self.seq_obs_ft_extract(seq_obs)
-    #     # We currently use cat to combine all features; Later we can try to use attention to combine them
-    #     x = torch.cat([seq_obs_ft, scene_ft_tensor, obj_ft_tensor], dim=-1)
-        # action_mean_logstd = self.actor(x)
-        # action_mean, action_logstd = torch.chunk(action_mean_logstd, 2, dim=-1)
-        # action_logstd = self.LOG_STD_MIN + 0.5 * (self.LOG_STD_MAX - self.LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
-        # action_std = torch.exp(action_logstd)
-        # probs = Normal(action_mean, action_std)
-        # if action is None:
-        #     raw_action = action_mean if self.deterministic else probs.sample()
-        #     action = torch.tanh(raw_action)
-        # else:
-        #     raw_action = torch.atanh(action)
-        # # Enforcing Action Bound
-        # log_prob = probs.log_prob(raw_action)
-        # log_prob -= torch.log((1 - action.pow(2)) + 1e-6)
-        # log_prob = log_prob.sum(1, keepdim=True)
-
-        # # We need Monte Carlo estimate of the entropy
-        # entropy = -log_prob.sum(1, keepdim=True)
-        # return action, log_prob, entropy, self.critic(x)
 
 
     def set_mode(self, mode='train'):
@@ -449,15 +422,6 @@ def update_tensor_buffer(buffer, new_v):
     else:
         buffer[:-len_v] = buffer[len_v:].clone()
         buffer[-len_v:] = new_v
-
-
-def convert_time(relative_time):
-    relative_time = int(relative_time)
-    hours = relative_time // 3600
-    left_time = relative_time % 3600
-    minutes = left_time // 60
-    seconds = left_time % 60
-    return f'{hours}:{minutes}:{seconds}'
 
 
 if __name__ == "__main__":

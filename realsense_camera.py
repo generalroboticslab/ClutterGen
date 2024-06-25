@@ -72,7 +72,7 @@ class RealSenseCamera:
         depth_img = np.asanyarray(depth_frame.get_data())
         # Why the depth image is (320, 240) while the color image is (640, 480)?
         # After resize, we can not use the original depth intrinsics to calculate the 3D points, need to adjust intrinsics using adjust_intrinsics
-        depth_img = cv2.resize(depth_img, (color_img.shape[1], color_img.shape[0])) # Resize depth image to match color image; Why they are mismatch?
+        depth_img = cv2.resize(depth_img, (color_img.shape[1], color_img.shape[0])) # Resize depth image to match color image
 
         # Convert depth to m
         if convert2m:
@@ -176,7 +176,6 @@ if __name__ == "__main__":
                 frame_count += 1
             elif key == ord('q'):
                 break
-
 
     finally:
         camera.stop_stream()

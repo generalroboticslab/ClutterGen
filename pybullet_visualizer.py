@@ -7,6 +7,7 @@ from utils import natural_keys, read_json
 
 
 class PybulletVisualizer:
+    # Simple visualizer for frankapanda and objects using pybullet
     def __init__(self, obj_uni_names_dataset, rendering=True) -> None:
         self.rendering = rendering
         self.obj_uni_names_dataset = obj_uni_names_dataset

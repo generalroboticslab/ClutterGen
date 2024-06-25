@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import ast
 from PIL import Image, ImageSequence
+from pdf2image import convert_from_path
 sns.set_theme()
 from utils import natural_keys
 import random
@@ -467,8 +468,6 @@ def create_gif_from_multiple_folders(source_folders, output_filename, num_images
     images[0].save(output_filename, save_all=True, append_images=images[1:], duration=duration, loop=0)
 
 
-from PIL import Image, ImageEnhance
-
 def combine_images_with_transparency(image_paths, output_path, jump_imgs=2):
     """
     Combine a series of images into a single image to visualize object movement,
@@ -494,6 +493,29 @@ def combine_images_with_transparency(image_paths, output_path, jump_imgs=2):
     # Save the combined image
     combined_image.save(output_path)
 
+
+def convert_pdf_to_png(input_folder, output_folder, dpi=100, quality=25):
+    # Ensure the output folder exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    # Iterate through all files in the input folder
+    for filename in os.listdir(input_folder):
+        if filename.endswith('.pdf'):
+            pdf_path = os.path.join(input_folder, filename)
+            
+            # Convert PDF to a list of images (one per page)
+            images = convert_from_path(pdf_path, dpi=dpi, fmt='png', thread_count=4)
+            
+            for page_num, image in enumerate(images):
+                if len(images) > 1:
+                    output_filename = f"{os.path.splitext(filename)[0]}_page_{page_num + 1}.png"
+                else:
+                    output_filename = f"{os.path.splitext(filename)[0]}.png"
+                output_path = os.path.join(output_folder, output_filename)
+                # Save the image
+                image.save(output_path, 'PNG', quality=quality)
+    print("All PDF files have been converted.")
 
 if __name__ == "__main__":
     args = parse_args()
@@ -560,3 +582,8 @@ if __name__ == "__main__":
         os.makedirs(output_folder, exist_ok=True)
         output_path = os.path.join(output_folder, "combined.png")
         combine_images_with_transparency(image_files, output_path, jump_imgs=3)
+    
+    elif TASK_NAME == "PDF2PNG":
+        image_folder = "paper/final"
+        output_folder = "paper/final/png"
+        convert_pdf_to_png(image_folder, output_folder)
