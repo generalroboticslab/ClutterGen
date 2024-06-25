@@ -77,6 +77,7 @@ def get_args():
     parser.add_argument('--random_qr_rotz', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
     parser.add_argument('--random_srk_qr_halfext', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
     parser.add_argument('--random_exp_qr_halfext', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Add random noise to contact info')
+    parser.add_argument('--disable_check', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='disable the stable check')
 
     # RoboSensai Bullet parameters
     parser.add_argument('--scene_pool_folder', type=str, default='tabletop_selected_scene', help="folder path that stores all urdf files")
@@ -287,7 +288,7 @@ if __name__ == "__main__":
 
             ################ agent evaluation ################
             if eval_args.random_policy or eval_args.heuristic_policy:
-                action = torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device)
+                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 0.3 + 0.5
             else:
                 with torch.no_grad():
                     action, probs = agent.select_action([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])

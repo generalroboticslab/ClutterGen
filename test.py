@@ -928,60 +928,63 @@ How to use logging info
 # vis.run()
 # vis.destroy_window()
 
+# import torch
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from mpl_toolkits.mplot3d import Axes3D
+# from scipy.stats import beta
 
-import pandas as pd
-import numpy as np
-from matplotlib import pyplot as plt, patches
-import matplotlib as mpl
-mpl.rcParams["axes.spines.right"] = False
-mpl.rcParams["axes.spines.top"] = False
-import os
-import scipy.stats as st
-from math import ceil
-import json
-from collections.abc import Iterable
-import seaborn as sns
-from scipy.spatial import ConvexHull
-sns.set_theme()
+# import numpy as np
+# import matplotlib.pyplot as plt
 
-if __name__=="__main__":
-    line_size = 2; font_size = 23; mitigate_scale = 1.8 # To mitigate the possibility that exist no-solution training sample 24.3%
-    csv_path = "/home/jiayinsen/Downloads/wandb_export_2024-06-10T15_13_27.105-04_00.csv"
-    save_path = "/home/jiayinsen/Downloads"
-    table = pd.read_csv(csv_path)
-    # Select success rate coloumn
-    success_rate = table.iloc[:, 4::6].to_numpy().T
-    # Interpolate missing values
-    window_size = 1500; last_index = 50000
-    for i in range(len(success_rate)):
-        nan_indices = np.isnan(success_rate[i, :])
-        non_nan_values = success_rate[i, :][~nan_indices]
-        non_nan_indices = np.arange(len(success_rate[i, :]))[~nan_indices]
-        interpolated_values = np.interp(np.arange(len(success_rate[i, :])), non_nan_indices, non_nan_values)
-        success_rate[i, :][nan_indices] = interpolated_values[nan_indices]
-        # Window convolve to soomth the success rate
-        success_rate[i, :] = np.convolve(success_rate[i, :], np.ones(window_size) / window_size, mode='same')
-    dsample_success_rate = success_rate[:, window_size//2:last_index]
-    min_value = np.min(dsample_success_rate)
-    dsample_success_rate = (dsample_success_rate - min_value) * mitigate_scale + min_value
-    max_row = np.max(dsample_success_rate, axis=0)
-    min_row = np.min(dsample_success_rate, axis=0)
-    mean_row = (max_row + min_row) / 2
-    index = np.arange(dsample_success_rate.shape[1])
-    fig = plt.figure(figsize=(10, 5)); ax = plt.gca()
-    plt.plot(index, mean_row,  linewidth=line_size, label='Mean Success Rate')
-    plt.fill_between(index, min_row, max_row, alpha=0.2, color='gray')
-    # Customize plot
-    labels = [0] + list(range(0, last_index * 3 + 1, 30000))
-    ax.set_xticklabels(labels)
-    plt.xlabel('Episodes', fontsize=font_size)
-    plt.ylabel('Running Success Rate', fontsize=font_size)
-    plt.xticks(fontsize=font_size // 1.5)
-    plt.yticks(fontsize=font_size // 1.5)
-    plt.grid(True)
-    # plt.legend(loc='lower right', fontsize=font_size//1.2)
-    # plt.title('Training Success Rate', fontsize=font_size)
-    plt.gcf().subplots_adjust(bottom=0.18)
-    if save_path is not None: plt.savefig(os.path.join(save_path, 'Learning_curve.png.pdf'), format='pdf')
-    # Show the plot
-    plt.show()
+# # Define data points
+# x = np.array([0, 1, 2])
+# y = np.array([0, 1, 2])
+# z = np.array([[1, 2, 3],
+#               [4, 5, 6],
+#               [7, 8, 9]])
+
+# # Flatten input data
+# x_flat = x.flatten()
+# y_flat = y.flatten()
+# z_flat = z.flatten()
+
+# # Create a grid
+# resolution = 100
+# x_grid = np.linspace(0, 2, resolution)
+# y_grid = np.linspace(0, 2, resolution)
+# x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+
+# # Perform bilinear interpolation
+# z_interp = np.interp(x_mesh.flatten(), x_flat, np.interp(y_mesh.flatten(), y_flat, z_flat)).reshape(x_mesh.shape)
+
+# # Plot the gradient surface
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot_surface(x_mesh, y_mesh, z_interp, cmap='viridis')
+
+# # Set labels and title
+# ax.set_xlabel('X')
+# ax.set_ylabel('Y')
+# ax.set_zlabel('Z')
+# ax.set_title('Smooth Gradient Surface')
+
+# # Display the plot
+# plt.show()
+
+# Load mesh, reduce UV index, and save
+# import trimesh
+# import numpy as np
+
+# mesh_path = "assets/group_objects/group2_office_table/Book/5/textured_objs/textured.obj"
+# mesh = trimesh.load(mesh_path)
+# mesh.export("assets/group_objects/group2_office_table/Book/5/textured.obj")
+
+# import pandas as pd
+# import wandb
+
+# api = wandb.Api(timeout=10000)
+# entity, project = "jiayinsen", "RoboSensai_SG"
+# runs_id = [""]
+# runs = api.run("jiayinsen/RoboSensai_SG/tsar4q3w")
+# history = runs.history(samples=100000, keys=None, x_axis="s_iterations", pandas=(True), stream="default")

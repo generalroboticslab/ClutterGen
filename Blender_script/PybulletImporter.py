@@ -329,7 +329,7 @@ def delete_scene_objects():
 
 
 def render_animation(output_path, encoder='H264', container='MPEG4', resolution=(1920, 1080), 
-                     start_frame=1, end_frame=250, skip_frames=1, quality=90, frame_rate=24, samples=2048, animation=True):
+                     start_frame=1, end_frame=250, skip_frames=1, quality=90, frame_rate=24, samples=2048, animation=True, rendering=True):
     """
     Renders an animation in Blender to a specified path with various customizable settings.
 
@@ -371,15 +371,23 @@ def render_animation(output_path, encoder='H264', container='MPEG4', resolution=
     # Disable denoising for Cycles
     if bpy.context.scene.render.engine == 'CYCLES':
         print("Setting up Cycles")
-        bpy.context.scene.cycles.use_denoising = False
+        bpy.context.scene.cycles.use_denoising = True
         # uncheck the noise threshold
-        bpy.context.scene.cycles.use_adaptive_sampling = False
+        bpy.context.scene.cycles.use_adaptive_sampling = True
+        bpy.context.scene.cycles.adaptive_threshold = 0.1
         # Change number of samples for Cycles
         bpy.context.scene.cycles.samples = samples
         # Set light path settings
-        bpy.context.scene.cycles.max_bounces = 6
-        bpy.context.scene.cycles.transmission_bounces = 6
-        bpy.context.scene.cycles.transparent_max_bounces = 6
+        bpy.context.scene.cycles.total_light_paths = 4
+        bpy.context.scene.cycles.diffuse_bounces = 2
+        bpy.context.scene.cycles.glossy_bounces = 2
+        bpy.context.scene.cycles.max_bounces = 2
+        bpy.context.scene.cycles.transmission_bounces = 2
+        bpy.context.scene.cycles.transparent_max_bounces = 2
+        # Use spatial splits
+        # bpy.context.scene.cycles.use_spatial_splits = True
+        # Use persistent data
+        bpy.context.scene.render.use_persistent_data = True
         # Set the film transparency
         bpy.context.scene.render.film_transparent = True
     
@@ -389,7 +397,8 @@ def render_animation(output_path, encoder='H264', container='MPEG4', resolution=
         bpy.context.scene.eevee.film_transparent_glass = True
 
     # Render the animation (https://blender.stackexchange.com/questions/283640/why-does-bpy-ops-render-renderanimation-true-work-but-fails-when-animation-is)
-    bpy.ops.render.render(animation=animation, write_still=True)
+    if rendering:
+        bpy.ops.render.render(animation=animation, write_still=True)
 
     print(f"Rendered animation to {output_path}")
     return
@@ -572,29 +581,46 @@ json_file_directory = "eval_res/Union/Json"
 #                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0_EVAL_best_Scene_table_83_objRange_10_10",
 #                    "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0._EVAL_best_Scene_table_2_objRange_10_10"]
 
+# Randomize queried region
 # evalUniName_lst = ["Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_ma_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RQRPos_RQREulerZ_RsrkQRHalfExt_RexpQRHalfExt_objRange_10_10",
 #                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Ep_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RexpQRHalfExt_objRange_10_10",
 #                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Ep_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RsrkQRHalfExt_objRange_10_10",
 #                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2R_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RQREulerZ_objRange_10_10",
 #                "Union_2024_05_17_154518_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Repl_EVAL_best_TableHalfExtents0.6_0.7_0.35_Scene_table_QRHalfExt_0.3_0.35_0.35_RQRPos_objRange_10_10"]
 
+# Teaser
+# evalUniName_lst = ["Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_s_EVAL_best_Scene_table_1_QRHalfExt_0.2_0.3_0.35_objRange_10_10",
+#                    "Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_Scene_table_100_objRange_10_10",
+#                    "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entrop_EVAL_best_Scene_table_10_objRange_10_10",
+#                    "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entrop_EVAL_best_Scene_table_21_objRange_10_10",
+#                    "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq_EVAL_best_Scene_table_32_QRHalfExt_0.3_0.35_0.35_objRange_10_10",
+#                    "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0_EVAL_best_Scene_table_49_objRange_10_10",
+#                    "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy_EVAL_best_Scene_table_52_objRange_10_10",
+#                    "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy_EVAL_best_Scene_table_54_objRange_10_10"]
 
-evalUniName_lst = ["Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_s_EVAL_best_Scene_table_1_QRHalfExt_0.2_0.3_0.35_objRange_10_10",
-                   "Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_Scene_table_100_objRange_10_10",
-                   "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entrop_EVAL_best_Scene_table_10_objRange_10_10",
-                   "Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entrop_EVAL_best_Scene_table_21_objRange_10_10",
-                   "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq_EVAL_best_Scene_table_32_QRHalfExt_0.3_0.35_0.35_objRange_10_10",
-                   "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0_EVAL_best_Scene_table_49_objRange_10_10",
-                   "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy_EVAL_best_Scene_table_52_objRange_10_10",
-                   "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy_EVAL_best_Scene_table_54_objRange_10_10"]
+# Teaser++
+evalUniName_lst = ["Union_03-12_23:40Sync_Beta_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab60_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0._EVAL_best_TableHalfExtents0.2_0.3_0.35_Scene_table_objRange_10_10"]
+# evalUniName_lst = ["EVAL_HeurPolicy_TableHalfExtents0.2_0.3_0.35_Scene_table_objRange_10_10"]
+# evalUniName_lst = ["Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_EVAL_best_TableHalfExtents0.2_0.3_0.35_Scene_table_objRange_10_10",
+                #    "Union_2024_04_22_144351_Sync_Beta_group2_office_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_s_EVAL_best_TableHalfExtents0.2_0.3_0.35_Scene_table_objRange_10_10",
+                #    "Union_2024_04_22_144403_Sync_Beta_group3_kitchen_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0__EVAL_best_TableHalfExtents0.2_0.3_0.35_Scene_table_objRange_10_10",
+                #    "Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_s_EVAL_best_TableHalfExtents0.2_0.3_0.35_Scene_table_objRange_10_10"]
+
 
 render_nums = 3
-specific_eps = None # 36, 30, 27, 9, 18, 22, 26
+specific_eps = None # heuristic episode is at 4
+rendering = True
 animation = False
+animate_camera = False
 multiple_lights = True
 add_plane = False
 add_qr_region = False
 load_all = False
+specific_start_frame = None # 600
+specific_end_frame = None # 839
+if specific_start_frame is not None or specific_end_frame is not None:
+    print(f"***Warning: Specific start frame {specific_start_frame} and end frame {specific_end_frame} are set.***")
+
 set_blender_engine(render_engine='CYCLES') # 'BLENDER_EEVEE', 'CYCLES'
 # For randomizing qr region
 QrSceneCenter2Camera = [-2, 0., 3]
@@ -612,8 +638,8 @@ for evalUniName in evalUniName_lst:
     blender_file_paths = []
     trajectory_file_paths = []
     if specific_eps is not None:
-        blender_filepaths = [join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and f"{specific_eps}eps" in filename]
-        actor_filepaths = [join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and f"{specific_eps}eps" in filename]
+        blender_filepaths = sorted([join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and f"{specific_eps}eps" in filename], key=natural_keys)[:render_nums]
+        actor_filepaths = sorted([join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and f"{specific_eps}eps" in filename], key=natural_keys)[:render_nums]
     else:
         blender_filepaths = sorted([join(blender_traj_directory, filename) for filename in listdir(blender_traj_directory) if filename.endswith(blender_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
         actor_filepaths = sorted([join(actor_vis_traj_directory, filename) for filename in listdir(actor_vis_traj_directory) if filename.endswith(actor_vis_filename_ext) and "success" in filename], key=natural_keys)[:render_nums]
@@ -694,22 +720,25 @@ for evalUniName in evalUniName_lst:
             add_light(location=light_location4, energy=500, color=light_color)
             add_light(location=light_location5, energy=500, color=light_color)
 
-        # Add camera
-        animate_camera_focus_rotate(
-            focus_point=focus_point,
-            camera_start_location=camera_start_location,
-            rotation_angle=90,
-            # frame_start=1,
-            # frame_end=max_frame,
-            frame_start=0,
-            frame_end=0
-        )
-
         # Render the animation
         skip_frames = 5
         frame_rate = 240 // skip_frames
         start_frame = max_frame if not animation else 1
-        max_frame = max_frame if not animation else max_frame + 100
+        end_frame = max_frame if not animation else max_frame + 100
+        if animation:
+            start_frame = start_frame if specific_start_frame is None else specific_start_frame
+            end_frame = end_frame if specific_end_frame is None else specific_end_frame
+
+        # Add camera
+        animate_camera_focus_rotate(
+            focus_point=focus_point,
+            camera_start_location=camera_start_location,
+            rotation_angle=180,
+            # frame_start=1,
+            # frame_end=max_frame,
+            frame_start=start_frame if animate_camera else 0,
+            frame_end=end_frame if animate_camera else 0
+        )
 
         start_time = time.time()
         output_name = basename(filepath).replace(blender_filename_ext, '.mp4') \
@@ -719,10 +748,11 @@ for evalUniName in evalUniName_lst:
                         resolution=resolution, 
                         skip_frames=skip_frames, 
                         start_frame=start_frame, 
-                        end_frame=max_frame, 
+                        end_frame=end_frame, 
                         quality=80, 
                         frame_rate=frame_rate,
-                        animation=animation)
+                        animation=animation,
+                        rendering=rendering)
         print(f"Total time: {time.time() - start_time:.2f}s")
 
     print(f"{evalUniName} All Done!")
