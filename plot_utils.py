@@ -23,7 +23,8 @@ FontSize = 12
 def parse_args():
     parser = argparse.ArgumentParser(description="Plotting Utils")
     parser.add_argument("--task", type=str, default="MiscInfo", help="Task to perform")
-    parser.add_argument("--evalUniName", type=str, default="Union_03-04_22:24Sync_storage_furniture_6_PCExtractor_Relu_Rand_ObjPlace_QRRegion_Goal_minObjNum2_objStep2_maxObjNum1_maxPool10_maxScene1_maxStable60_contStable20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_seed56_EVAL_best_objRange_1_1", help="Evaluation Unique Name")
+    parser.add_argument("--evalUniName", type=str, default="Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.0_EVAL_best_Scene_table_objRange_1_10", help="Evaluation Unique Name")
+    parser.add_argument("--RRSName", type=str, default="EVAL_HeurPolicy_Scene_table_objRange_1_10")
     args = parser.parse_args()
     return args
 
@@ -52,7 +53,7 @@ class Plot_Utils:
         else: raise NotImplementedError("Unsupported file type: {}".format(suffix))
 
 
-    def plot_success_steps(self):
+    def plot_success_steps(self, save_dir="results"):
         # Create the figure and axes
         fig, axes = plt.subplots(1, 1, figsize=(8, 8))  # Create a 2-row, 1-column subplot grid
 
@@ -85,7 +86,8 @@ class Plot_Utils:
         plt.tight_layout()
 
         # Save the plot as a pdf
-        plt.savefig("results/post_corrector/summary_plots.pdf")
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, "success_summary.pdf"))
         # Show the plot
         plt.show()
 
@@ -398,7 +400,7 @@ class Plot_Dataset_Utils:
         plt.show()
 
 
-def plot_learning_curve(csv_path="paper/wandb_export_2024-06-10T16_58_19.080-04_00.csv", save_dir="paper/", group_list=["group0", "group1", "group2", "group3", "group4"], uniform_scale=0.002):
+def plot_learning_curve(csv_path="paper/wandb_export_2024-06-10T16_58_19.080-04_00.csv", save_dir="paper", group_list=["group0", "group1", "group2", "group3", "group4"], uniform_scale=0.002):
     line_size = 2; font_size = 23; window_size = 1500; last_iteration = 19000; batch_size = 80
     table = pd.read_csv(csv_path)
     # Select success rate coloumn
@@ -456,7 +458,7 @@ def plot_learning_curve(csv_path="paper/wandb_export_2024-06-10T16_58_19.080-04_
     # Show the plot
     plt.show()
 
-def plot_trials_curve(csv_path="paper/different_trials_raw.csv", save_dir="paper/", group_list=["trial1", "trial2", "trial3", "trial4", "trial5"], uniform_scale=0.002):
+def plot_trials_curve(csv_path="paper/different_trials_raw.csv", save_dir="paper", group_list=["trial1", "trial2", "trial3", "trial4", "trial5"], uniform_scale=0.002):
     # Warning!! The wandb will do downsampling to the data not scan_history. The index is not equal to iterations
     line_size = 2; font_size = 23; window_size = 1500; last_df_row = 32000; batch_size = 24; step_size = 1e6
     table = pd.read_csv(csv_path)
@@ -652,8 +654,9 @@ if __name__ == "__main__":
     TASK_NAME = args.task
     if TASK_NAME == "SuccessRate":
         plot_utils = Plot_Utils()
-        plot_utils.read_file("Union_2024_04_22_144343_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.0_EVAL_best_Scene_table_objRange_1_10", checkpoint_name="ClutterGen")
-        plot_utils.read_file("EVAL_HeurPolicy_Scene_table_objRange_1_10", checkpoint_name="Random Rejection Sampling")
+        plot_utils.read_file(args.evalUniName, checkpoint_name="ClutterGen")
+        if args.RRSName is not None:
+            plot_utils.read_file(args.RRSName, checkpoint_name="Random Rejection Sampling")
         plot_utils.plot_success_steps()
     
     elif TASK_NAME == "Image2PDF":
@@ -683,7 +686,7 @@ if __name__ == "__main__":
     elif TASK_NAME == "MiscInfo":
         Plot_Eval_Misc_Utils = Plot_Eval_Misc_Utils()
         Plot_Eval_Misc_Utils.read_file(args.evalUniName)
-        # Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
+        Plot_Eval_Misc_Utils.plot_obj_placement_success_rate()
         Plot_Eval_Misc_Utils.plot_obj_coverage_rate()
         Plot_Eval_Misc_Utils.plot_stable_steps(success_only=True)
 

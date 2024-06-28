@@ -25,27 +25,27 @@ import multiprocessing
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train Tactile Pushing Experiment')
+    parser = argparse.ArgumentParser(description='Train ClutterGen')
     
     # Env hyper parameters
     parser.add_argument('--collect_data', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True) # https://docs.python.org/3/library/argparse.html#:~:text=%27%3F%27.%20One%20argument,to%20illustrate%20this%3A
-    parser.add_argument('--object_pool_name', type=str, default='Union', help="Target object to be grasped. Ex: cube")
+    parser.add_argument('--object_pool_name', type=str, default='Union')
     parser.add_argument('--rendering', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--realtime', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
     parser.add_argument('--quiet', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True)
 
-    # RoboSensai Env parameters (dataset)
+    # ClutterGen Env parameters (dataset)
     parser.add_argument('--num_pool_objs', type=int, default=10)
     parser.add_argument('--min_num_placing_objs', type=int, default=2)
     parser.add_argument('--train_step', type=int, default=2)
     parser.add_argument('--max_num_placing_objs', type=int, default=10)
-    parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_objs_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='')
+    parser.add_argument('--random_select_placing', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='')
     parser.add_argument('--num_pool_scenes', type=int, default=1)
     parser.add_argument('--specific_scene', type=str, default="table") 
-    parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Draw contact force direction')
-    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='Draw contact force direction')
+    parser.add_argument('--random_select_scene_pool', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='')
+    parser.add_argument('--fixed_scene_only', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='')
+    parser.add_argument('--fixed_qr_region', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True, help='')
     parser.add_argument('--num_episode_to_replace_pool', type=int, default=np.inf)
     parser.add_argument('--max_num_obj_points', type=int, default=1024)
     parser.add_argument('--max_num_qr_scene_points', type=int, default=10240)
@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument('--tablehalfExtents', type=json.loads, default=[0.3, 0.35, 0.35], help='Table half extents; Before we use [0.2, 0.3, 0.35]')
     parser.add_argument('--QueryRegion_halfext', type=json.loads, default=None, help='A list of max num of placing objs')
     
-    # RoboSensai Env parameters (training)
+    # ClutterGen Env parameters (training)
     parser.add_argument('--max_trials', type=int, default=5)  # maximum steps trial for one object per episode
     parser.add_argument('--max_traj_history_len', type=int, default=240) 
     parser.add_argument("--max_stable_steps", type=int, default=40, help="the maximum steps for the env to be stable considering success")
@@ -80,7 +80,7 @@ def parse_args():
     parser.add_argument('--force_name', default=None, type=str)
 
     # Algorithm specific arguments
-    parser.add_argument('--env_name', default="RoboSensai_SG", help='Wandb config name')
+    parser.add_argument('--env_name', default="ClutterGen", help='Wandb config name')
     parser.add_argument("--use_lstm", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use LSTM version of meta-controller.")
     parser.add_argument("--use_traj_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")
     parser.add_argument("--use_seq_obs_encoder", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggles whether or not to use Transformer version of meta-controller.")

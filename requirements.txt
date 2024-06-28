@@ -1,3 +1,4 @@
+# --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 --extra-index-url https://download.pytorch.org/whl/cu121
 --find-links https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu118_pyt200/download.html
 addict==2.4.0
@@ -174,6 +175,7 @@ pandocfilters==1.5.1
 paramiko==3.4.0
 parso==0.8.4
 pexpect==4.9.0
+pdf2image-1.17.0
 pillow==10.3.0
 pin==2.7.0
 platformdirs==4.2.0
