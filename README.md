@@ -32,7 +32,7 @@ Please clone the repository first, (Link needs to be changed)
 ```sh
 git clone https://github.com/generalroboticslab/RoboSensai.git
 cd RoboSensai
-git checkout multienv_sg_simple_temp
+git checkout main
 ```
 
 We use [`conda`](hhttps://docs.anaconda.com/miniconda/) to create a virtual environment with python3.9 and other requried packages.
@@ -95,7 +95,7 @@ python ppo_scene_generation.py \
 **ClutterGen-Normal.** This method uses the truncated normal distribution instead of the beta distribution for the object placement policy. <br>
 To keep the code clean and independent, we implement this method in another branch. First, you need to checkout the branch,
 ```sh
-git checkout multienv_sg_normal
+git checkout cluttergen_normal
 ```
 Then, you can run the following command to train the model,
 ```sh
@@ -138,7 +138,7 @@ The evaluations of _ClutterGen-Normal_ can be run by following commands, <br>
 First, you need to checkout the branch,
 
 ```sh
-git checkout multienv_sg_normal
+git checkout cluttergen_normal
 ```
 
 Then, you can run the following command to evaluate the model,
