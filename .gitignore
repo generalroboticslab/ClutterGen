@@ -140,7 +140,7 @@ assets/scenes/
 DG-official/
 Pointnet_Pointnet2_pytorch/
 others/
-paper/website_related/.
+paper/website_related/
 
 # Downstream Task 1
 StablePlacement/SP_Dataset
