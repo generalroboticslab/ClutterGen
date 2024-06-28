@@ -1,6 +1,7 @@
 # ClutterGen: A Cluttered Scene Generator for Robot Learning
 <a href="https://yjia.net/">Yinsen Jia</a>, <a href="http://boyuanchen.com/">Boyuan Chen</a> <br>
 _Duke University_ <br>
+
 <span style="font-size:17px; display: block; text-align: left;">
     <a href=# target="_blank" style="text-decoration: underline;">[Project Page]</a> 
     <a href=# target="_blank" style="text-decoration: underline;">[Video]</a>
@@ -113,7 +114,7 @@ We also provide `--seed` to set the random seed for the training. <br>
 ## Evaluation
 After the training is done, your checkpoint will be saved in the `/[--result_dir]/Union/checkpoint` and the training description file will be saved in the `/[--result_dir]/Union/Json`. By default, `[--result_dir]` is `train_res`. <br>
 
-Each checkpoint is saved with the following format, `[CHECKPOINT NAME]-[EPISODE]`. For example, `Union_2024_05_17_154159_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0.01_seed123456_best`. <br>
+Each checkpoint is saved with the following format, `[CHECKPOINT NAME]_[EPISODE]`. For example, in `Union_2024_05_17_154159_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0.01_seed123456_best`, the checkpoint name is `Union_2024_05_17_154159_Sync_Beta_group1_studying_table_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool10_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial3_entropy0.01_seed123456` and the episode name is `best`. <br>
 
 We have provided a script to evaluate the saved model checkpoints `evaluation_sg.py`. All evaluation results will be stored in `/eval_res` if `--collect_data` is specified during evaluation.  
 
@@ -158,7 +159,10 @@ python evaluation_sg.py \
 --num_envs 1 \
 --num_trials 1000 \
 --heuristic_policy \
+--checkpoint [CHECKPOINT NAME] \
 --max_num_placing_objs_lst "[10]"
+
+# Here, --checkpoint is used to specify the environment configuration. 
 ```
 
 _Note_: If you want to watch the evaluation process, you can add `--rendering` and `--realtime` to the command. However, it will slow down the evaluation process and increase the memory usage. <br>
@@ -176,7 +180,7 @@ python plot_utils.py \
 # --evalUniName: The name of the evaluation result folder, which is saved in the `eval_res/Union/trajectories` directory after evaluation.
 # --RRSName: The name of the RRS evaluation result folder.
 ```
-The plot will be saved to `results/post_corrector/success_summary.pdf`.
+The plot will be saved to `results/success_summary.pdf`.
 <p align="center">
     <img src="paper/final/png/teaser_successrate.png" width="300"> <br>
     <em>The success rate comparision between ClutterGen and RRS.</em>

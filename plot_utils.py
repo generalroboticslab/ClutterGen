@@ -53,7 +53,7 @@ class Plot_Utils:
         else: raise NotImplementedError("Unsupported file type: {}".format(suffix))
 
 
-    def plot_success_steps(self):
+    def plot_success_steps(self, save_dir="results"):
         # Create the figure and axes
         fig, axes = plt.subplots(1, 1, figsize=(8, 8))  # Create a 2-row, 1-column subplot grid
 
@@ -86,7 +86,8 @@ class Plot_Utils:
         plt.tight_layout()
 
         # Save the plot as a pdf
-        plt.savefig("results/post_corrector/success_summary.pdf")
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, "success_summary.pdf"))
         # Show the plot
         plt.show()
 
