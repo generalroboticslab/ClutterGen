@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument('--random_policy', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True)
 
     parser.add_argument('--object_pool_name', type=str, default='Union', help="Object Pool. Ex: YCB, Partnet")
-    parser.add_argument('--env_json_name', type=str, default='Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
+    parser.add_argument('--evalUniName', type=str, default='Union_2024_04_23_213414_Sync_Beta_group4_real_objects_table_PCExtractor_Rand_ObjPlace_Goal_maxObjNum10_maxPool12_maxScene1_maxStab40_contStab20_Epis2Replaceinf_Weight_rewardPobj100.0_seq5_step80_trial5_entropy0.01_seed123456_EVAL_best_objRange_10_10')
     parser.add_argument('--save_epoch', type=int, default=50, help='')
     parser.add_argument('--wandb', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True, help='Save dataset or not')
 
@@ -125,7 +125,7 @@ if args.use_simulator:
     from utils import combine_envs_float_info2list
     import pybullet_utils_cust as pu
     # If use the simulator, we need to specify the .json name
-    args.env_json_path = os.path.join("eval_res", args.object_pool_name, "Json", args.env_json_name+'.json')
+    args.env_json_path = os.path.join("eval_res", args.object_pool_name, "Json", args.evalUniName+'.json')
     assert os.path.exists(args.env_json_path), f"Json file for create envs\n {args.env_json_path}\n does not exist"
     env_args = argparse.Namespace()
     env_args.__dict__.update(read_json(args.env_json_path))
