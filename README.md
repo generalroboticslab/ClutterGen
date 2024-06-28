@@ -1,4 +1,6 @@
 # ClutterGen: A Cluttered Scene Generator for Robot Learning
+<a href="https://yjia.net/">Yinsen Jia</a>, <a href="http://boyuanchen.com/">Boyuan Chen</a> <br>
+_Duke University_ <br>
 <span style="font-size:17px; display: block; text-align: left;">
     <a href=# target="_blank" style="text-decoration: underline;">[Project Page]</a> 
     <a href=# target="_blank" style="text-decoration: underline;">[Video]</a>
@@ -32,14 +34,15 @@ cd RoboSensai
 git checkout multienv_sg_simple_temp
 ```
 
-We use [`conda`](https://docs.conda.io/projects/conda/en/stable/user-guide/getting-started.html) to create a virtual environment with python3.9 and other requried packages.
+We use [`conda`](hhttps://docs.anaconda.com/miniconda/) to create a virtual environment with python3.9 and other requried packages.
 ```sh
-conda create --name ClutterGen --file environment.yml
+conda create --name ClutterGen python=3.9
 ```
 
-Activate the environment,
+Activate the environment and install the required packages,
 ```sh
 conda activate ClutterGen
+pip install -r requirements.txt --no-cache-dir
 ```
 
 ## Training
