@@ -352,15 +352,8 @@ class Agent(nn.Module):
         else:
             raw_action = self.unsquashed_action(action)
 
-<<<<<<< HEAD
         logprob = self.squashed_logprob(probs, raw_action).sum(1) # Enforcing Action Bound
         self.prob_entropy = self.squashed_entropy(probs) # Record the current probs for logging
-=======
-        logprob = probs.log_prob(action).sum(1) # log_prb means prob density not mass! This could be larger than 1
-        logprob = torch.clamp(logprob, min=-15, max=15) # Clip the logprob to avoid NaN during the training
-
-        self.prob_entropy = probs.entropy() # Record the current probs for logging
->>>>>>> multienv_sg_simple_temp
         entropy = self.prob_entropy.sum(1)
         return action, logprob, entropy, self.critic(x)
 
