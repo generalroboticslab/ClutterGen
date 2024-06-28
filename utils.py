@@ -16,6 +16,14 @@ import logging
 import importlib
 
 
+def convert_time(relative_time):
+    relative_time = int(relative_time)
+    hours = relative_time // 3600
+    left_time = relative_time % 3600
+    minutes = left_time // 60
+    seconds = left_time % 60
+    return f'{hours}:{minutes}:{seconds}'
+
 
 def read_json(json_path):
     with open(json_path, 'r') as f:
@@ -470,6 +478,104 @@ def process_mesh(org_mesh_path, save_mesh_path, scale_factor=[1e-3, 1e-3, 1e-3],
     # transform mesh to origin
     mesh.apply_translation(-mesh.centroid)
     mesh.export(save_mesh_path)
+
+
+def create_urdf(robot_name, visual_mesh_filename, collision_mesh_filename, 
+                mass=0.1, scale=[1, 1, 1.], origin_xyz=[0., 0., 0.], 
+                inertia_ixx="0.0001", inertia_ixy="0.0", inertia_ixz="0.0", 
+                inertia_iyy="0.0001", inertia_iyz="0.0", inertia_izz="0.0001", save_path=None):
+    """
+    Creates a URDF file as a string based on the given parameters.
+
+    :param robot_name: Name of the robot.
+    :param visual_mesh_filename: Filename of the visual mesh.
+    :param collision_mesh_filename: Filename of the collision mesh.
+    :param mass: Mass of the link.
+    :param origin_xyz: Origin offset, default "0.0 0.0 0.0".
+    :param inertia_ixx, inertia_ixy, inertia_ixz, inertia_iyy, inertia_iyz, inertia_izz: Inertia parameters.
+    :return: A string representing the URDF file.
+    """
+    
+    urdf_template = \
+f"""<?xml version='1.0' encoding='utf-8'?>
+    <robot name="{robot_name}">
+        <link name="link_0">
+            <visual>
+                <origin xyz="{' '.join(map(str, origin_xyz))}" />
+                <geometry>
+                    <mesh filename="{visual_mesh_filename}" scale="{' '.join(map(str, scale))}" />
+                </geometry>
+            </visual>
+            <collision>
+                <origin xyz="{' '.join(map(str, origin_xyz))}" />
+                <geometry>
+                    <mesh filename="{collision_mesh_filename}" scale="{' '.join(map(str, scale))}" />
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="{mass}" />
+                <inertia ixx="{inertia_ixx}" ixy="{inertia_ixy}" ixz="{inertia_ixz}" 
+                            iyy="{inertia_iyy}" iyz="{inertia_iyz}" izz="{inertia_izz}" />
+            </inertial>
+        </link>
+    </robot>"""
+    if save_path:
+        with open(save_path, 'w') as file:
+            file.write(urdf_template)
+        print(f"URDF file saved to {save_path}")
+
+    return urdf_template
+
+# YCB dataset requires to set visual to be white. The default is black which will block the texture.
+def create_urdf(robot_name, visual_mesh_filename, collision_mesh_filename, 
+                mass=0.1, scale=[1, 1, 1.], origin_xyz=[0., 0., 0.], 
+                inertia_ixx="0.0001", inertia_ixy="0.0", inertia_ixz="0.0", 
+                inertia_iyy="0.0001", inertia_iyz="0.0", inertia_izz="0.0001", save_path=None):
+    """
+    Creates a URDF file as a string based on the given parameters.
+    Same function as before. For convenience, just copy it here.
+
+    :param robot_name: Name of the robot.
+    :param visual_mesh_filename: Filename of the visual mesh.
+    :param collision_mesh_filename: Filename of the collision mesh.
+    :param mass: Mass of the link.
+    :param origin_xyz: Origin offset, default "0.0 0.0 0.0".
+    :param inertia_ixx, inertia_ixy, inertia_ixz, inertia_iyy, inertia_iyz, inertia_izz: Inertia parameters.
+    :return: A string representing the URDF file.
+    """
+    
+    urdf_template = \
+f"""<?xml version='1.0' encoding='utf-8'?>
+    <robot name="{robot_name}">
+        <link name="link_0">
+            <visual>
+                <origin xyz="{' '.join(map(str, origin_xyz))}" />
+                <geometry>
+                    <mesh filename="{visual_mesh_filename}" scale="{' '.join(map(str, scale))}" />
+                </geometry>
+                <material name="white">
+                    <color rgba="1 1 1 1"/>
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="{' '.join(map(str, origin_xyz))}" />
+                <geometry>
+                    <mesh filename="{collision_mesh_filename}" scale="{' '.join(map(str, scale))}" />
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="{mass}" />
+                <inertia ixx="{inertia_ixx}" ixy="{inertia_ixy}" ixz="{inertia_ixz}" 
+                            iyy="{inertia_iyy}" iyz="{inertia_iyz}" izz="{inertia_izz}" />
+            </inertial>
+        </link>
+    </robot>"""
+    if save_path:
+        with open(save_path, 'w') as file:
+            file.write(urdf_template)
+        print(f"URDF file saved to {save_path}")
+
+    return urdf_template
 
 
 def combine_images(img1, img2, alpha=1.0, beta=0.3):

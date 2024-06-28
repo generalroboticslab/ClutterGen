@@ -1,20 +1,13 @@
 # Control
 ## Run the source command on the fp desktop
-### fp desktop password
-```
-grlatduke
-```
-
 
 # If you meet any violation problem (velocity violation...), please check the end of this page
 ```
 https://frankaemika.github.io/docs/libfranka.html#
 ``` 
 
-
-
 # MISC
-## Install Ros on linux 22.04
+## Install Ros on linux 22.04 (optional)
 We use robostack
 ```
 https://robostack.github.io/GettingStarted.html

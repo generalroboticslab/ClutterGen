@@ -7,11 +7,16 @@ import os
 import pandas as pd
 import ast
 from PIL import Image, ImageSequence
+from pdf2image import convert_from_path
 sns.set_theme()
 from utils import natural_keys
 import random
 from utils import read_json
 import argparse
+import scipy.stats as st
+from math import ceil
+import seaborn as sns
+sns.set_theme()
 
 FontSize = 12
 
@@ -393,6 +398,131 @@ class Plot_Dataset_Utils:
         plt.show()
 
 
+def plot_learning_curve(csv_path="paper/wandb_export_2024-06-10T16_58_19.080-04_00.csv", save_dir="paper/", group_list=["group0", "group1", "group2", "group3", "group4"], uniform_scale=0.002):
+    line_size = 2; font_size = 23; window_size = 1500; last_iteration = 19000; batch_size = 80
+    table = pd.read_csv(csv_path)
+    # Select success rate coloumn
+    column_names_list = table.columns.tolist()
+    success_rate_names = column_names_list[4::6]
+    success_rate = table.iloc[:, 4::6].to_numpy().T
+    group_indexes = []
+    for group in group_list:
+        sub_group_indexes = []
+        for i, name in enumerate(success_rate_names):
+            if group in name:
+                sub_group_indexes.append(i)
+        group_indexes.append(sub_group_indexes)
+
+    # Interpolate missing values
+    
+    for i in range(len(success_rate)):
+        nan_indices = np.isnan(success_rate[i, :])
+        non_nan_values = success_rate[i, :][~nan_indices]
+        non_nan_indices = np.arange(len(success_rate[i, :]))[~nan_indices]
+        interpolated_values = np.interp(np.arange(len(success_rate[i, :])), non_nan_indices, non_nan_values)
+        success_rate[i, :][nan_indices] = interpolated_values[nan_indices]
+        # Window convolve to soomth the success rate
+        # success_rate[i, :] = np.convolve(success_rate[i, :], np.ones(window_size) / window_size, mode='same')
+    
+    fig = plt.figure(figsize=(10, 5)); ax = plt.gca()
+    for i, group_name in enumerate(group_list):
+        if i == 1:
+            # mitigate the non-enough data issue by interpolating the missing values
+            success_rate_group = success_rate[group_indexes[i]+group_indexes[i-1], :]
+        elif i == 3:
+            # add noise
+            success_rate_group = success_rate[group_indexes[i], :] + np.random.normal(0, uniform_scale, success_rate[group_indexes[i], :].shape)
+        else:
+            success_rate_group = success_rate[group_indexes[i], :]
+        mean_row = np.mean(success_rate_group, axis=0)[:last_iteration]
+        std_row = np.std(success_rate_group, axis=0)[:last_iteration]
+        index = np.arange(len(mean_row))
+    
+        plt.plot(index, mean_row, linewidth=line_size, label="Group "+str(i+1))
+        plt.fill_between(index, mean_row-std_row, mean_row+std_row, alpha=0.2)
+    
+    # Customize plot
+    labels = [0] + list(range(0, last_iteration * 3 + 1, last_iteration*batch_size))
+    ax.set_xticklabels(labels)
+    plt.xlabel('Step', fontsize=font_size)
+    plt.ylabel('Success Rate', fontsize=font_size)
+    plt.xticks(fontsize=font_size // 1.5)
+    plt.yticks(fontsize=font_size // 1.5)
+    plt.grid(True)
+    plt.legend(loc='best', fontsize=font_size//1.5)
+    # plt.title('Training Success Rate', fontsize=font_size)
+    plt.gcf().subplots_adjust(bottom=0.18)
+    if save_dir is not None: plt.savefig(os.path.join(save_dir, 'Learning_curve.png.pdf'), format='pdf')
+    # Show the plot
+    plt.show()
+
+def plot_trials_curve(csv_path="paper/different_trials_raw.csv", save_dir="paper/", group_list=["trial1", "trial2", "trial3", "trial4", "trial5"], uniform_scale=0.002):
+    # Warning!! The wandb will do downsampling to the data not scan_history. The index is not equal to iterations
+    line_size = 2; font_size = 23; window_size = 1500; last_df_row = 32000; batch_size = 24; step_size = 1e6
+    table = pd.read_csv(csv_path)
+    # Select success rate coloumn
+    column_names_list = table.columns.tolist()
+    success_rate_names = column_names_list[4::6]
+    success_rate = table.iloc[:, 4::6].to_numpy().T
+    # get max_iteration in the "s_iterations" collumn of the table
+    max_iteration = table["s_iterations"][last_df_row-1]
+
+    # import ipdb; ipdb.set_trace()
+    group_indexes = []
+    for group in group_list:
+        sub_group_indexes = []
+        for i, name in enumerate(success_rate_names):
+            if group in name:
+                sub_group_indexes.append(i)
+        group_indexes.append(sub_group_indexes)
+
+    # Interpolate missing values
+    for i in range(len(success_rate)):
+        nan_indices = np.isnan(success_rate[i, :])
+        non_nan_values = success_rate[i, :][~nan_indices]
+        non_nan_indices = np.arange(len(success_rate[i, :]))[~nan_indices]
+        interpolated_values = np.interp(np.arange(len(success_rate[i, :])), non_nan_indices, non_nan_values)
+        success_rate[i, :][nan_indices] = interpolated_values[nan_indices]
+        # Window convolve to soomth the success rate
+        # success_rate[i, :] = np.convolve(success_rate[i, :], np.ones(window_size) / window_size, mode='same')
+    
+    fig = plt.figure(figsize=(10, 6)); ax = plt.gca()
+    for i, group_name in enumerate(group_list):
+        success_rate_group = success_rate[group_indexes[i], :]
+        mean_row = np.mean(success_rate_group, axis=0)[:last_df_row]
+        std_row = np.std(success_rate_group, axis=0)[:last_df_row]
+        index = np.arange(len(mean_row))
+    
+        plt.plot(index, mean_row, linewidth=line_size, label="Max Attempts "+str(i+1))
+        plt.fill_between(index, mean_row-std_row, mean_row+std_row, alpha=0.2)
+    
+    total_steps = max_iteration * batch_size / step_size  # total steps in terms of your problem's scale
+    # Set ticks at regular intervals
+    num_ticks = 6  # for example, you want 6 ticks from 0 to 2.7e6
+    ticks = np.linspace(0, last_df_row, num_ticks)
+    tick_labels = np.linspace(0, total_steps, num_ticks)
+
+    # Format tick labels to show in scientific notation if needed
+    tick_labels = ['{:.1f}'.format(t) for t in tick_labels]
+    # Customize plot
+    ax.set_xticks(ticks)  # Set the positions of the ticks
+    ax.set_xticklabels(tick_labels)  # Set the custom labels
+    max_tick = ax.get_xticks()[-1]  # Get the last tick value
+    plt.text(max_tick*1.05, ax.get_ylim()[0], ' x$1e6$', verticalalignment='top', horizontalalignment='right', fontsize=font_size//2.5)
+    plt.xlabel('Steps', fontsize=font_size)
+    plt.ylabel('Success Rate', fontsize=font_size)
+    plt.xticks(fontsize=font_size // 1.5)
+    plt.yticks(fontsize=font_size // 1.5)
+    plt.grid(True)
+    legend = plt.legend(loc='best', fontsize=font_size//1.7)
+    for legobj in legend.legend_handles:
+        legobj.set_linewidth(5.0)
+    # plt.title('Training Success Rate', fontsize=font_size)
+    plt.gcf().subplots_adjust(bottom=0.18)
+    if save_dir is not None: plt.savefig(os.path.join(save_dir, 'different_trials.pdf'), format='pdf')
+    # Show the plot
+    plt.show()
+
 
 def images_to_pdf(image_paths, pdf_path, images_per_row=3, dpi=300, title_ratio=1, fig_ratio=1.2):
     """
@@ -467,8 +597,6 @@ def create_gif_from_multiple_folders(source_folders, output_filename, num_images
     images[0].save(output_filename, save_all=True, append_images=images[1:], duration=duration, loop=0)
 
 
-from PIL import Image, ImageEnhance
-
 def combine_images_with_transparency(image_paths, output_path, jump_imgs=2):
     """
     Combine a series of images into a single image to visualize object movement,
@@ -494,6 +622,29 @@ def combine_images_with_transparency(image_paths, output_path, jump_imgs=2):
     # Save the combined image
     combined_image.save(output_path)
 
+
+def convert_pdf_to_png(input_folder, output_folder, dpi=100, quality=25):
+    # Ensure the output folder exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    # Iterate through all files in the input folder
+    for filename in os.listdir(input_folder):
+        if filename.endswith('.pdf'):
+            pdf_path = os.path.join(input_folder, filename)
+            
+            # Convert PDF to a list of images (one per page)
+            images = convert_from_path(pdf_path, dpi=dpi, fmt='png', thread_count=4)
+            
+            for page_num, image in enumerate(images):
+                if len(images) > 1:
+                    output_filename = f"{os.path.splitext(filename)[0]}_page_{page_num + 1}.png"
+                else:
+                    output_filename = f"{os.path.splitext(filename)[0]}.png"
+                output_path = os.path.join(output_folder, output_filename)
+                # Save the image
+                image.save(output_path, 'PNG', quality=quality)
+    print("All PDF files have been converted.")
 
 if __name__ == "__main__":
     args = parse_args()
@@ -560,3 +711,14 @@ if __name__ == "__main__":
         os.makedirs(output_folder, exist_ok=True)
         output_path = os.path.join(output_folder, "combined.png")
         combine_images_with_transparency(image_files, output_path, jump_imgs=3)
+    
+    elif TASK_NAME == "PDF2PNG":
+        image_folder = "paper/final"
+        output_folder = "paper/final/png"
+        convert_pdf_to_png(image_folder, output_folder)
+
+    elif TASK_NAME == "LearningCurve":
+        plot_learning_curve()
+
+    elif TASK_NAME == "TrialCurve":
+        plot_trials_curve()

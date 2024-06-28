@@ -130,7 +130,6 @@ if __name__ == "__main__":
                     # Evaluate the model
                     # Scene and obj feature tensor are keeping updated inplace]
                     ################ agent evaluation ################
-                    # if qr_obj_name not in ['005_tomato_soup_can_0', '006_mustard_bottle_0', '007_tuna_fish_can_0', '009_gelatin_box_0', '010_potted_meat_can_0', '019_pitcher_base_0', '024_bowl_0', '025_mug_0', '029_plate_0', '030_fork_0']
                     envs.stable_placement_reset()
                     scene_pc, qr_obj_pc = envs.stable_placement_compute_observation(qr_obj_name, sp_placed_obj_poses)
                     scene_pc, qr_obj_pc = torch.from_numpy(scene_pc).to(device).unsqueeze(0).float(), torch.from_numpy(qr_obj_pc).to(device).unsqueeze(0).float()
