@@ -30,8 +30,8 @@ ClutterGen, a physically compliant simulation scene generator capable of produci
 
 Please clone the repository first, (Link needs to be changed)
 ```sh
-git clone https://github.com/generalroboticslab/RoboSensai.git
-cd RoboSensai
+git clone https://github.com/generalroboticslab/ClutterGen.git
+cd ClutterGen
 git checkout main
 ```
 
