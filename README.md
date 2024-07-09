@@ -84,7 +84,7 @@ python ppo_scene_generation.py \
 --result_dir train_res \
 --num_envs 16 \
 --asset_root 'assets' \
---object_pool_folder 'group_objects/group0_dinning_table'
+--object_pool_folder 'group_objects/group0_dinning_table' \
 --open_loop
 ```
 
@@ -95,7 +95,7 @@ python ppo_scene_generation.py \
 --result_dir train_res \
 --num_envs 16 \
 --asset_root 'assets' \
---object_pool_folder 'group_objects/group0_dinning_table'
+--object_pool_folder 'group_objects/group0_dinning_table' \
 --short_memory
 ```
 
