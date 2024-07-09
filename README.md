@@ -18,16 +18,23 @@ ClutterGen, a physically compliant simulation scene generator capable of produci
 </p>
 
 ## Content
-<span style="font-size:17px; display: block; text-align: center;">
+<!-- <span style="font-size:17px; display: block; text-align: center;">
     <a href="#prerequisites">Prerequisites</a> <br>
     <a href="#training">Training</a> <br>
     <a href="#evaluation">Evaluation</a> <br>
     <a href="#real-robot-applications">Real-robot</a> <br>
     <a href="#bibTex">BibTex</a> <br>
-</span>
+</span> -->
+
+<ul style="font-size:17px;">
+  <li><a href="#prerequisites">Prerequisites</a></li>
+  <li><a href="#training">Training</a></li>
+  <li><a href="#evaluation">Evaluation</a></li>
+  <li><a href="#real-robot-applications">Real-robot</a></li>
+  <li><a href="#bibTex">BibTex</a></li>
+</ul>
 
 ## Prerequisites
-
 Please clone the repository first, (Link needs to be changed)
 ```sh
 git clone https://github.com/generalroboticslab/ClutterGen.git
@@ -345,4 +352,13 @@ python pick_and_place.py \
 
 If you find this repo useful, please consider citing,
 ```
+@misc{jia2024cluttergenclutteredscenegenerator,
+      title={ClutterGen: A Cluttered Scene Generator for Robot Learning}, 
+      author={Yinsen Jia and Boyuan Chen},
+      year={2024},
+      eprint={2407.05425},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2407.05425}, 
+}
 ```
