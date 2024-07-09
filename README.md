@@ -3,9 +3,9 @@
 _Duke University_ <br>
 
 <span style="font-size:17px; display: block; text-align: left;">
-    <a href=# target="_blank" style="text-decoration: underline;">[Project Page]</a> 
-    <a href=# target="_blank" style="text-decoration: underline;">[Video]</a>
-    <a href=# target="_blank" style="text-decoration: underline;">[arXiv]</a> <br>
+    <a href=http://generalroboticslab.com/ClutterGen target="_blank" style="text-decoration: underline;">[Project Page]</a> 
+    <a href=https://www.youtube.com/watch?v=ZD6JslZgAfQ target="_blank" style="text-decoration: underline;">[Video]</a>
+    <a href=https://arxiv.org/abs/2407.05425 target="_blank" style="text-decoration: underline;">[arXiv]</a> <br>
 </span>
 
 
