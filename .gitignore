@@ -140,6 +140,7 @@ assets/scenes/
 DG-official/
 Pointnet_Pointnet2_pytorch/
 others/
+utils_file/
 paper/website_related/
 
 # Downstream Task 1
