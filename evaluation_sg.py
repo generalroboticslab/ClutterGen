@@ -288,7 +288,7 @@ if __name__ == "__main__":
 
             ################ agent evaluation ################
             if eval_args.random_policy or eval_args.heuristic_policy:
-                action = (torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device) * 2 - 1) * 0.3 + 0.5
+                action = torch.rand((eval_args.num_envs, temp_env.action_shape[1]), device=device)
             else:
                 with torch.no_grad():
                     action, probs = agent.select_action([next_seq_obs, next_scene_ft_obs, next_obj_ft_obs])
