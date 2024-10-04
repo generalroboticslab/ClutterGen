@@ -352,13 +352,15 @@ python pick_and_place.py \
 
 If you find this repo useful, please consider citing,
 ```
-@misc{jia2024cluttergenclutteredscenegenerator,
-      title={ClutterGen: A Cluttered Scene Generator for Robot Learning}, 
-      author={Yinsen Jia and Boyuan Chen},
-      year={2024},
-      eprint={2407.05425},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2407.05425}, 
+@inproceedings{
+        jia2024cluttergen,
+        title={ClutterGen: A Cluttered Scene Generator for Robot Learning},
+        author={Yinsen Jia and Boyuan Chen},
+        booktitle={8th Annual Conference on Robot Learning},
+        year={2024},
+        url={https://openreview.net/forum?id=k0ogr4dnhG}
 }
 ```
+
+## Acknowledgements
+`This work is supported by ARL STRONG program under awards W911NF2320182 and W911NF2220113, by DARPA FoundSci program under award HR00112490372, and DARPA TIAMAT program under award HR00112490419`.
